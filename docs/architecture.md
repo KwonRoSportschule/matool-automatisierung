@@ -214,7 +214,10 @@ Subscription stillgelegt; offene Zustellungen an das deaktivierte Ziel werden
 dauerhaft beendet. Die Zieladresse muss eine HTTPS-Adresse unter
 `hooks.zapier.com` ohne Query oder Fragment sein. Sie wird in
 `zapier_subscriptions` gespeichert, aber weder geloggt noch im Frontend
-ausgegeben.
+ausgegeben. Eine automatische Deaktivierung nach HTTP 410 wird im selben
+D1-Batch an den erfolgreich finalisierten Delivery-Versuch gebunden; eine
+verspätete Antwort eines abgelaufenen Lease darf keinen neueren Versuch und
+keine aktive Subscription verändern.
 
 #### PII-freier Hook-Umschlag
 

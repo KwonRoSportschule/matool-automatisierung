@@ -1180,6 +1180,73 @@ describe("D1-Zustellclaims und Outbox-Leases", () => {
     });
   });
 
+  it("lässt einen abgelaufenen 410-Lease keine neue Zustellung deaktivieren", async () => {
+    const { lease: staleLease, seed } =
+      await leaseSeededEvent("stale-subscription-gone");
+    const replacementTime = new Date(
+      BASE_TIME.getTime() + (LEASE_SECONDS + 1) * 1_000
+    );
+    const replacementLease = await claimNextZapierOutbox(
+      env,
+      "owner-after-stale-410",
+      replacementTime,
+      LEASE_SECONDS,
+      MAX_ATTEMPTS
+    );
+    expect(replacementLease).not.toBeNull();
+
+    await expect(
+      finalizeZapierOutboxAttempt(
+        env,
+        staleLease,
+        {
+          outcome: "permanent_error",
+          httpStatus: 410,
+          errorCode: "zapier_subscription_gone"
+        },
+        new Date(replacementTime.getTime() + 1_000),
+        MAX_ATTEMPTS
+      )
+    ).rejects.toMatchObject({
+      code: "outbox_lease_lost"
+    });
+
+    const state = await env.DB.prepare(
+      `SELECT subscriptions.status AS subscription_status,
+              events.status AS event_status,
+              outbox.status AS outbox_status,
+              outbox.attempt_count,
+              outbox.lease_owner,
+              COUNT(deliveries.delivery_id) AS delivery_count
+       FROM zapier_subscriptions AS subscriptions
+       INNER JOIN outbox
+         ON outbox.destination = 'zapier-rest-hook:' ||
+           subscriptions.subscription_id
+       INNER JOIN events ON events.event_id = outbox.event_id
+       LEFT JOIN deliveries ON deliveries.event_id = events.event_id
+       WHERE subscriptions.subscription_id = ?
+       GROUP BY subscriptions.status, events.status, outbox.status,
+                outbox.attempt_count, outbox.lease_owner`
+    )
+      .bind(seed.subscriptionId)
+      .first<{
+        attempt_count: number;
+        delivery_count: number;
+        event_status: string;
+        lease_owner: string;
+        outbox_status: string;
+        subscription_status: string;
+      }>();
+    expect(state).toEqual({
+      attempt_count: 2,
+      delivery_count: 0,
+      event_status: "queued",
+      lease_owner: "owner-after-stale-410",
+      outbox_status: "in_flight",
+      subscription_status: "active"
+    });
+  });
+
   it("meldet parallele widersprüchliche Bestätigungen als Konflikt", async () => {
     const { lease, seed } = await leaseSeededEvent("confirmation-race");
     const claim = await claimEventForZapier(

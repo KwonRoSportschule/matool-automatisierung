@@ -61,6 +61,14 @@ interface ExistingTransportClaimRow {
   event_id: string;
 }
 
+interface SubscriptionDisableDeliveryGuard {
+  attemptNumber: number;
+  deliveryId: string;
+  destination: string;
+  eventId: string;
+  finishedAt: string;
+}
+
 export type ZapierClaimResult =
   | {
       claimId: string;
@@ -217,8 +225,32 @@ function buildDisableZapierSubscriptionStatements(
   env: Env,
   subscriptionId: string,
   destination: string,
-  timestamp: string
+  timestamp: string,
+  deliveryGuard?: SubscriptionDisableDeliveryGuard
 ): D1PreparedStatement[] {
+  const deliveryGuardSql = deliveryGuard
+    ? `AND EXISTS (
+         SELECT 1
+         FROM deliveries
+         WHERE deliveries.delivery_id = ?
+           AND deliveries.event_id = ?
+           AND deliveries.destination = ?
+           AND deliveries.attempt_number = ?
+           AND deliveries.outcome = 'permanent_error'
+           AND deliveries.http_status = 410
+           AND deliveries.finished_at = ?
+       )`
+    : "";
+  const deliveryGuardBindings = deliveryGuard
+    ? [
+        deliveryGuard.deliveryId,
+        deliveryGuard.eventId,
+        deliveryGuard.destination,
+        deliveryGuard.attemptNumber,
+        deliveryGuard.finishedAt
+      ]
+    : [];
+
   return [
     env.DB
       .prepare(
@@ -226,9 +258,10 @@ function buildDisableZapierSubscriptionStatements(
          SET status = 'disabled',
              updated_at = ?
          WHERE subscription_id = ?
-           AND status = 'active'`
+           AND status = 'active'
+           ${deliveryGuardSql}`
       )
-      .bind(timestamp, subscriptionId),
+      .bind(timestamp, subscriptionId, ...deliveryGuardBindings),
     env.DB
       .prepare(
         `UPDATE outbox
@@ -239,19 +272,21 @@ function buildDisableZapierSubscriptionStatements(
              updated_at = ?
          WHERE destination = ?
            AND status IN ('pending', 'in_flight', 'retry_wait', 'accepted')
+           ${deliveryGuardSql}
            AND NOT EXISTS (
              SELECT 1
              FROM event_claims
              WHERE event_claims.event_id = outbox.event_id
            )`
       )
-      .bind(timestamp, destination),
+      .bind(timestamp, destination, ...deliveryGuardBindings),
     env.DB
       .prepare(
         `UPDATE events
          SET status = 'failed',
              updated_at = ?
          WHERE status IN ('queued', 'transport_accepted')
+           ${deliveryGuardSql}
            AND NOT EXISTS (
              SELECT 1
              FROM event_claims
@@ -272,7 +307,7 @@ function buildDisableZapierSubscriptionStatements(
                AND status IN ('pending', 'in_flight', 'retry_wait', 'accepted')
            )`
       )
-      .bind(timestamp, destination)
+      .bind(timestamp, ...deliveryGuardBindings, destination)
   ];
 }
 
@@ -1116,7 +1151,14 @@ export async function finalizeZapierOutboxAttempt(
         env,
         subscriptionId,
         lease.destination,
-        finishedAt
+        finishedAt,
+        {
+          attemptNumber: lease.attemptNumber,
+          deliveryId: lease.deliveryId,
+          destination: lease.destination,
+          eventId: lease.eventId,
+          finishedAt
+        }
       )
     );
   }

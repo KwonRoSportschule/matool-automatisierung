@@ -103,6 +103,9 @@ inhaltliche Prüfung vor einem Commit.
   seinem Ablauf claimbar; Lease-Ablauf allein darf diesen Claim nicht sperren.
 - Ein späterer permanenter Transportfehler darf einen noch gültigen Token aus
   einem älteren ambigen oder akzeptierten Versuch nicht vorzeitig entwerten.
+- Eine automatische Subscription-Deaktivierung muss an den noch gültigen,
+  erfolgreich finalisierten Delivery-Versuch gefenced sein; ein abgelaufener
+  Lease besitzt dafür keine Schreibberechtigung mehr.
 - Erstimport und produktive Freigabe sind technisch getrennt.
 
 ## Verlängerungslinks
