@@ -11,8 +11,8 @@ const forbiddenTrackedFiles = [
 
 const forbiddenContent = [
   {
-    name: "Zapier Catch-Hook URL",
-    pattern: /https:\/\/hooks\.zapier\.com\/hooks\/catch\//i
+    name: "Zapier Webhook URL",
+    pattern: /https:\/\/hooks\.zapier\.com\//i
   },
   {
     name: "Cloudflare API token",
@@ -24,15 +24,19 @@ const forbiddenContent = [
   }
 ];
 
-const tracked = execFileSync("git", ["ls-files", "-z"], {
-  encoding: "utf8"
-})
+const repositoryFiles = execFileSync(
+  "git",
+  ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+  {
+    encoding: "utf8"
+  }
+)
   .split("\0")
   .filter(Boolean);
 
 const findings = [];
 
-for (const file of tracked) {
+for (const file of repositoryFiles) {
   if (forbiddenTrackedFiles.some((pattern) => pattern.test(file))) {
     findings.push(`verbotene Datei versioniert: ${file}`);
     continue;
@@ -53,5 +57,7 @@ if (findings.length > 0) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`Repository-Prüfung bestanden (${tracked.length} Dateien).`);
+  console.log(
+    `Repository-Prüfung bestanden (${repositoryFiles.length} Dateien).`
+  );
 }

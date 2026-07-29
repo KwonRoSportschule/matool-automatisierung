@@ -11,6 +11,7 @@ import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import type { Env } from "./env";
 import { getAdminStatus, listRuns } from "./repository";
 import { handleScheduledInvocation } from "./schedule";
+import { handleZapierApiRequest } from "./zapier-api";
 
 const worker = {
   async fetch(
@@ -36,7 +37,13 @@ const worker = {
           : response;
       }
 
-      const identity = await requireAccessIdentity(request, env);
+      const identity = await requireAccessIdentity(
+        request,
+        env,
+        url.pathname.startsWith("/api/zapier/v1/")
+          ? "zapier-service"
+          : "employee"
+      );
 
       if (url.pathname.startsWith("/api/")) {
         return await handleApiRequest(request, url, identity, env);
@@ -67,6 +74,10 @@ async function handleApiRequest(
   identity: Awaited<ReturnType<typeof requireAccessIdentity>>,
   env: Env
 ): Promise<Response> {
+  if (url.pathname.startsWith("/api/zapier/v1/")) {
+    return handleZapierApiRequest(request, url, env);
+  }
+
   if (url.pathname === "/api/admin/v1/status") {
     if (request.method !== "GET") {
       methodNotAllowed(["GET"]);

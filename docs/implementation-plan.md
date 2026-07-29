@@ -21,7 +21,9 @@ Bestätigte Ausgangsbasis:
 - erster Pilot: Kontaktaufnahme mit Interessenten vor ihrem ersten
   Probetraining;
 - keine vorhandene private Zapier-MATOOL-App; sie wird neu gebaut;
-- Zapier Professional.
+- Zapier Professional;
+- privater Zapier REST Hook mit PII-freiem Umschlag, atomarem Claim und
+  abschließender Ergebnis-Aktion; kein Catch Hook und kein Polling.
 
 ### Aufgaben
 
@@ -37,8 +39,7 @@ Bestätigte Ausgangsbasis:
 - Staging, Produktion, D1-EU-Jurisdiktion und Aufbewahrungsregeln vor dem ersten
   Echtdatenlauf festlegen;
 - öffentlichen Google-Sheets-/XLSX-Zugriff des Altprozesses absichern oder als
-  befristetes Risiko mit Verantwortlichem dokumentieren;
-- Schnittstellenrichtung der neuen privaten Zapier-App vor Phase 5 festlegen.
+  befristetes Risiko mit Verantwortlichem dokumentieren.
 
 ### Ergebnisse
 
@@ -147,7 +148,9 @@ synthetische Parser-Fixture wird Phase 3 nicht freigegeben.
 
 - normalisierte Schemas mit Laufzeitvalidierung definieren;
 - kanonische Serialisierung und SHA-256-Hashes implementieren;
-- D1-Schema für Runs, Records, Events, Outbox, Deliveries und Leases anlegen;
+- D1-Schema für Process Config, Runs, Collector State, Records, Events, Outbox,
+  Deliveries, Leases, Zapier-Subscriptions, Delivery-Token und Event-Claims
+  anlegen;
 - Lease mit Owner-ID, DB-Zeit, TTL, Heartbeat, owner-geprüfter Freigabe und
   monotonem Fencing-Token implementieren;
 - Baseline- und Shadow-Modus implementieren;
@@ -164,6 +167,8 @@ synthetische Parser-Fixture wird Phase 3 nicht freigegeben.
   Outbox mehr schreiben;
 - fehlgeschlagener Collector aktualisiert keinen erfolgreichen Zustand;
 - Baseline erzeugt null Outbox-Einträge;
+- D1 speichert bei Delivery-Token ausschließlich den Hash und lässt je
+  `event_id` höchstens einen Event-Claim zu;
 - Adminansicht zeigt keine unmaskierten Personenwerte.
 
 ### Gate
@@ -209,38 +214,74 @@ Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 ### Aufgaben
 
 - private Zapier-App für Zapier Professional neu aufbauen;
-- authentifizierten Trigger beziehungsweise Ausgabeadapter zur Middleware
+- echten REST-Hook-Trigger mit dynamischem Subscribe und Unsubscribe
   implementieren;
+- Zapier-Zieladresse auf HTTPS unter `hooks.zapier.com` begrenzen, in D1 als
+  Subscription verwalten und aus Frontend sowie Logs fernhalten;
+- Ausgabeadapter implementieren, der ausschließlich einen PII-freien,
+  zeitgestempelten HMAC-Umschlag mit `event_id`, `event_type`, `delivery_id`
+  und einmaligem `delivery_token` sendet;
+- pro Versuch nur den Delivery-Token-Hash und eine kurze Ablaufzeit in D1
+  speichern;
+- Service-API doppelt absichern: Cloudflare-Access-Service-Token am Edge und
+  unabhängiger App-Bearer-Token im Worker;
+- atomaren Claim-Endpunkt implementieren, der die minimierte Ereignisnutzlast
+  genau beim ersten Claim je `event_id` liefert;
 - `prospect.first_trial_contact_due` als versioniertes Trigger-Ereignis
   definieren;
 - Outbox-Retry mit Backoff und maximaler Versuchszahl ergänzen;
-- dauerhafte Ziel-Deduplizierung der `event_id` vor der Nebenwirkung
-  implementieren oder eine nachweislich idempotente Zielaktion wählen;
+- Ergebnis-Aktion für `succeeded` oder `failed` mit `event_id`, `claim_id` und
+  optionalem technischen `failure_code` implementieren;
+- unbestätigte Claims nach `review_after` sichtbar und kontrolliert
+  aufarbeitbar machen;
+- `event_id` beziehungsweise `claim_id` als Idempotenzschlüssel an ein
+  unterstützendes Kontaktziel weiterreichen;
 - genau ein synthetisches Testereignis freigeben;
-- Deduplizierung im Zap beziehungsweise Zielsystem nachweisen;
+- Claim-Deduplizierung und, soweit vom gewählten Ziel unterstützt,
+  Ziel-Idempotenz nachweisen;
 - Zustell- und Fehlerstatus im Adminbereich anzeigen.
 
 ### Verifikation
 
-- wiederholtes Senden derselben `event_id` erzeugt keine zweite Folgeaktion;
+- Hook-Umschlag und Header enthalten keine Personendaten;
+- manipulierte, abgelaufene oder falsch signierte Hook-Umschläge werden
+  verworfen;
+- Klartext-Delivery-Token stehen weder in D1 noch in Logs;
+- ein gültiger Token liefert beim ersten Claim genau ein Ereignis;
+- Wiederholungen über denselben oder einen späteren Delivery-Versuch liefern
+  für dieselbe `event_id` kein zweites Trigger-Ereignis;
+- verlorener Claim-Response führt zu einem sichtbaren unbestätigten Claim,
+  nicht zu einer zweiten PII-Ausgabe;
+- gleichlautende Ergebnisbestätigung ist idempotent, widersprüchliches Ergebnis
+  wird abgewiesen;
 - 2xx, verlorener 2xx-Response, 4xx, 5xx und Timeout sind getestet;
 - permanenter Fehler wird pausiert und sichtbar;
-- Service-Token oder Zapier-Endpunkt steht in keinem Frontend-Bundle oder Log;
+- Access-Service-Token, App-Bearer-Token, Signierschlüssel oder
+  Zapier-Zieladresse stehen in keinem Frontend-Bundle oder Log;
+- private App sendet Service-Credentials ausschließlich an den konfigurierten
+  Middleware-Origin;
 - private Zapier-App greift nicht direkt mit MATOOL-Zugangsdaten auf MATOOL zu;
 - produktive Empfänger bleiben deaktiviert.
 
 ### Gate
 
-Ein Ereignis und beliebig viele Transport-Retrys führen zusammen exakt zu einer
-ungefährlichen Testaktion.
+Ein Ereignis und beliebig viele PII-freie Transport-Retrys führen zusammen zu
+höchstens einem Claim und genau einer bestätigten ungefährlichen Testaktion.
+Für das spätere Kontaktziel ist zusätzlich dessen Retry-/Idempotenzverhalten
+nachgewiesen.
 
 ## Phase 6: Begrenzter Produktionsstart
 
 ### Aufgaben
 
 - Produktions-D1 mit EU-Jurisdiktion erstellen;
-- Cloudflare Access und minimale Serviceberechtigungen konfigurieren;
-- Runtime-Secrets setzen;
+- zwei pfadgenaue Cloudflare-Access-Anwendungen mit getrennten Audiences für
+  Mitarbeiter und Zapier-Service sowie minimale Serviceberechtigungen
+  konfigurieren;
+- Cloudflare-Access-Service-Token erstellen und seine Client-Zugangsdaten nur
+  in der Zapier-Verbindung hinterlegen;
+- getrennte Worker-Runtime-Secrets für App-Bearer-Token, Hook-Signatur und
+  MATOOL setzen;
 - Cron aktivieren;
 - kleine, ausdrücklich freigegebene Zielgruppe aktivieren;
 - Monitoring und Alarmweg festlegen.
@@ -306,7 +347,9 @@ Das Projekt ist erst fertig, wenn:
 3. `prospect.first_trial_contact_due`-Ereignisse korrekt, minimal und
    dedupliziert
    erzeugt werden;
-4. Zapier genau eine freigegebene Folgeaktion pro Ereignis ausführt;
+4. der private REST Hook keine Personendaten transportiert, je Ereignis
+   höchstens ein Claim entsteht und Zapier genau eine bestätigte freigegebene
+   Folgeaktion ausführt;
 5. Adminzugriff, Logs, Secrets, Aufbewahrung und Fehlerwege geprüft sind;
 6. Shadow- und Produktionsabnahme dokumentiert sind;
 7. kein expliziter Punkt des vereinbarten Pilotumfangs offen bleibt.

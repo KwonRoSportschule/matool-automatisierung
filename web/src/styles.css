@@ -719,8 +719,12 @@ footer {
     white-space: nowrap;
   }
 
-  .button-secondary span {
-    margin-right: 1.5rem;
+  .button-secondary .button-label {
+    display: none;
+  }
+
+  .button-secondary .button-icon {
+    margin: 0;
   }
 
   .metric-grid {

@@ -34,6 +34,9 @@ inhaltliche Prüfung vor einem Commit.
 - Produktion: Cloudflare Secrets und eng berechtigte Plattformbindungen.
 - Lokale Entwicklung: `.dev.vars`, niemals `.dev.vars.example`.
 - CI/CD: nur Repository- oder Cloudflare-Secrets mit minimalen Berechtigungen.
+- Cloudflare-Access-Service-Token, App-Bearer-Token und
+  Webhook-Signierschlüssel sind getrennte Zugangsdaten und werden nicht
+  wiederverwendet.
 - Frontend: keine Geheimnisse, keine MATOOL-Zugangsdaten und keine
   Zapier-Webhook-URL im ausgelieferten JavaScript.
 - Logs: Werte nur über eine feste Feld-Whitelist ausgeben.
@@ -52,8 +55,18 @@ inhaltliche Prüfung vor einem Commit.
 - Admin-Webseite und Admin-API werden mit Cloudflare Access geschützt.
 - Service-Endpunkte erhalten eine eigene Authentifizierung und eng begrenzte
   Rechte.
+- `/api/zapier/v1/*` liegt zusätzlich hinter einer Cloudflare-Access-
+  Service-Policy und verlangt im Worker einen unabhängigen Bearer-Token.
+- Die Mitarbeiter-Anwendung und die pfadgenaue Service-Anwendung
+  `/api/zapier/v1/*` besitzen unterschiedliche Access-Audiences. Der Worker
+  lehnt eine gemeinsame Audience für Service-Aufrufe als Fehlkonfiguration ab.
+- Die private Zapier-App bindet die erlaubte Middleware-Origin als
+  App-Umgebungswert fest, sendet Zugangsdaten nur an diese exakte Origin und
+  folgt dabei keinen Redirects.
 - Der Worker validiert das Access-JWT auf Signatur, Aussteller, Zielgruppe und
-  Ablaufzeit; nicht geschützte `workers.dev`- oder Preview-URLs dürfen keinen
+  Ablaufzeit. Mitarbeiter-JWTs benötigen eine Benutzerkennung; Service-JWTs
+  werden anhand des signierten `common_name` bei absichtlich leerem `sub`
+  erkannt. Nicht geschützte `workers.dev`- oder Preview-URLs dürfen keinen
   Bypass bilden.
 - Schreibende Adminaktionen prüfen zusätzlich CSRF-Token, `Origin` und
   `Content-Type`.
@@ -73,6 +86,11 @@ inhaltliche Prüfung vor einem Commit.
 ## Ereignisse und Zustellung
 
 - `source_key` und `event_id` sind deterministisch und eindeutig.
+- Der REST-Hook-Umschlag enthält keine Personendaten. Er wird zeitgebunden
+  signiert und enthält einen einmaligen Delivery-Token, von dem D1 nur den
+  Hash speichert.
+- Eine atomare D1-Schreiboperation erlaubt je `event_id` höchstens einen
+  Claim. Nur dieser erste Claim erhält die minimierte Ereignisnutzlast.
 - Ein Empfänger muss ein Ereignis anhand der `event_id` deduplizieren können.
 - Der Transport arbeitet mindestens einmal. Vor jeder externen Nebenwirkung
   muss das Ziel die `event_id` dauerhaft deduplizieren oder die Aktion selbst
@@ -81,6 +99,10 @@ inhaltliche Prüfung vor einem Commit.
   Zustellung fortgeschrieben.
 - Ein verlorener HTTP-Response darf höchstens einen sicheren Retry erzeugen,
   niemals ungeprüft eine zweite Kundenaktion.
+- Nach dem letzten ambigen Transportversuch bleibt der ausgegebene Token bis zu
+  seinem Ablauf claimbar; Lease-Ablauf allein darf diesen Claim nicht sperren.
+- Ein späterer permanenter Transportfehler darf einen noch gültigen Token aus
+  einem älteren ambigen oder akzeptierten Versuch nicht vorzeitig entwerten.
 - Erstimport und produktive Freigabe sind technisch getrennt.
 
 ## Verlängerungslinks

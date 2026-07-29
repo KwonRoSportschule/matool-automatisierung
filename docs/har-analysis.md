@@ -102,7 +102,7 @@ Navigationsbereiche erkennbar.
 |---|---|---|
 | Login | `POST /index.php` | `mail`, `pass` |
 | Modulnavigation | `GET /index.php` | `show` |
-| Interessent öffnen | `POST /json/session_interessenten_open.php` | `interessenten_open`, `todo=open` |
+| Interessenten-Selektion | `POST /json/session_interessenten_open.php` | `interessenten_open`, `todo` |
 | Interessentenstatistik | `POST /json/statistik_daten.php` | `id` |
 | Schüler öffnen | `POST /json/session_schueler_open.php` | `schueler_open`, `todo=open` |
 | Schülerdetail | `POST /json/schueler_daten.php` | `id`, `todo` |
@@ -114,14 +114,21 @@ Navigationsbereiche erkennbar.
 | Bericht erzeugen | `POST /json/berichte_erzeugen_pdf.php` | Berichtstyp und Zeitraum |
 | Standortwechsel | im JavaScript referenziert | `id` |
 
-Die `session_*`-Endpunkte antworten leer. Name und zeitliche Abfolge legen eine
-Änderung von Sessionzustand nahe; dies ist im PoC zu verifizieren. Bis dahin
-dürfen zwei Abläufe nicht unkoordiniert dieselbe Session teilen.
+Für `/json/session_interessenten_open.php` sind die statischen
+JavaScript-Funktionsnamen `session_interessenten_open` und `detail_toggle`
+belegt. Der XHR-Response-Body wurde jedoch nicht in der HAR eingebettet.
+Rückgabeformat, Seiteneffekt und genaue Parametersemantik sind deshalb offen.
+Name und zeitliche Abfolge legen eine Änderung von Sessionzustand nahe; dies ist
+im PoC zu verifizieren. Bis dahin dürfen zwei Abläufe nicht unkoordiniert
+dieselbe Session teilen.
 
 ## 7. Antwort- und Parsergrenzen
 
 Die HAR enthält Größenmetadaten, aber fast keine fachlich wichtigen
-Response-Bodies:
+Response-Bodies. Von 841 Einträgen enthalten nur 23 eingebettete
+JavaScript-, HTML- oder CSS-Bodies: 6 JavaScript-, 2 HTML- und 15 CSS-Bodies.
+Insbesondere fehlen die meisten Dokument- und XHR-Antworten. Negative Befunde
+beweisen deshalb nicht, dass ein Feld serverseitig nicht existiert.
 
 - Interessentenseite ungefähr 0,8 MB;
 - Schülerseite ungefähr 1,0 MB;
@@ -129,9 +136,25 @@ Response-Bodies:
 - keine verlässlichen CSS-Selektoren;
 - keine sichtbaren Pflichtfelder oder Fehlermeldungen.
 
-Pagination-Grafiken werden geladen, jedoch wurden keine Parameter wie `page`,
-`offset`, `limit` oder `search` beobachtet. Möglich ist eine vollständige Liste
-mit clientseitiger Pagination; dies ist nicht bestätigt.
+Pagination ist visuell durch `.pagination`, `.pagination:hover`,
+`.pagination_selected` sowie die zugehörigen drei Bildressourcen belegt. Es
+wurden jedoch keine fachlichen Parameter wie `page`, `pageSize`,
+`currentPage`, `offset`, `limit` oder `search` und kein Paging-Endpunkt
+nachgewiesen. Möglich ist eine vollständige Liste mit clientseitiger
+Pagination; dies ist nicht bestätigt.
+
+Die CSS-Selektoren `.serviceProbeformRow`, `.serviceProbeformName`,
+`.serviceProbeformBtns`, `#serviceProbeformPlus` sowie die entsprechenden
+`serviceLeadform*`-Varianten sind nur als unbenutzte Stildefinitionen sichtbar.
+Eine Zuordnung zu Probetraining oder Interessenten wäre Spekulation.
+
+Nicht statisch nachgewiesen sind insbesondere:
+
+- ein Bezeichner für `Probetraining`, ersten Termin oder `appointment`;
+- eine explizite Interessenten- oder Termin-ID;
+- fachliche Status-, Absage- oder Archivfelder;
+- die Semantik des generischen Feldes `id` bei `/index.php`;
+- eine vollständige oder paginierte Interessenten-Antwort.
 
 ## 8. Was vor einem Collector nachgewiesen werden muss
 
@@ -140,13 +163,15 @@ mit clientseitiger Pagination; dies ist nicht bestätigt.
 | Login per Worker-`fetch` | offen |
 | CookieJar mit echtem Cookie-Namen | offen |
 | stabiler Loginmarker | offen |
-| GLZ-Listenrequest | nicht in HAR isoliert |
-| vollständige GLZ-Response | fehlt |
+| Interessentenliste und vollständige Response | Request belegt, Response fehlt |
+| Feld des ersten Probetrainingstermins | nicht belegt |
+| stabile Interessenten-ID | nicht belegt |
+| stabile Termin-ID oder kontrollierte Terminzuordnung | nicht belegt |
+| Status-, Absage-, Archiv- und Opt-out-Merkmale | nicht belegt |
 | Tabellen- und Feldselektoren | fehlen |
-| stabile Mitgliedschafts-ID | offen |
 | leeres Ergebnis | fehlt |
 | Fehlerantwort | fehlt |
-| Pagination/Filter | offen |
+| Pagination/Filter | visuell belegt, technische Semantik offen |
 | Standortwechsel | nur referenziert |
 | CPU-Zeit beim Parser | ungemessen |
 
@@ -154,14 +179,18 @@ mit clientseitiger Pagination; dies ist nicht bestätigt.
 
 Priorität:
 
-1. Quellcode der vorhandenen privaten Zapier-MATOOL-Integration beschaffen.
-2. Falls nicht verfügbar, einen lokalen read-only Probe-Client implementieren.
-3. Der Probe-Client protokolliert nur:
+1. Einen lokalen read-only Probe-Client verwenden. Die frühere private
+   Zapier-MATOOL-Integration ist nicht verfügbar und wird nicht mehr als
+   Eingangsquelle vorausgesetzt; die neue private Zapier-App kommuniziert nur
+   mit der Middleware.
+2. Der Probe-Client protokolliert nur:
    - Cookie-Namen, niemals Werte;
    - Status und Redirectpfad;
    - HTML-Größe;
    - Formular-, Tabellen- und Feldnamen;
    - anonymisierte Mengen und Struktur-Hashes.
-4. Erst danach eine vollständig synthetische Parser-Fixture erstellen.
+3. Erst nach dem Nachweis von Interessenten-ID, Termin-ID, Feld und Format des
+   ersten Probetrainingstermins sowie Status-/Ausschlussmerkmalen eine
+   vollständig synthetische Parser-Fixture erstellen.
 
 Ein weiterer unredigierter HAR-Upload ist nicht der bevorzugte Weg.

@@ -5,17 +5,22 @@
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "pnpm run build:web && pnpm run build:worker",
+    "build": "pnpm run build:web && pnpm run build:worker && pnpm run build:zapier",
+    "build:zapier": "pnpm --dir zapier-app run build",
     "build:web": "vite build",
     "build:worker": "wrangler deploy --dry-run --outdir dist/worker --env staging",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build:worker && pnpm run scan",
+    "ci": "pnpm run check && pnpm run validate:zapier:offline && pnpm run package:zapier:ci",
     "cf:types": "wrangler types src/worker-configuration.d.ts",
     "db:migrate:local": "wrangler d1 migrations apply matool-middleware-local --local",
     "dev": "pnpm run build:web && wrangler dev",
+    "package:zapier:ci": "pnpm --dir zapier-app run package:ci",
     "scan": "node scripts/check-repository.mjs",
-    "test": "pnpm run build:web && vitest run",
+    "test": "pnpm run build:web && vitest run && pnpm --dir zapier-app run test",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+    "typecheck": "tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit && pnpm --dir zapier-app run typecheck",
+    "validate:zapier": "pnpm --dir zapier-app run validate",
+    "validate:zapier:offline": "pnpm --dir zapier-app run validate:offline"
   },
   "dependencies": {
     "jose": "6.2.4"

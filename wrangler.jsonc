@@ -18,6 +18,7 @@
   "vars": {
     "APP_ENV": "local",
     "ACCESS_AUD": "configure-with-cloudflare-access",
+    "ACCESS_SERVICE_AUD": "configure-with-cloudflare-access-service-app",
     "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
     "MATOOL_BASE_URL": "https://core.matool.de",
     "OUTBOUND_DELIVERY_ENABLED": "false"
@@ -38,6 +39,7 @@
       "vars": {
         "APP_ENV": "staging",
         "ACCESS_AUD": "configure-with-cloudflare-access",
+        "ACCESS_SERVICE_AUD": "configure-with-cloudflare-access-service-app",
         "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false"
@@ -61,6 +63,7 @@
       "vars": {
         "APP_ENV": "production",
         "ACCESS_AUD": "configure-with-cloudflare-access",
+        "ACCESS_SERVICE_AUD": "configure-with-cloudflare-access-service-app",
         "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false"

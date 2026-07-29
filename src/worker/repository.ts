@@ -1,5 +1,8 @@
 import { AppError } from "../core/app-error";
-import { FIRST_TRIAL_COLLECTOR } from "../core/first-trial";
+import {
+  FIRST_TRIAL_COLLECTOR,
+  FIRST_TRIAL_EVENT_TYPE
+} from "../core/first-trial";
 import type { Env } from "./env";
 
 interface ProcessRow {
@@ -29,6 +32,10 @@ interface CountRow {
   status: string;
 }
 
+interface TotalCountRow {
+  count: number;
+}
+
 interface FirstTrialConfig {
   contactChannel: "email" | "sms" | "staff_task" | null;
   contactLeadMinutes: number | null;
@@ -37,7 +44,13 @@ interface FirstTrialConfig {
 
 export async function getAdminStatus(env: Env): Promise<unknown> {
   try {
-    const [process, lastRun, eventCounts] = await Promise.all([
+    const [
+      process,
+      lastRun,
+      eventCounts,
+      activeSubscriptions,
+      unconfirmedClaims
+    ] = await Promise.all([
       env.DB.prepare(
         `SELECT process_key, display_name, mode, policy_version, config_json, updated_at
          FROM process_config
@@ -62,7 +75,21 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
          GROUP BY status`
       )
         .bind(FIRST_TRIAL_COLLECTOR)
-        .all<CountRow>()
+        .all<CountRow>(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM zapier_subscriptions
+         WHERE status = 'active'
+           AND event_type = ?`
+      )
+        .bind(FIRST_TRIAL_EVENT_TYPE)
+        .first<TotalCountRow>(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS count
+         FROM event_claims
+         WHERE confirmed_at IS NULL
+           AND datetime(review_after) <= CURRENT_TIMESTAMP`
+      ).first<TotalCountRow>()
     ]);
 
     if (!process) {
@@ -103,12 +130,17 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
           sourceMappingVerified: false
         },
         zapier: {
+          activeSubscriptions: activeSubscriptions?.count ?? 0,
+          claimGuardImplemented: true,
           configured: Boolean(
-            env.ZAPIER_CATCH_HOOK_URL && env.ZAPIER_SIGNING_SECRET
+            env.ZAPIER_SERVICE_TOKEN &&
+              env.ZAPIER_WEBHOOK_SIGNING_SECRET &&
+              (activeSubscriptions?.count ?? 0) === 1
           ),
           outboundEnabled: env.OUTBOUND_DELIVERY_ENABLED === "true",
           plan: "Professional",
-          targetDedupeVerified: false
+          targetDedupeVerified: false,
+          unconfirmedClaims: unconfirmedClaims?.count ?? 0
         }
       },
       lastRun: lastRun ? mapRun(lastRun) : null,

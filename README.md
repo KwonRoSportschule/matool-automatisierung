@@ -23,7 +23,9 @@ Stand: 29. Juli 2026
   automatisiert kontaktieren.
 - Zapier Professional ist vorhanden.
 - Eine bestehende private Zapier-MATOOL-App ist nicht verfügbar; die benötigte
-  Zapier-Integration wird im Projekt neu gebaut.
+  private Zapier-App und ihr REST-Hook-Protokoll werden deshalb in diesem
+  Projekt neu gebaut. Das technische Grundgerüst liegt lokal vor, ist aber noch
+  mit keinem produktiven Zapier-Konto verbunden.
 
 ## Bestätigtes Zielbild
 
@@ -38,16 +40,23 @@ Mitarbeiter-Dashboard / Cron
               v
       Cloudflare Worker <----> D1
           |        |
-          v        v
-       MATOOL   private Zapier-App
-                         |
-                         v
-                    Zapier-Ablauf
+          v        +---- PII-freier REST-Hook-Umschlag ----+
+       MATOOL                                             v
+                                                private Zapier-App
+                                                    |         |
+                                     Claim/Ergebnis |         v
+                                                    +---- Zapier-Ablauf
 ```
 
 Die bestätigte Implementierung verwendet Workers Static Assets, damit UI, API,
 Bindings, Cron und Observability gemeinsam deployt werden können. Ein getrenntes
 Cloudflare-Pages-Projekt ist nicht Teil des Zielbilds.
+
+Die private Zapier-App verwendet einen echten REST-Hook-Trigger mit dynamischer
+An- und Abmeldung, keinen manuell kopierten Catch Hook und kein Polling. Der
+Hook enthält keine Personendaten. Erst ein einmaliger, atomarer Claim über die
+Middleware liefert die freigegebene Ereignisnutzlast; der letzte Zap-Schritt
+meldet Erfolg oder einen technischen Fehler zurück.
 
 ## Sicherheitsgrundsätze
 
@@ -57,6 +66,14 @@ Cloudflare-Pages-Projekt ist nicht Teil des Zielbilds.
   ignorierte `.dev.vars`.
 - Nur explizit freigegebene Felder verarbeiten.
 - Keine allgemeine Proxy-API zu MATOOL bereitstellen.
+- Der Zapier-Hook-Umschlag enthält ausschließlich technische IDs, Ereignistyp,
+  Schemaversion und einen kurzlebigen Delivery-Token, aber keine Personendaten.
+- Jeder Klartext-Delivery-Token wird nur im zugehörigen Hook-Versuch
+  übertragen; D1 speichert ausschließlich seinen Hash.
+- Zapier-Service-Endpunkte verlangen sowohl einen Cloudflare-Access-
+  Service-Token als auch einen unabhängigen App-Bearer-Token.
+- Mitarbeiter- und Zapier-Service-Routen verwenden getrennte Cloudflare-
+  Access-Anwendungen mit unterschiedlichen Audience-Werten.
 - Keine Personenkennungen in Verlängerungs-URLs; stattdessen undurchsichtige,
   zeitlich begrenzte Tokens.
 - Ein Erstimport baut nur eine Baseline auf und löst keine Kundenaktion aus.
@@ -68,6 +85,7 @@ Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 
 - [Zielarchitektur](docs/architecture.md)
 - [Umsetzungs- und Abnahmeplan](docs/implementation-plan.md)
+- [Inbetriebnahme-Runbook](docs/deployment-runbook.md)
 - [Sanitisierte HAR-Analyse](docs/har-analysis.md)
 - [Aktiver Pilot: Interessenten vor dem ersten Probetraining](docs/pilot-interessenten.md)
 - [Offene Entscheidungen](docs/open-decisions.md)
@@ -90,10 +108,31 @@ vor:
    `prospect.first_trial_contact_due`-Testereignisse in D1 speichern.
 5. Ergebnisse ohne unmaskierte Personendaten im geschützten Mitarbeiterbereich
    anzeigen.
-6. Die private Zapier-App und ihre Anbindung an die Middleware mit synthetischen
+6. Die private Zapier-App per REST Hook abonnieren, einen PII-freien Umschlag
+   zustellen und Claim sowie Ergebnisaktion ausschließlich mit synthetischen
    Ereignissen testen.
 
 Produktive Kontaktaufnahme, Änderungen in MATOOL und produktive
 Zapier-Folgeaktionen bleiben bis nach Shadow-Betrieb und fachlicher Abnahme
 deaktiviert. Die Verlängerung nach GLZ ist eine spätere Ausbaustufe und nicht
-Teil dieses Piloten.
+Teil dieses Piloten. Insbesondere bleiben die MATOOL-Felder für den ersten
+Probetrainingstermin sowie Vorlauf, Kontaktmedium, Einwilligungs- und
+Ausschlussregeln weiterhin offen. Auch die Idempotenz der späteren externen
+E-Mail-, SMS- oder sonstigen Kontaktaktion ist noch nicht nachgewiesen.
+
+## Lokale Qualitätsprüfung
+
+```text
+pnpm install --frozen-lockfile
+pnpm run ci
+```
+
+`pnpm run ci` prüft TypeScript, Worker-/D1-/Zapier-Verträge, Frontend- und
+Worker-Build, Repository-Secrets, die lokale Zapier-Plattformstruktur und das
+tatsächliche Zapier-ZIP-Packaging.
+Dieselbe Grenze läuft in GitHub Actions bei Pull Requests und Änderungen an
+`main`. Die CI verwendet Zapier dabei mit `--without-style` und sendet die
+App-Definition nicht an den optionalen Stilprüfdienst. Sie führt ausdrücklich
+kein Deployment und keinen Echtdatenzugriff aus. Die vollständige
+Stilvalidierung kann vor einem späteren privaten Upload bewusst mit
+`pnpm run validate:zapier` ausgeführt werden.

@@ -29,9 +29,14 @@
 
         <div class="topbar-actions">
           <span class="environment-pill" id="environment">Lokal</span>
-          <button class="button button-secondary" id="refresh" type="button">
-            <span aria-hidden="true">↻</span>
-            Status aktualisieren
+          <button
+            class="button button-secondary"
+            id="refresh"
+            type="button"
+            aria-label="Status aktualisieren"
+          >
+            <span class="button-icon" aria-hidden="true">↻</span>
+            <span class="button-label">Status aktualisieren</span>
           </button>
         </div>
       </header>
@@ -84,8 +89,8 @@
             <div class="metric-icon zapier-icon" aria-hidden="true">Z</div>
             <div>
               <span>Zapier Professional</span>
-              <strong id="zapier-status">Hook ausstehend</strong>
-              <small id="zapier-detail">Ausgabe ist gesperrt</small>
+              <strong id="zapier-status">Trigger ausstehend</strong>
+              <small id="zapier-detail">Private App noch nicht verbunden</small>
             </div>
           </article>
 
@@ -233,8 +238,8 @@
             <div class="eyebrow">Nächster Schritt</div>
             <h2 id="next-title">Read-only Probe vorbereiten</h2>
             <p>
-              Der erste reale Abruf ermittelt ausschließlich Struktur,
-              Feldnamen und Mengen. Rohdaten werden weder gespeichert noch
+              Der erste reale Abruf ermittelt ausschließlich technische
+              Struktur und Mengen. Rohdaten werden weder gespeichert noch
               angezeigt.
             </p>
             <button class="button button-primary" id="dry-run" type="button" disabled>

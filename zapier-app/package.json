@@ -1,0 +1,28 @@
+{
+  "name": "@kwonro/matool-middleware-zapier",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "package:ci": "pnpm run build && zapier-platform build --skip-dep-install",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "validate": "pnpm run build && zapier-platform validate",
+    "validate:offline": "pnpm run build && zapier-platform validate --without-style",
+    "zapier:build": "pnpm run build && zapier-platform build"
+  },
+  "dependencies": {
+    "zapier-platform-core": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.2",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "zapier-platform-cli": "19.0.0"
+  }
+}

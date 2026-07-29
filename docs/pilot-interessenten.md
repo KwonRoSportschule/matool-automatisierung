@@ -102,7 +102,7 @@ Die bereits implementierte reine Kernlogik kennt:
 Weitere Ausschlüsse für Status, Absage, Archivierung, Opt-out, Einwilligung oder
 bereits erfolgten Kontakt werden erst nach fachlicher Bestätigung ergänzt.
 
-Der vorgeschlagene Ereignistyp lautet:
+Der technische Ereignistyp lautet:
 
 ```text
 prospect.first_trial_contact_due
@@ -113,17 +113,61 @@ Termin-ID und Ereignistyp gehasht. Eine reine Terminverschiebung ändert die
 Quellrevision, erzeugt für denselben Termin aber keine zweite Ereignis-ID.
 Payload- und Schemaversion sind nicht Teil der fachlichen Ereignis-ID.
 
-## 6. Minimale Zapier-Nutzlast
+## 6. Privater Zapier REST Hook
 
-Der technische Entwurf enthält ausschließlich:
+Die private Zapier-App verwendet einen echten REST-Hook-Trigger. Beim
+Aktivieren registriert `performSubscribe` die von Zapier erzeugte Zieladresse
+bei der Middleware; `performUnsubscribe` deaktiviert diese Subscription. Es
+gibt keinen manuell kopierten Catch Hook und kein Polling.
+
+### 6.1 Hook-Umschlag ohne Personendaten
+
+Die Middleware sendet an den registrierten Hook ausschließlich:
+
+```text
+schema_version
+event_id
+event_type
+delivery_id
+delivery_token
+```
+
+Der Umschlag enthält weder Name noch E-Mail-Adresse, Telefonnummer, Termin,
+Standort oder andere Fachdaten. Er wird über Zeitstempel und kanonischen Body
+mit HMAC-SHA-256 signiert. Pro Outbox-Versuch entsteht ein neuer
+kryptografischer Delivery-Token mit kurzer Gültigkeit; der Klartext steht nur
+im Hook, D1 speichert ausschließlich seinen SHA-256-Hash. Hook-Zieladresse,
+Token und Signatur dürfen nicht in Logs oder im Dashboard erscheinen.
+
+Ein HTTP 2xx auf diesen Umschlag bedeutet ausschließlich
+`transport_accepted`, nicht „Interessent kontaktiert“ und auch noch nicht
+`action_confirmed`.
+
+Ein Timeout oder ein anderer wiederholbarer Fehler kann trotz fehlender
+Transportbestätigung bereits einen Zap ausgelöst haben. Nach dem letzten
+Versuch wartet die Middleware deshalb mindestens bis zum Ablauf des
+ausgegebenen Delivery-Tokens auf einen Claim. Ein gültiger verspäteter Claim
+wird noch angenommen; erst danach wird ohne Claim dauerhaft fehlgeschlagen.
+Auch ein späterer permanenter Fehler darf einen noch gültigen Token aus einem
+älteren ambigen oder akzeptierten Versuch nicht entwerten. Ein permanenter
+Fehler ohne älteren gültigen Token beendet den Vorgang dagegen sofort.
+
+### 6.2 Einmaliger atomarer Claim
+
+Nach erfolgreicher Hook-Prüfung sendet die private App `event_id`,
+`delivery_id` und `delivery_token` an
+`POST /api/zapier/v1/events/claim`. D1 legt atomar höchstens einen Claim je
+`event_id` an. Nur der erste gültige Claim erhält eine `claim_id` und die
+minimierte Ereignisnutzlast:
 
 ```text
 event_id
 event_type
+claim_id
 occurred_at
 payload_version
-prospect.first_name        nur falls freigegeben
-prospect.email             nur beim Kontaktweg E-Mail
+prospect.first_name        nur falls fachlich freigegeben
+prospect.email             nur beim freigegebenen Kontaktweg E-Mail
 prospect.phone             nur beim dafür freigegebenen Kontaktweg
 first_trial.appointment_id
 first_trial.starts_at
@@ -132,12 +176,57 @@ contact.channel
 contact.due_at
 ```
 
-Die Catch-Hook-Adresse und Signatur liegen nur in Worker-Secrets. HTTP 2xx
-bedeutet ausschließlich `transport_accepted`, nicht „Interessent kontaktiert“.
-Da Zapier Instant Hooks keine fachliche Deduplizierung garantieren, benötigt der
-Zap beziehungsweise die private Zapier-App vor jeder Kundenaktion einen
-atomaren Claim anhand der `event_id` oder eine nachweislich idempotente
-Zielaktion.
+Wiederholungen liefern `already_claimed` beziehungsweise
+`already_confirmed` und starten keinen zweiten Zap. Ein nach erfolgreichem
+Claim verlorener Response wird nicht erneut mit Personendaten beantwortet; ein
+unbestätigter Claim wird nach `review_after` sichtbar kontrolliert. Damit wird
+eine Doppelaktion zugunsten einer gegebenenfalls manuellen Aufarbeitung
+vermieden.
+
+Die produktive Claim-Antwort bleibt gesperrt, solange die in Abschnitt 4
+aufgeführten MATOOL-Felder und ihre fachliche Freigabe fehlen. Synthetische
+Beispieldaten beweisen keine reale Feldzuordnung.
+
+### 6.3 Ergebnis-Aktion und Authentifizierung
+
+Der letzte Zap-Schritt muss die private App-Aktion „Kontakt-Ergebnis melden“
+ausführen. Sie sendet:
+
+```text
+event_id
+claim_id
+outcome        succeeded | failed
+failure_code   optional, nur technisch und ohne PII
+```
+
+Nur ein bestätigtes `succeeded` setzt das Ereignis auf `action_confirmed`.
+Dasselbe Ergebnis kann idempotent wiederholt werden; ein widersprüchliches
+Ergebnis wird abgewiesen. Die Bestätigung macht eine bereits ausgeführte,
+nicht-idempotente Zielaktion nicht rückgängig. Unterstützt das Kontaktziel
+einen Idempotenzschlüssel, verwendet der Zap deshalb zusätzlich `event_id`
+beziehungsweise `claim_id`.
+
+Der atomare Claim löst damit ausschließlich die Deduplizierung des
+REST-Hook-Triggers:
+
+```text
+claimGuardImplemented = true
+targetDedupeVerified  = false
+```
+
+Die Idempotenz der tatsächlichen E-Mail-, SMS- oder sonstigen Kontaktaktion bei
+ambiger Provider-Antwort, Zap-Retry oder manueller Wiederholung bleibt ein
+separates Produktions-Gate.
+
+Alle privaten App-Aufrufe an die Middleware benötigen gleichzeitig:
+
+- einen Cloudflare-Access-Service-Token über dessen Client-ID und
+  Client-Secret für die ausschließlich auf `/api/zapier/v1/*` begrenzte
+  Access-Anwendung mit eigener Audience;
+- einen unabhängigen App-Bearer-Token im `Authorization`-Header.
+
+Der Webhook-Signierschlüssel ist ein separates Secret und schützt die
+entgegengesetzte Richtung von der Middleware zum Zapier REST Hook.
 
 ## 7. Baseline, Shadow und Aktivierung
 
@@ -147,8 +236,9 @@ Zielaktion.
    aber null Zapier-Ereignisse erzeugen.
 4. **Shadow:** Kandidaten und Ausschlüsse über mindestens zehn vollständige
    Läufe auf Datensatzebene vergleichen.
-5. **Synthetischer Zapier-Test:** gleiche `event_id` mehrfach zustellen und
-   exakt eine ungefährliche Testaktion nachweisen.
+5. **Synthetischer Zapier-Test:** REST Hook abonnieren, denselben technischen
+   Umschlag beziehungsweise dieselbe `event_id` mehrfach zustellen, genau einen
+   Claim erhalten und genau eine ungefährliche Ergebnis-Aktion bestätigen.
 6. **Begrenzter Pilot:** nur freigegebene Standorte, Zeiten, Kontaktwege und
    Texte aktivieren.
 
@@ -167,8 +257,15 @@ behandelt und schreiben keinen erfolgreichen Watermark fort.
 - Access-Schutz auch vor statischen Assets;
 - CSRF-, Origin- und Content-Type-Prüfung für die Probe;
 - D1-Migration in der Worker-Testlaufzeit;
-- Zapier-Hook-Allowlist, HMAC-Signatur und Retry-Klassifizierung;
-- Repository-Scanner gegen HAR-, Secret-, Private-Key- und Catch-Hook-Leaks.
+- Zapier-Hook-Allowlist, PII-freier Umschlag, HMAC-Signatur und
+  Retry-Klassifizierung;
+- private Zapier-App mit REST-Hook-Subscription, Claim-Trigger und
+  Ergebnis-Aktion als lokalem technischen Grundgerüst;
+- App-Test, dass ein erfolgreicher Claim genau ein Ereignis und ein doppelter
+  Claim kein zweites Ereignis ausgibt;
+- Weitergabe von Access- und Bearer-Zugangsdaten ausschließlich an den
+  konfigurierten Middleware-Origin;
+- Repository-Scanner gegen HAR-, Secret-, Private-Key- und Webhook-URL-Leaks.
 
 ## 9. Noch benötigte fachliche Antworten
 
@@ -178,4 +275,3 @@ behandelt und schreiben keinen erfolgreichen Watermark fort.
 4. Welche Status-, Absage-, Archiv-, Opt-out-, Einwilligungs- und
    Bereits-kontaktiert-Regeln gelten?
 5. Welche Standorte und Kontaktzeiten gehören in den ersten Pilot?
-

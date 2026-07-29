@@ -35,6 +35,55 @@ MATOOL-Zugangsdaten.
 Zapier Professional ist vorhanden. Google Sheets ist für den ersten Pilot weder
 Transportweg noch Zustandsquelle.
 
+### OD-011: REST-Hook-, Claim- und Ergebnisprotokoll — entschieden
+
+Die neue private Zapier-App verwendet einen echten REST-Hook-Trigger mit
+`performSubscribe` und `performUnsubscribe`. Ein manuell kopierter Catch Hook,
+Polling und ein direkter Zugriff der Zapier-App auf MATOOL sind ausgeschlossen.
+
+Der gewählte Ablauf:
+
+1. Zapier liefert beim Aktivieren des Zaps eine Hook-Zieladresse; die private
+   App registriert sie authentifiziert bei der Middleware.
+2. Die Middleware sendet einen HMAC-signierten Umschlag mit
+   `schema_version`, `event_id`, `event_type`, `delivery_id` und einem
+   kurzlebigen `delivery_token`. Der Umschlag enthält keine Personendaten.
+3. Für jeden Zustellversuch wird ein neuer Token erzeugt; D1 speichert nur
+   dessen Hash. Ein atomarer Claim legt höchstens einen `event_claims`-Eintrag
+   je `event_id` an und gibt nur beim ersten erfolgreichen Claim die minimierte
+   Ereignisnutzlast aus.
+4. Der letzte Zap-Schritt meldet mit `event_id` und `claim_id` entweder
+   `succeeded` oder `failed` zurück. Ein Fehlercode darf nur technische,
+   nicht personenbezogene Informationen enthalten.
+5. Alle Service-API-Aufrufe benötigen sowohl einen Cloudflare-Access-
+   Service-Token als auch einen unabhängigen App-Bearer-Token. Die
+   HMAC-Signatur des ausgehenden Hooks ist ein dritter, getrennter Schutz.
+
+Der Transport bleibt mindestens-einmalig: Ein verlorener 2xx-Response oder
+Timeout kann einen weiteren PII-freien Umschlag auslösen. Die eindeutige
+`event_id` in `event_claims` verhindert jedoch einen zweiten Trigger-Claim.
+Ein verlorener Claim-Response wird nicht automatisch erneut mit Personendaten
+beantwortet, sondern nach `review_after` kontrolliert aufgearbeitet.
+
+Die Ergebnis-Aktion ist die verbindliche fachliche Rückmeldung, aber keine
+rückwirkende Transaktion über eine bereits ausgeführte externe Nebenwirkung.
+Wenn das gewählte Kontaktziel eigene Retries oder Idempotenzschlüssel kennt,
+muss der Zap `event_id` beziehungsweise `claim_id` dort ebenfalls verwenden.
+Dieser Nachweis bleibt ein Produktions-Gate, ist aber keine offene Entscheidung
+über die Trigger-Richtung mehr.
+
+Damit gilt ausdrücklich:
+
+```text
+claimGuardImplemented = true
+targetDedupeVerified  = false
+```
+
+Der erste Wert verhindert doppelte Zap-Starts bei Hook-Retrys. Der zweite Wert
+bleibt `false`, bis das konkrete E-Mail-, SMS- oder sonstige Kontaktziel auch
+bei verlorener Provider-Antwort, eigenem Retry und manueller
+Zap-Wiederholung nachweislich keine zweite Nebenwirkung ausführt.
+
 ## Priorität 0: vor realem Connector oder Echtdaten
 
 ### OD-003: Zustimmung und Nutzungsrahmen für MATOOL-Automation
@@ -80,7 +129,8 @@ Vor dem ersten Baseline-Lauf mit Echtdaten:
 - getrennte Produktionsressourcen und Secrets;
 - D1-Jurisdiktion `eu` bereits bei Erstellung;
 - Access-Schutz auch für Preview- und `workers.dev`-Adressen;
-- Löschfristen für Runs, Records, Events, Deliveries und offene Vorgänge.
+- Löschfristen für Runs, Records, Events, Outbox, Deliveries,
+  Zapier-Subscriptions, Delivery-Token, Claims und offene Vorgänge.
 
 Die EU-Jurisdiktion betrifft nur D1. Worker-Ausführung und externe Datenflüsse
 benötigen weiterhin eine eigene Datenschutzprüfung.
@@ -131,27 +181,6 @@ Zu klären:
 - Verhalten bei Absage, Archivierung oder unklarem Status;
 - Standorte oder Interessentengruppen ohne automatische Kontaktfreigabe.
 
-## Priorität 2: vor Zapier-Test
-
-### OD-011: Trigger-Richtung und verbindliche Ziel-Deduplizierung
-
-Zu entscheiden ist, ob die neue private Zapier-App Ereignisse per REST Hook
-empfängt oder kontrolliert von der Middleware pollt. Ein direkter Zugriff der
-Zapier-App auf MATOOL ist ausgeschlossen.
-
-Der Transport arbeitet mindestens einmal. Verlorener 2xx-Response und Timeout
-können deshalb einen Retry auslösen.
-
-Verbindliches Gate:
-
-- Zapier beziehungsweise das Ziel speichert die `event_id` dauerhaft **vor**
-  der externen Nebenwirkung und verwirft Wiederholungen; oder
-- die Zielaktion ist selbst nachweislich idempotent.
-
-Eine reine Rückbestätigung, Transportannahme oder manuelle Freigabe verhindert
-allein keine Doppelaktion. Ohne nachgewiesene Ziel-Deduplizierung wird keine
-automatische Kundenaktion aktiviert.
-
 ## Priorität 3: vor Produktivfreigabe
 
 ### OD-012: Standorte und Sektoren
@@ -171,6 +200,8 @@ Fristen festlegen für:
 - aktuelle Interessenten- und Termindatensätze;
 - Ereignisversionen;
 - erfolgreiche und fehlgeschlagene Zustellungen;
+- aktive und deaktivierte Zapier-Subscriptions;
+- abgelaufene Delivery-Token und unbestätigte Claims;
 - erfolgreiche Kontakte und technische Ausschlüsse.
 
 ### OD-014: Cloudflare-Zugriff und Domain
@@ -179,7 +210,11 @@ Benötigt werden später:
 
 - Cloudflare-Konto und gewünschte Domain;
 - erlaubte Mitarbeiteridentitäten für Cloudflare Access;
+- getrennte Access-Anwendungen und Audience-Werte für Mitarbeiterzugriff und
+  `/api/zapier/v1/*`;
 - GitHub-Repository-Verknüpfung;
+- endgültige HTTPS-Origin zum Festsetzen von
+  `MATOOL_MIDDLEWARE_ORIGIN` in der privaten Zapier-App;
 - ausdrücklich getrennte Staging- und Produktions-Builds.
 
 ## Spätere Ausbaustufen

@@ -1,11 +1,18 @@
 import { AppError } from "../core/app-error";
 import { canonicalJson, hmacSha256Base64Url } from "../core/crypto";
-import type { ProspectContactEvent } from "../core/first-trial";
+
+export interface ZapierDeliveryEnvelope {
+  deliveryId: string;
+  deliveryToken: string;
+  eventId: string;
+  eventType: string;
+  schemaVersion: 1;
+}
 
 export interface ZapierSinkConfig {
-  catchHookUrl: string;
   enabled: boolean;
   signingSecret: string;
+  targetUrl: string;
 }
 
 export type SinkResult =
@@ -20,7 +27,7 @@ export type SinkResult =
     };
 
 export async function deliverToZapier(
-  event: ProspectContactEvent,
+  envelope: ZapierDeliveryEnvelope,
   config: ZapierSinkConfig,
   fetchImplementation: typeof fetch = fetch
 ): Promise<SinkResult> {
@@ -40,31 +47,18 @@ export async function deliverToZapier(
     );
   }
 
-  const url = validateZapierHookUrl(config.catchHookUrl);
+  const url = validateZapierTargetUrl(config.targetUrl);
   const body = canonicalJson({
-    event_id: event.eventId,
-    event_type: event.eventType,
-    occurred_at: event.occurredAt,
-    payload_version: event.payloadVersion,
-    prospect: {
-      email: event.prospect.email,
-      first_name: event.prospect.firstName,
-      phone: event.prospect.phone
-    },
-    first_trial: {
-      appointment_id: event.firstTrial.appointmentId,
-      location_code: event.firstTrial.locationCode,
-      starts_at: event.firstTrial.startsAt
-    },
-    contact: {
-      channel: event.contact.channel,
-      due_at: event.contact.dueAt
-    }
+    delivery_id: envelope.deliveryId,
+    delivery_token: envelope.deliveryToken,
+    event_id: envelope.eventId,
+    event_type: envelope.eventType,
+    schema_version: envelope.schemaVersion
   });
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = await hmacSha256Base64Url(
     config.signingSecret,
-    `${timestamp}.${event.eventId}.${body}`
+    `${timestamp}.${body}`
   );
 
   try {
@@ -72,7 +66,7 @@ export async function deliverToZapier(
       body,
       headers: {
         "Content-Type": "application/json",
-        "X-Matool-Event-Id": event.eventId,
+        "X-Matool-Event-Id": envelope.eventId,
         "X-Matool-Signature": `v1=${signature}`,
         "X-Matool-Timestamp": timestamp
       },
@@ -101,6 +95,14 @@ export async function deliverToZapier(
       };
     }
 
+    if (response.status === 410) {
+      return {
+        outcome: "permanent_error",
+        httpStatus: response.status,
+        errorCode: "zapier_subscription_gone"
+      };
+    }
+
     return {
       outcome: "permanent_error",
       httpStatus: response.status,
@@ -115,7 +117,7 @@ export async function deliverToZapier(
   }
 }
 
-export function validateZapierHookUrl(value: string): URL {
+export function validateZapierTargetUrl(value: string): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -126,7 +128,7 @@ export function validateZapierHookUrl(value: string): URL {
   if (
     url.protocol !== "https:" ||
     url.hostname !== "hooks.zapier.com" ||
-    !url.pathname.startsWith("/hooks/catch/") ||
+    url.pathname === "/" ||
     url.username ||
     url.password ||
     url.search ||
@@ -138,10 +140,12 @@ export function validateZapierHookUrl(value: string): URL {
   return url;
 }
 
+export const validateZapierHookUrl = validateZapierTargetUrl;
+
 function invalidHook(): AppError {
   return new AppError(
-    "invalid_zapier_hook",
+    "invalid_zapier_target",
     500,
-    "Die Zapier-Catch-Hook-Adresse ist ungültig."
+    "Die Zapier-Zieladresse ist ungültig."
   );
 }

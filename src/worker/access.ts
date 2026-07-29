@@ -1,4 +1,8 @@
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+  type JWTPayload
+} from "jose";
 
 import { AppError } from "../core/app-error";
 import type { Env } from "./env";
@@ -9,6 +13,8 @@ export interface AccessIdentity {
   authentication: "cloudflare-access" | "local-development";
 }
 
+export type AccessScope = "employee" | "zapier-service";
+
 const jwksByIssuer = new Map<
   string,
   ReturnType<typeof createRemoteJWKSet>
@@ -16,7 +22,8 @@ const jwksByIssuer = new Map<
 
 export async function requireAccessIdentity(
   request: Request,
-  env: Env
+  env: Env,
+  scope: AccessScope = "employee"
 ): Promise<AccessIdentity> {
   const localIdentity = getLocalDevelopmentIdentity(request, env);
   if (localIdentity) {
@@ -24,9 +31,18 @@ export async function requireAccessIdentity(
   }
 
   const issuer = normalizeAccessTeamDomain(env.ACCESS_TEAM_DOMAIN);
+  const audience =
+    scope === "zapier-service"
+      ? env.ACCESS_SERVICE_AUD
+      : env.ACCESS_AUD;
   if (
-    env.ACCESS_AUD.length === 0 ||
-    env.ACCESS_AUD.startsWith("configure-with-")
+    !audience ||
+    audience.length === 0 ||
+    audience.startsWith("configure-with-") ||
+    (
+      env.ACCESS_SERVICE_AUD !== undefined &&
+      env.ACCESS_SERVICE_AUD === env.ACCESS_AUD
+    )
   ) {
     throw new AppError(
       "access_not_configured",
@@ -50,23 +66,12 @@ export async function requireAccessIdentity(
       createAndCacheRemoteJwks(issuer);
     const { payload } = await jwtVerify(token, jwks, {
       algorithms: ["RS256"],
-      audience: env.ACCESS_AUD,
+      audience,
       issuer,
       clockTolerance: 5
     });
 
-    if (!payload.sub) {
-      throw new Error("missing subject");
-    }
-
-    const email =
-      typeof payload.email === "string" ? payload.email : undefined;
-
-    return {
-      subject: payload.sub,
-      ...(email ? { email } : {}),
-      authentication: "cloudflare-access"
-    };
+    return accessIdentityFromPayload(payload, scope);
   } catch {
     throw new AppError(
       "access_denied",
@@ -74,6 +79,42 @@ export async function requireAccessIdentity(
       "Der Mitarbeiterzugriff konnte nicht bestätigt werden."
     );
   }
+}
+
+export function accessIdentityFromPayload(
+  payload: JWTPayload,
+  scope: AccessScope
+): AccessIdentity {
+  if (payload.type !== "app") {
+    throw new Error("unexpected access token type");
+  }
+
+  if (scope === "zapier-service") {
+    const commonName =
+      typeof payload.common_name === "string"
+        ? payload.common_name.trim()
+        : "";
+    if (payload.sub !== "" || commonName.length === 0) {
+      throw new Error("missing service token identity");
+    }
+
+    return {
+      subject: `service-token:${commonName}`,
+      authentication: "cloudflare-access"
+    };
+  }
+
+  if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+    throw new Error("missing employee subject");
+  }
+  const email =
+    typeof payload.email === "string" ? payload.email : undefined;
+
+  return {
+    subject: payload.sub,
+    ...(email ? { email } : {}),
+    authentication: "cloudflare-access"
+  };
 }
 
 export function normalizeAccessTeamDomain(value: string): string {

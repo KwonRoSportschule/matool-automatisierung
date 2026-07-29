@@ -237,3 +237,69 @@ export async function buildProspectContactEvent(
     }
   };
 }
+
+export function parseProspectContactEventJson(
+  value: string
+): ProspectContactEvent {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw invalidEventPayload();
+  }
+
+  if (!isRecord(parsed)) {
+    throw invalidEventPayload();
+  }
+
+  const prospect = parsed.prospect;
+  const firstTrial = parsed.firstTrial;
+  const contact = parsed.contact;
+  if (
+    typeof parsed.eventId !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(parsed.eventId) ||
+    parsed.eventType !== FIRST_TRIAL_EVENT_TYPE ||
+    parsed.payloadVersion !== 1 ||
+    typeof parsed.sourceKey !== "string" ||
+    parsed.sourceKey.length === 0 ||
+    !isIsoTimestamp(parsed.occurredAt) ||
+    !isRecord(prospect) ||
+    !isNullableString(prospect.firstName) ||
+    !isNullableString(prospect.email) ||
+    !isNullableString(prospect.phone) ||
+    !isRecord(firstTrial) ||
+    typeof firstTrial.appointmentId !== "string" ||
+    firstTrial.appointmentId.length === 0 ||
+    !isIsoTimestamp(firstTrial.startsAt) ||
+    !isNullableString(firstTrial.locationCode) ||
+    !isRecord(contact) ||
+    (contact.channel !== "email" &&
+      contact.channel !== "sms" &&
+      contact.channel !== "staff_task") ||
+    !isIsoTimestamp(contact.dueAt)
+  ) {
+    throw invalidEventPayload();
+  }
+
+  return parsed as unknown as ProspectContactEvent;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function invalidEventPayload(): AppError {
+  return new AppError(
+    "invalid_event_payload",
+    500,
+    "Ein gespeichertes Ereignis ist ungültig."
+  );
+}

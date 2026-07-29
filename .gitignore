@@ -12,6 +12,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!zapier-app/.env.example
 secrets/
 *.pem
 *.key

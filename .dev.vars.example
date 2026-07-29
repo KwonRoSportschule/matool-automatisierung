@@ -9,5 +9,5 @@ CSRF_SECRET=replace-with-at-least-24-random-characters
 # MATOOL_REAL_RUNS_ENABLED=confirmed-read-only
 
 # Erst beim synthetischen Zapier-Test lokal setzen:
-# ZAPIER_CATCH_HOOK_URL=
-# ZAPIER_SIGNING_SECRET=
+# ZAPIER_SERVICE_TOKEN=
+# ZAPIER_WEBHOOK_SIGNING_SECRET=

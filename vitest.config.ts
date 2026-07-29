@@ -15,9 +15,14 @@ export default defineConfig({
           bindings: {
             APP_ENV: "test",
             ACCESS_AUD: "test-audience",
+            ACCESS_SERVICE_AUD: "test-service-audience",
             ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com",
             CSRF_SECRET: "synthetic-test-secret-that-is-not-used-anywhere-else",
             DEV_AUTH_BYPASS: "allow-loopback-only",
+            ZAPIER_SERVICE_TOKEN:
+              "synthetic-service-token-at-least-32-characters",
+            ZAPIER_WEBHOOK_SIGNING_SECRET:
+              "synthetic-webhook-signing-secret-for-tests",
             TEST_MIGRATIONS: migrations
           },
           d1Databases: ["DB"]

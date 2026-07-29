@@ -20,10 +20,13 @@ interface AdminStatus {
       sourceMappingVerified: boolean;
     };
     zapier: {
+      activeSubscriptions: number;
+      claimGuardImplemented: boolean;
       configured: boolean;
       outboundEnabled: boolean;
       plan: string;
       targetDedupeVerified: boolean;
+      unconfirmedClaims: number;
     };
   };
   lastRun: RunSummary | null;
@@ -145,12 +148,18 @@ function renderStatus(status: AdminStatus): void {
       : "Feldzuordnung noch offen";
 
   elements.zapierStatus.textContent = status.connections.zapier.configured
-    ? "Hook konfiguriert"
-    : "Hook ausstehend";
+    ? "Trigger verbunden"
+    : "Trigger ausstehend";
   elements.zapierDetail.textContent =
-    status.connections.zapier.outboundEnabled
+    status.connections.zapier.unconfirmedClaims > 0
+      ? status.connections.zapier.unconfirmedClaims === 1
+        ? "1 Vorgang zur Prüfung"
+        : `${status.connections.zapier.unconfirmedClaims} Vorgänge zur Prüfung`
+      : status.connections.zapier.outboundEnabled
       ? "Ausgabe freigegeben"
-      : "Ausgabe ist gesperrt";
+      : status.connections.zapier.activeSubscriptions === 1
+        ? "Verbindung bereit · Ausgabe gesperrt"
+        : "Private App noch nicht verbunden";
 
   elements.policyLead.textContent = minutesLabel(
     status.process.policy.contactLeadMinutes

@@ -4,6 +4,7 @@ export interface Env {
 
   APP_ENV: "local" | "test" | "staging" | "production";
   ACCESS_AUD: string;
+  ACCESS_SERVICE_AUD: string;
   ACCESS_TEAM_DOMAIN: string;
   MATOOL_BASE_URL: string;
   OUTBOUND_DELIVERY_ENABLED: string;
@@ -16,6 +17,6 @@ export interface Env {
   MATOOL_PASSWORD?: string;
   MATOOL_REAL_RUNS_ENABLED?: string;
 
-  ZAPIER_CATCH_HOOK_URL?: string;
-  ZAPIER_SIGNING_SECRET?: string;
+  ZAPIER_SERVICE_TOKEN?: string;
+  ZAPIER_WEBHOOK_SIGNING_SECRET?: string;
 }

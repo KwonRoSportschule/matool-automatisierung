@@ -1,3 +1,6 @@
+packages:
+  - zapier-app
+
 allowBuilds:
   esbuild: true
   workerd: true
