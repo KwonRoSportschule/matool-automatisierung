@@ -81,6 +81,25 @@ meldet Erfolg oder einen technischen Fehler zurück.
 
 Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 
+## Erste Staging-Version hosten
+
+Die erste sichere Version läuft über
+`matool-middleware-staging.<account>.workers.dev`. Sie enthält das Dashboard,
+aber keine aktive Automatisierung: Outbound-Zustellung bleibt deaktiviert,
+Cron bleibt leer und der Prozess startet im Modus `disabled`.
+
+Nach Cloudflare-Login, Anlage der EU-D1-Datenbank und Einsetzen ihrer ID:
+
+```text
+pnpm run db:migrate:staging
+pnpm run deploy:staging
+```
+
+Anschließend muss für die `workers.dev`-Route Cloudflare Access aktiviert und
+auf die freigegebenen Mitarbeiter begrenzt werden. Die dabei erzeugte
+Access-Audience sowie die Team-Domain werden in `env.staging` eingetragen und
+nochmals mit `pnpm run deploy:staging` veröffentlicht.
+
 ## Planungsdokumente
 
 - [Zielarchitektur](docs/architecture.md)

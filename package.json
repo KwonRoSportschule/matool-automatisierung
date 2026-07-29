@@ -13,6 +13,8 @@
     "ci": "pnpm run check && pnpm run validate:zapier:offline && pnpm run package:zapier:ci",
     "cf:types": "wrangler types src/worker-configuration.d.ts",
     "db:migrate:local": "wrangler d1 migrations apply matool-middleware-local --local",
+    "db:migrate:staging": "wrangler d1 migrations apply matool-middleware-staging --remote --env staging",
+    "deploy:staging": "pnpm run build:web && wrangler deploy --env staging --strict",
     "dev": "pnpm run build:web && wrangler dev",
     "package:zapier:ci": "pnpm --dir zapier-app run package:ci",
     "scan": "node scripts/check-repository.mjs",

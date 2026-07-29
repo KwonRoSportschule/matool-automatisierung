@@ -64,9 +64,13 @@ die Zuordnung vor dem ersten Remote-Befehl zweifach geprüft.
 
 ### 3.2 Eigene Hostnamen festlegen
 
-Da `workers_dev` und `preview_urls` deaktiviert sind, erhält jede Umgebung eine
-eigene Custom Domain. Nach der fachlichen Auswahl wird pro benannter Umgebung
-genau eine Route ergänzt:
+Für den schnellen ersten Staging-Stand ist `workers_dev` aktiviert und
+`preview_urls` deaktiviert. Die Staging-Adresse lautet damit
+`matool-middleware-staging.<account>.workers.dev` und wird direkt nach dem
+ersten Deploy über **Workers & Pages → Worker → Domains & Routes → workers.dev
+→ Enable Cloudflare Access** geschützt. Produktion behält `workers_dev=false`
+und erhält später eine eigene Custom Domain. Nach der fachlichen Auswahl wird
+für Produktion genau eine Route ergänzt:
 
 ```json
 {

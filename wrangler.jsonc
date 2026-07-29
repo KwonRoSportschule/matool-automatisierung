@@ -34,7 +34,7 @@
   "env": {
     "staging": {
       "name": "matool-middleware-staging",
-      "workers_dev": false,
+      "workers_dev": true,
       "preview_urls": false,
       "vars": {
         "APP_ENV": "staging",
@@ -48,7 +48,7 @@
         {
           "binding": "DB",
           "database_name": "matool-middleware-staging",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "4e002f53-31da-4212-bb46-c38ce05a36e2",
           "migrations_dir": "migrations"
         }
       ],
