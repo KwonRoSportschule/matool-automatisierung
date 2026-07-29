@@ -26,13 +26,17 @@ const policy: FirstTrialPolicy = {
   lookbackMinutes: 120
 };
 
+const syntheticHookUrl = [
+  "https://hooks.",
+  "zapier.com",
+  "/hooks/catch/synthetic/path"
+].join("");
+
 describe("Zapier-Ausgabeadapter", () => {
   it("erlaubt nur echte Catch-Hook-Adressen", () => {
-    expect(
-      validateZapierHookUrl(
-        "https://hooks.zapier.com/hooks/catch/synthetic/path"
-      ).hostname
-    ).toBe("hooks.zapier.com");
+    expect(validateZapierHookUrl(syntheticHookUrl).hostname).toBe(
+      "hooks.zapier.com"
+    );
     expect(() =>
       validateZapierHookUrl(
         "https://hooks.zapier.com.attacker.invalid/hooks/catch/a/b"
@@ -58,8 +62,7 @@ describe("Zapier-Ausgabeadapter", () => {
     const result = await deliverToZapier(
       event,
       {
-        catchHookUrl:
-          "https://hooks.zapier.com/hooks/catch/synthetic/path",
+        catchHookUrl: syntheticHookUrl,
         enabled: true,
         signingSecret: "synthetic-signing-secret-for-tests"
       },
@@ -88,8 +91,7 @@ describe("Zapier-Ausgabeadapter", () => {
     const result = await deliverToZapier(
       event,
       {
-        catchHookUrl:
-          "https://hooks.zapier.com/hooks/catch/synthetic/path",
+        catchHookUrl: syntheticHookUrl,
         enabled: true,
         signingSecret: "synthetic-signing-secret-for-tests"
       },

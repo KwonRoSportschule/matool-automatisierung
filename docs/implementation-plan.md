@@ -151,7 +151,7 @@ synthetische Parser-Fixture wird Phase 3 nicht freigegeben.
 - Lease mit Owner-ID, DB-Zeit, TTL, Heartbeat, owner-geprüfter Freigabe und
   monotonem Fencing-Token implementieren;
 - Baseline- und Shadow-Modus implementieren;
-- Ereignisschema `prospect_trial_contact_due` implementieren;
+- Ereignisschema `prospect.first_trial_contact_due` implementieren;
 - Adminansicht für Mengen und technische Zustände anbinden.
 
 ### Verifikation
@@ -211,7 +211,8 @@ Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 - private Zapier-App für Zapier Professional neu aufbauen;
 - authentifizierten Trigger beziehungsweise Ausgabeadapter zur Middleware
   implementieren;
-- `prospect_trial_contact_due` als versioniertes Trigger-Ereignis definieren;
+- `prospect.first_trial_contact_due` als versioniertes Trigger-Ereignis
+  definieren;
 - Outbox-Retry mit Backoff und maximaler Versuchszahl ergänzen;
 - dauerhafte Ziel-Deduplizierung der `event_id` vor der Nebenwirkung
   implementieren oder eine nachweislich idempotente Zielaktion wählen;
@@ -302,7 +303,8 @@ Das Projekt ist erst fertig, wenn:
 
 1. Webseite, Worker, D1 und GitHub-Deployment produktiv verbunden sind;
 2. MATOOL read-only zuverlässig und autorisiert abgerufen wird;
-3. `prospect_trial_contact_due`-Ereignisse korrekt, minimal und dedupliziert
+3. `prospect.first_trial_contact_due`-Ereignisse korrekt, minimal und
+   dedupliziert
    erzeugt werden;
 4. Zapier genau eine freigegebene Folgeaktion pro Ereignis ausführt;
 5. Adminzugriff, Logs, Secrets, Aufbewahrung und Fehlerwege geprüft sind;

@@ -86,7 +86,7 @@ vor:
 3. Termin-, Status- und Kontaktdaten nach einer freizugebenden Feld-Whitelist
    validieren und minimieren.
 4. Baseline beziehungsweise deduplizierte
-   `prospect_trial_contact_due`-Testereignisse in D1 speichern.
+   `prospect.first_trial_contact_due`-Testereignisse in D1 speichern.
 5. Ergebnisse ohne unmaskierte Personendaten im geschützten Mitarbeiterbereich
    anzeigen.
 6. Die private Zapier-App und ihre Anbindung an die Middleware mit synthetischen

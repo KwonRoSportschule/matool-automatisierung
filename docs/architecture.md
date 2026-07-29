@@ -119,7 +119,7 @@ Collectors laufen innerhalb eines Kontos seriell, weil MATOOL-Endpunkte
 Sessionzustand verändern können.
 
 Der erste Collector erzeugt ausschließlich das Ereignis
-`prospect_trial_contact_due`. Er benötigt mindestens eine stabile
+`prospect.first_trial_contact_due`. Er benötigt mindestens eine stabile
 Interessenten-ID, den nachweislich ersten Probetrainingstermin, den
 Interessentenstatus und das Ergebnis der freigegebenen Kontaktprüfung. Das
 Kontaktmedium, der Vorlauf vor dem Termin sowie Regeln für Absagen,
