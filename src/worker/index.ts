@@ -5,6 +5,7 @@ import {
   jsonResponse,
   methodNotAllowed
 } from "../core/http";
+import { MatoolClient } from "../matool/client";
 import { requireAccessIdentity } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import type { Env } from "./env";
@@ -119,6 +120,48 @@ async function handleApiRequest(
       409,
       "Die Feldzuordnung für den ersten Probetrainingstermin muss zuerst verifiziert werden."
     );
+  }
+
+  if (url.pathname === "/api/admin/v1/matool/probe") {
+    await requireValidCsrfRequest(request, identity, env);
+
+    if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+      throw new AppError(
+        "matool_not_configured",
+        409,
+        "Die MATOOL-Verbindung ist noch nicht eingerichtet."
+      );
+    }
+
+    if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
+      throw new AppError(
+        "matool_runs_not_confirmed",
+        409,
+        "Passwortrotation und read-only-Strukturprobe müssen zuerst bestätigt werden."
+      );
+    }
+
+    const client = new MatoolClient(env.MATOOL_BASE_URL);
+    try {
+      const result = await client.probeInteressenten({
+        email: env.MATOOL_EMAIL,
+        password: env.MATOOL_PASSWORD
+      });
+      return jsonResponse({
+        schemaVersion: 1,
+        probe: {
+          bodyBytes: result.bodyBytes,
+          contentType: result.contentType,
+          cookieCount: result.cookieNames.length,
+          interestMarkerDetected: result.interestMarkerDetected,
+          loginFormDetected: result.loginFormDetected,
+          rowMarkerCount: result.rowMarkerCount,
+          status: result.status
+        }
+      });
+    } finally {
+      client.clearSession();
+    }
   }
 
   throw new AppError(

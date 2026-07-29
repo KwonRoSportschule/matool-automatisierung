@@ -129,6 +129,7 @@ export function validateZapierHookUrl(value: string): URL {
     !url.pathname.startsWith("/hooks/catch/") ||
     url.username ||
     url.password ||
+    url.search ||
     url.hash
   ) {
     throw invalidHook();

@@ -92,6 +92,8 @@ export function normalizeAccessTeamDomain(value: string): string {
 
   if (
     url.protocol !== "https:" ||
+    !url.hostname.endsWith(".cloudflareaccess.com") ||
+    url.hostname === "cloudflareaccess.com" ||
     url.username ||
     url.password ||
     (url.pathname !== "/" && url.pathname !== "") ||

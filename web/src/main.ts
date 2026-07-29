@@ -71,6 +71,8 @@ const gateLabels: Record<string, [string, string]> = {
   ]
 };
 
+let probeAvailable = false;
+
 const elements = {
   actionMessage: byId("action-message"),
   dryRun: byId<HTMLButtonElement>("dry-run"),
@@ -97,6 +99,10 @@ const elements = {
 
 elements.refresh.addEventListener("click", () => {
   void loadDashboard();
+});
+
+elements.dryRun.addEventListener("click", () => {
+  void runMatoolProbe();
 });
 
 void loadDashboard();
@@ -171,15 +177,13 @@ function renderStatus(status: AdminStatus): void {
     openGates === 1 ? "1 offen" : `${openGates} offen`;
   renderGates(status.safetyGates);
 
-  const readyForDryRun =
+  probeAvailable =
     status.connections.matool.configured &&
-    status.connections.matool.realRunsEnabled &&
-    status.connections.matool.sourceMappingVerified &&
-    status.process.policyComplete;
-  elements.dryRun.disabled = !readyForDryRun;
-  elements.dryRun.textContent = readyForDryRun
-    ? "Read-only Dry Run starten"
-    : "Dry Run noch gesperrt";
+    status.connections.matool.realRunsEnabled;
+  elements.dryRun.disabled = !probeAvailable;
+  elements.dryRun.textContent = probeAvailable
+    ? "Read-only Strukturprobe starten"
+    : "Strukturprobe noch gesperrt";
 
   if (
     status.process.mode === "active" &&
@@ -193,6 +197,47 @@ function renderStatus(status: AdminStatus): void {
   } else {
     elements.overallStatus.textContent = "Einrichtung läuft";
     elements.overallDot.className = "status-dot status-dot-warning";
+  }
+}
+
+async function runMatoolProbe(): Promise<void> {
+  elements.dryRun.disabled = true;
+  elements.dryRun.setAttribute("aria-busy", "true");
+  elements.actionMessage.textContent =
+    "MATOOL-Struktur wird ohne Speicherung geprüft …";
+
+  try {
+    const csrf = await requestJson<{ token: string }>(
+      "/api/admin/v1/csrf"
+    );
+    const result = await requestJson<{
+      probe: {
+        bodyBytes: number;
+        rowMarkerCount: number;
+        status: number;
+      };
+    }>("/api/admin/v1/matool/probe", {
+      body: "{}",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf.token
+      },
+      method: "POST"
+    });
+
+    elements.actionMessage.textContent =
+      `Probe erfolgreich: HTTP ${result.probe.status}, ` +
+      `${formatNumber(result.probe.bodyBytes)} Bytes, ` +
+      `${formatNumber(result.probe.rowMarkerCount)} Zeilenmarker.`;
+    await loadDashboard();
+  } catch (error) {
+    elements.actionMessage.textContent =
+      error instanceof Error
+        ? error.message
+        : "Die Strukturprobe ist fehlgeschlagen.";
+  } finally {
+    elements.dryRun.removeAttribute("aria-busy");
+    elements.dryRun.disabled = !probeAvailable;
   }
 }
 
@@ -270,12 +315,16 @@ function appendCell(
   row.append(cell);
 }
 
-async function requestJson<T>(path: string): Promise<T> {
+async function requestJson<T>(
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
   const response = await fetch(path, {
+    ...init,
     credentials: "same-origin",
-    headers: {
-      Accept: "application/json"
-    }
+    headers
   });
   const payload = (await response.json()) as {
     error?: { message?: string };
@@ -286,6 +335,10 @@ async function requestJson<T>(path: string): Promise<T> {
     );
   }
   return payload as T;
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("de-DE").format(value);
 }
 
 function setLoading(loading: boolean): void {

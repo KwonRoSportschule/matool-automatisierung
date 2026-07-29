@@ -42,6 +42,25 @@ export class MatoolClient {
       method: "GET"
     });
 
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat für die Interessentenansicht einen unerwarteten Status geliefert."
+      );
+    }
+
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat für die Interessentenansicht kein HTML geliefert."
+      );
+    }
+
     const declaredLength = Number(
       response.headers.get("Content-Length") ?? "0"
     );
@@ -81,7 +100,7 @@ export class MatoolClient {
 
     return {
       bodyBytes: body.byteLength,
-      contentType: response.headers.get("Content-Type") ?? "unknown",
+      contentType,
       cookieNames: this.#cookies.names(),
       interestMarkerDetected,
       loginFormDetected,
@@ -141,13 +160,23 @@ export class MatoolClient {
       headers.set("Origin", this.#baseUrl.origin);
       headers.set("Referer", `${this.#baseUrl.origin}/index.php`);
 
-      const response = await this.#fetch(url, {
-        ...init,
-        body,
-        headers,
-        method,
-        redirect: "manual"
-      });
+      let response: Response;
+      try {
+        response = await this.#fetch(url, {
+          ...init,
+          body,
+          headers,
+          method,
+          redirect: "manual",
+          signal: init.signal ?? AbortSignal.timeout(15_000)
+        });
+      } catch {
+        throw new AppError(
+          "matool_network_error",
+          502,
+          "MATOOL konnte für die read-only-Probe nicht erreicht werden."
+        );
+      }
       this.#cookies.absorb(response.headers);
 
       if (![301, 302, 303, 307, 308].includes(response.status)) {
@@ -172,6 +201,7 @@ export class MatoolClient {
       }
 
       const nextUrl = new URL(location, url);
+      await response.body?.cancel();
       assertAllowedMatoolUrl(nextUrl);
 
       if (response.status === 307 || response.status === 308) {
@@ -182,7 +212,6 @@ export class MatoolClient {
         );
       }
 
-      await response.body?.cancel();
       url = nextUrl;
       method = "GET";
       body = null;

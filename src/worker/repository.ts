@@ -118,7 +118,10 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
       safetyGates: [
         {
           key: "matool_password_rotated",
-          state: "requires_confirmation"
+          state:
+            env.MATOOL_REAL_RUNS_ENABLED === "confirmed-read-only"
+              ? "ready"
+              : "requires_confirmation"
         },
         {
           key: "first_trial_source_mapping",

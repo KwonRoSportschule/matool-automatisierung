@@ -89,6 +89,22 @@ describe("Worker-Grenzen", () => {
     await expect(acceptedSecurityBoundary.json()).resolves.toMatchObject({
       error: { code: "matool_not_configured" }
     });
+
+    const probeWithoutSecrets = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/matool/probe", {
+        body: "{}",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://127.0.0.1",
+          "X-CSRF-Token": tokenPayload.token
+        },
+        method: "POST"
+      })
+    );
+    expect(probeWithoutSecrets.status).toBe(409);
+    await expect(probeWithoutSecrets.json()).resolves.toMatchObject({
+      error: { code: "matool_not_configured" }
+    });
   });
 
   it("liefert für unbekannte API-Routen einen strukturierten Fehler", async () => {

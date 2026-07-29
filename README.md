@@ -69,6 +69,7 @@ Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 - [Zielarchitektur](docs/architecture.md)
 - [Umsetzungs- und Abnahmeplan](docs/implementation-plan.md)
 - [Sanitisierte HAR-Analyse](docs/har-analysis.md)
+- [Aktiver Pilot: Interessenten vor dem ersten Probetraining](docs/pilot-interessenten.md)
 - [Offene Entscheidungen](docs/open-decisions.md)
 - [Spätere Prozessnotiz: Verlängerung nach GLZ](docs/pilot-glz.md)
 - [ADR 0001: Workers Static Assets](docs/adr/0001-worker-static-assets.md)
