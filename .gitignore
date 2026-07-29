@@ -1,0 +1,35 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.wrangler/
+
+# Local runtime configuration and secrets
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Sensitive captures and raw MATOOL material
+*.har
+fixtures/raw/
+artifacts/private/
+downloads/private/
+
+# Logs and temporary files
+*.log
+tmp/
+.tmp/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+
