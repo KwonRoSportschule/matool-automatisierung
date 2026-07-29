@@ -32,6 +32,13 @@ geplant.
 - Statische Assets werden dennoch global über Cloudflare ausgeliefert.
 - Ein Wechsel zu getrenntem Pages-Frontend bleibt möglich, erhöht aber
   Deployment- und Authentifizierungskomplexität.
+- Für geschützte statische Dateien muss `assets.run_worker_first` die
+  Worker-seitige Access-JWT-Prüfung ausführen.
+- `workers.dev` und Preview-Versionen benötigen denselben Schutz oder werden
+  deaktiviert.
+- Preview-Builds verwenden einen getrennten Staging-Worker mit eigener D1 und
+  eigenen Secrets; eine bloße neue Version mit Produktionsbindungen genügt
+  nicht.
 
 ## Alternative
 

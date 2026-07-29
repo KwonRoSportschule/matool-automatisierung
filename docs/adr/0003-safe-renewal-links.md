@@ -26,7 +26,8 @@ Logs oder D1 gespeichert; D1 speichert nur einen kryptografischen Hash.
 - widerrufbar;
 - Rate-Limit und Missbrauchsschutz;
 - kein Token in Analytics oder Anwendungslogs;
-- keine Personendaten in Pfad, Fragment oder Query-Parametern;
+- keine Klartext-Personenattribute wie E-Mail, Name oder Geburtsdatum in Pfad,
+  Fragment oder Query-Parametern;
 - bestehende Daten werden erst nach erfolgreicher Tokenprüfung geladen.
 
 Bevorzugter Austausch:

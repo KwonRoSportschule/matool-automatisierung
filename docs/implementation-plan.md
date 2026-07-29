@@ -17,11 +17,20 @@ vorgelagerten Gates bestanden und fachlich bestätigt sind.
 ### Aufgaben
 
 - produktives MATOOL-Passwort aus der HAR vorsorglich rotieren;
+- bestehende MATOOL-Sessions nach Rotation ungültig machen;
 - vorhandenen Quellcode der privaten MATOOL-Zapier-Integration suchen;
-- UI-Umfang, Zapier-Tarif und GLZ-Pilot bestätigen;
+- Cloudflare-Hostingmodell und UI-Umfang bestätigen;
+- GLZ-Pilot und seine exakten Datums-, Lookback- und Ausschlussregeln
+  bestätigen;
+- stabile Mitgliedschafts- und Vertragsperioden-ID als notwendiges Gate
+  festlegen;
 - Nutzungsrahmen der automatisierten MATOOL-Zugriffe klären;
 - Cloudflare-Account, Domain und spätere Access-Identitäten erfassen;
-- Aufbewahrungs- und Ausschlussregeln benennen.
+- Staging, Produktion, D1-EU-Jurisdiktion und Aufbewahrungsregeln vor dem ersten
+  Echtdatenlauf festlegen;
+- öffentlichen Google-Sheets-/XLSX-Zugriff des Altprozesses absichern oder als
+  befristetes Risiko mit Verantwortlichem dokumentieren;
+- Zapier-Tarif spätestens vor Phase 5 erfassen.
 
 ### Ergebnisse
 
@@ -31,14 +40,16 @@ vorgelagerten Gates bestanden und fachlich bestätigt sind.
 
 ### Gate
 
-Reale MATOOL-Zugriffe beginnen erst, wenn der Zugriff intern autorisiert und das
-Passwort außerhalb des Repositories sicher bereitgestellt ist.
+Reale MATOOL-Zugriffe beginnen erst, wenn der Zugriff intern autorisiert, das
+Passwort rotiert und außerhalb des Repositories sicher bereitgestellt ist. Reale
+Persistenz beginnt erst nach Umgebungs-, EU- und Aufbewahrungsentscheidung.
 
 ## Phase 1: Lokales Projektgrundgerüst
 
 ### Aufgaben
 
-- TypeScript-Worker mit Static Assets anlegen;
+- nach Annahme von ADR 0001 einen TypeScript-Worker mit Static Assets anlegen;
+  bei Wahl von Pages stattdessen das dokumentierte Monorepo aufbauen;
 - Wrangler-Konfiguration für `staging` und `production` vorbereiten;
 - lokale Testumgebung und Workers-kompatible Tests einrichten;
 - API-Routing, Fehlerformat und Log-Redaktion implementieren;
@@ -82,7 +93,8 @@ Noch keine externe Cloudflare-Ressource und kein produktiver MATOOL-Abruf.
 - Redirects manuell behandeln;
 - Login durch eine authentifizierte Folgeseite verifizieren;
 - GLZ-relevante Listenstruktur anonymisiert vermessen;
-- stabile Quell-ID und Feldselektoren nachweisen;
+- stabile Mitgliedschafts- und Vertragsperioden-ID sowie Feldselektoren
+  nachweisen;
 - Antwortgröße, CPU-Zeit, Wall-Time und Subrequests messen.
 
 ### Protokollierte Werte
@@ -107,7 +119,8 @@ Verboten:
 ### Verifikation
 
 - erfolgreicher und fehlgeschlagener Login unterscheidbar;
-- Sessionablauf und erneuter Login getestet;
+- Sessionablauf und höchstens eine begrenzte, erkannte Re-Authentifizierung
+  getestet;
 - GLZ-Seite liefert reproduzierbare Struktur;
 - stabiler Schlüssel anhand mindestens zweier Abrufe bestätigt;
 - keine schreibende MATOOL-Anfrage;
@@ -115,8 +128,8 @@ Verboten:
 
 ### Gate
 
-Ohne stabilen Schlüssel und synthetische Parser-Fixture wird Phase 3 nicht
-freigegeben.
+Ohne stabile Mitgliedschafts- und Vertragsperioden-ID sowie synthetische
+Parser-Fixture wird Phase 3 nicht freigegeben.
 
 ## Phase 3: Kernlogik und D1
 
@@ -125,7 +138,8 @@ freigegeben.
 - normalisierte Schemas mit Laufzeitvalidierung definieren;
 - kanonische Serialisierung und SHA-256-Hashes implementieren;
 - D1-Schema für Runs, Records, Events, Outbox, Deliveries und Leases anlegen;
-- atomaren Lease-Erwerb implementieren;
+- Lease mit Owner-ID, DB-Zeit, TTL, Heartbeat, owner-geprüfter Freigabe und
+  monotonem Fencing-Token implementieren;
 - Baseline- und Shadow-Modus implementieren;
 - Adminansicht für Mengen und technische Zustände anbinden.
 
@@ -135,6 +149,8 @@ freigegeben.
 - gleiche Eingabe erzeugt gleichen Schlüssel, Hash und Ereignis-ID;
 - Unique Constraints verhindern Dubletten;
 - konkurrierende Läufe: genau einer erwirbt den Lease;
+- ein abgelaufener alter Owner kann nach neuem Lease keine Records, Events oder
+  Outbox mehr schreiben;
 - fehlgeschlagener Collector aktualisiert keinen erfolgreichen Zustand;
 - Baseline erzeugt null Outbox-Einträge;
 - Adminansicht zeigt keine unmaskierten Personenwerte.
@@ -150,16 +166,20 @@ Die gesamte Phase läuft mit synthetischen Fixtures.
 - GLZ-Collector gegen die bestätigte MATOOL-Struktur implementieren;
 - Berlin-Stichtagslogik und 42-Tage-Regel aktivieren;
 - fachliche Ausschlüsse als explizite Regeln abbilden;
+- reale Staging-D1 mit EU-Jurisdiktion und aktiver Löschregel verwenden;
 - geplanten Cron zunächst nur in Staging aktivieren;
 - Vergleichsprotokoll für MATOOL und Middleware erstellen.
 
 ### Verifikation
 
 - zehn aufeinanderfolgende stabile reale read-only Läufe;
-- Kandidatenmenge pro Lauf manuell bestätigt;
+- Kandidatenmenge und stabile Schlüssel pro Lauf manuell bestätigt;
 - zweiter unveränderter Lauf erzeugt null neue Ereignisse;
 - Testfälle für 41, 42 und 43 Tage bestehen;
-- Sommer-/Winterzeit-Testmatrix besteht;
+- Sommer-/Winterzeit, Monats-/Jahreswechsel und Schaltjahr bestehen;
+- gültiges Null-Ergebnis, Trunkierung, Pagination, Duplikate und mehr als 500
+  Treffer sind unterscheidbar;
+- korrigiertes Vertragsende erzeugt keine zweite Kundenaktion;
 - ein simulierter Parser- oder D1-Fehler erzeugt keine negative Aktion;
 - keine Personendaten in Logs oder Build-Artefakten.
 
@@ -173,6 +193,8 @@ Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 
 - gewählten Ausgabeadapter implementieren;
 - Outbox-Retry mit Backoff und maximaler Versuchszahl ergänzen;
+- dauerhafte Ziel-Deduplizierung der `event_id` vor der Nebenwirkung
+  implementieren oder eine nachweislich idempotente Zielaktion wählen;
 - genau ein synthetisches Testereignis freigeben;
 - Deduplizierung im Zap beziehungsweise Zielsystem nachweisen;
 - Zustell- und Fehlerstatus im Adminbereich anzeigen.
@@ -180,14 +202,15 @@ Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 ### Verifikation
 
 - wiederholtes Senden derselben `event_id` erzeugt keine zweite Folgeaktion;
-- 2xx, 4xx, 5xx, Timeout und verlorener Response sind getestet;
+- 2xx, verlorener 2xx-Response, 4xx, 5xx und Timeout sind getestet;
 - permanenter Fehler wird pausiert und sichtbar;
 - Zapier-Hook oder Google-Endpunkt steht in keinem Frontend-Bundle oder Log;
 - produktive Empfänger bleiben deaktiviert.
 
 ### Gate
 
-Ein Ereignis führt exakt zu einer ungefährlichen Testaktion.
+Ein Ereignis und beliebig viele Transport-Retrys führen zusammen exakt zu einer
+ungefährlichen Testaktion.
 
 ## Phase 6: Begrenzter Produktionsstart
 
