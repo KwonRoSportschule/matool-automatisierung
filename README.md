@@ -1,6 +1,7 @@
 # MATOOL Middleware Hub
 
-Interne Middleware zwischen MATOOL und Zapier für die KwonRo Sportschule.
+Internes Mitarbeiter-Dashboard und Middleware zwischen MATOOL und Zapier für
+die KwonRo Sportschule.
 
 Das Projekt soll freigegebene Daten aus MATOOL über dessen bestehende
 Weboberfläche abrufen, fachliche Änderungen zuverlässig erkennen und daraus
@@ -16,11 +17,15 @@ Stand: 29. Juli 2026
 - Noch keine Verbindung zu einem produktiven MATOOL-, Cloudflare-, Google- oder
   Zapier-Konto.
 - Noch keine Zugangsdaten im Repository.
-- Empfohlener Pilot: Vertragsverlängerung 42 Tage vor Ablauf der Grundlaufzeit.
-- Architekturentscheidungen sind als **vorgeschlagen**, noch nicht als fachlich
-  freigegeben dokumentiert.
+- Bestätigtes Hosting: Cloudflare Worker mit Static Assets.
+- Bestätigte Oberfläche: ausschließlich ein internes Mitarbeiter-Dashboard.
+- Bestätigter erster Pilot: Interessenten vor ihrem ersten Probetraining
+  automatisiert kontaktieren.
+- Zapier Professional ist vorhanden.
+- Eine bestehende private Zapier-MATOOL-App ist nicht verfügbar; die benötigte
+  Zapier-Integration wird im Projekt neu gebaut.
 
-## Empfohlenes Zielbild
+## Bestätigtes Zielbild
 
 Ein Cloudflare Worker stellt sowohl die geschützte Admin-Webseite als auch die
 Middleware-API bereit. Statische Dateien werden als Workers Static Assets
@@ -28,21 +33,21 @@ ausgeliefert. Ein Cron Trigger startet die Synchronisation; D1 speichert Runs,
 minimale Datensätze, Ereignisse und Zustellversuche.
 
 ```text
-Admin-Webseite / Cron
-        |
-        v
-Cloudflare Worker
-   |       |       |
-   v       v       v
-MATOOL    D1    Ausgabeadapter
-                     |
-                     v
-                   Zapier
+Mitarbeiter-Dashboard / Cron
+              |
+              v
+      Cloudflare Worker <----> D1
+          |        |
+          v        v
+       MATOOL   private Zapier-App
+                         |
+                         v
+                    Zapier-Ablauf
 ```
 
-Cloudflare Pages bleibt eine mögliche Alternative. Für ein neues kombiniertes
-Frontend-/Backend-Projekt empfiehlt Cloudflare inzwischen Workers Static Assets,
-weil UI, API, Bindings, Cron und Observability gemeinsam deployt werden können.
+Die bestätigte Implementierung verwendet Workers Static Assets, damit UI, API,
+Bindings, Cron und Observability gemeinsam deployt werden können. Ein getrenntes
+Cloudflare-Pages-Projekt ist nicht Teil des Zielbilds.
 
 ## Sicherheitsgrundsätze
 
@@ -64,21 +69,30 @@ Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 - [Zielarchitektur](docs/architecture.md)
 - [Umsetzungs- und Abnahmeplan](docs/implementation-plan.md)
 - [Sanitisierte HAR-Analyse](docs/har-analysis.md)
-- [Pilotspezifikation GLZ](docs/pilot-glz.md)
 - [Offene Entscheidungen](docs/open-decisions.md)
+- [Spätere Prozessnotiz: Verlängerung nach GLZ](docs/pilot-glz.md)
 - [ADR 0001: Workers Static Assets](docs/adr/0001-worker-static-assets.md)
 - [ADR 0002: D1 statt KV](docs/adr/0002-d1-state.md)
 - [ADR 0003: Sichere Verlängerungslinks](docs/adr/0003-safe-renewal-links.md)
 
 ## Abgrenzung des ersten Piloten
 
-Der erste Pilot ist gegenüber MATOOL ausschließlich lesend:
+Der erste Pilot liest MATOOL ausschließlich lesend und bereitet die
+automatisierte Kontaktaufnahme mit Interessenten vor ihrem ersten Probetraining
+vor:
 
 1. Bei MATOOL anmelden.
-2. Kandidaten mit Vertragsende in 42 Tagen ermitteln.
-3. Daten validieren und minimieren.
-4. Baseline beziehungsweise deduplizierte Testereignisse in D1 speichern.
-5. Ergebnisse im geschützten Adminbereich anzeigen.
+2. Interessenten mit geplantem ersten Probetraining ermitteln.
+3. Termin-, Status- und Kontaktdaten nach einer freizugebenden Feld-Whitelist
+   validieren und minimieren.
+4. Baseline beziehungsweise deduplizierte
+   `prospect_trial_contact_due`-Testereignisse in D1 speichern.
+5. Ergebnisse ohne unmaskierte Personendaten im geschützten Mitarbeiterbereich
+   anzeigen.
+6. Die private Zapier-App und ihre Anbindung an die Middleware mit synthetischen
+   Ereignissen testen.
 
-E-Mail-Versand, Vertragsänderungen und produktive Zapier-Folgeaktionen bleiben
-bis nach Shadow-Betrieb und fachlicher Abnahme deaktiviert.
+Produktive Kontaktaufnahme, Änderungen in MATOOL und produktive
+Zapier-Folgeaktionen bleiben bis nach Shadow-Betrieb und fachlicher Abnahme
+deaktiviert. Die Verlängerung nach GLZ ist eine spätere Ausbaustufe und nicht
+Teil dieses Piloten.

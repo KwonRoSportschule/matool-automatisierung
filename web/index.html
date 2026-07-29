@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Interner Status der MATOOL-Zapier-Middleware"
+    />
+    <title>MATOOL Middleware Hub</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Zum Inhalt</a>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="MATOOL Middleware Hub">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </span>
+          <span>
+            <strong>MATOOL</strong>
+            <small>Middleware Hub</small>
+          </span>
+        </a>
+
+        <div class="topbar-actions">
+          <span class="environment-pill" id="environment">Lokal</span>
+          <button class="button button-secondary" id="refresh" type="button">
+            <span aria-hidden="true">↻</span>
+            Status aktualisieren
+          </button>
+        </div>
+      </header>
+
+      <main id="main">
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="eyebrow">Interner Mitarbeiterbereich</div>
+          <div class="hero-grid">
+            <div>
+              <h1 id="hero-title">
+                Interessenten rechtzeitig vor dem ersten Probetraining erreichen.
+              </h1>
+              <p>
+                Diese Middleware liest freigegebene Daten aus MATOOL, prüft den
+                Kontaktzeitpunkt und übergibt genau definierte Ereignisse an
+                Zapier. Der Echtdatenmodus bleibt bis zur Abnahme gesperrt.
+              </p>
+            </div>
+            <div class="hero-status" role="status" aria-live="polite">
+              <span class="status-dot status-dot-warning" id="overall-dot"></span>
+              <div>
+                <small>Aktueller Betriebszustand</small>
+                <strong id="overall-status">Einrichtung läuft</strong>
+                <span id="last-updated">Status wird geladen …</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="metric-grid" aria-label="Systemübersicht">
+          <article class="metric-card">
+            <div class="metric-icon matool-icon" aria-hidden="true">M</div>
+            <div>
+              <span>MATOOL</span>
+              <strong id="matool-status">Prüfung ausstehend</strong>
+              <small id="matool-detail">Keine Zugangsdaten im Browser</small>
+            </div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-icon process-icon" aria-hidden="true">01</div>
+            <div>
+              <span>Pilotprozess</span>
+              <strong id="process-status">Deaktiviert</strong>
+              <small>Vor dem ersten Probetraining</small>
+            </div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-icon zapier-icon" aria-hidden="true">Z</div>
+            <div>
+              <span>Zapier Professional</span>
+              <strong id="zapier-status">Hook ausstehend</strong>
+              <small id="zapier-detail">Ausgabe ist gesperrt</small>
+            </div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-icon runs-icon" aria-hidden="true">↗</div>
+            <div>
+              <span>Letzter Lauf</span>
+              <strong id="run-status">Noch keiner</strong>
+              <small id="run-detail">Keine Echtdaten verarbeitet</small>
+            </div>
+          </article>
+        </section>
+
+        <div class="content-grid">
+          <section class="panel process-panel" aria-labelledby="process-title">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Pilot 01</div>
+                <h2 id="process-title">
+                  Interessenten · erstes Probetraining
+                </h2>
+              </div>
+              <span class="mode-badge" id="mode-badge">Deaktiviert</span>
+            </div>
+
+            <div class="flow" aria-label="Datenfluss">
+              <div class="flow-step">
+                <span class="flow-number">1</span>
+                <div>
+                  <strong>MATOOL lesen</strong>
+                  <small>Interessent und erster Termin</small>
+                </div>
+              </div>
+              <span class="flow-arrow" aria-hidden="true">→</span>
+              <div class="flow-step">
+                <span class="flow-number">2</span>
+                <div>
+                  <strong>Regeln prüfen</strong>
+                  <small>Vorlauf, Ausschlüsse, Deduplizierung</small>
+                </div>
+              </div>
+              <span class="flow-arrow" aria-hidden="true">→</span>
+              <div class="flow-step">
+                <span class="flow-number">3</span>
+                <div>
+                  <strong>Zapier auslösen</strong>
+                  <small>Nur nach Freigabe</small>
+                </div>
+              </div>
+            </div>
+
+            <dl class="policy-grid">
+              <div>
+                <dt>Kontaktvorlauf</dt>
+                <dd id="policy-lead">Noch festzulegen</dd>
+              </div>
+              <div>
+                <dt>Kontaktweg</dt>
+                <dd id="policy-channel">Noch festzulegen</dd>
+              </div>
+              <div>
+                <dt>Nachholfenster</dt>
+                <dd id="policy-lookback">Noch festzulegen</dd>
+              </div>
+              <div>
+                <dt>Ereignistyp</dt>
+                <dd><code>prospect.first_trial_contact_due</code></dd>
+              </div>
+            </dl>
+          </section>
+
+          <aside class="panel gates-panel" aria-labelledby="gates-title">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Sicherheits-Gates</div>
+                <h2 id="gates-title">Vor dem ersten Echtdatenlauf</h2>
+              </div>
+              <span class="gate-count" id="gate-count">4 offen</span>
+            </div>
+            <ol class="gate-list" id="gate-list">
+              <li>
+                <span class="gate-state gate-open" aria-hidden="true"></span>
+                <div>
+                  <strong>MATOOL-Passwort rotieren</strong>
+                  <small>HAR-Sitzungen ebenfalls beenden</small>
+                </div>
+              </li>
+              <li>
+                <span class="gate-state gate-open" aria-hidden="true"></span>
+                <div>
+                  <strong>Termin-Felder verifizieren</strong>
+                  <small>Stabile Interessenten- und Termin-ID</small>
+                </div>
+              </li>
+              <li>
+                <span class="gate-state gate-open" aria-hidden="true"></span>
+                <div>
+                  <strong>Kontaktregel festlegen</strong>
+                  <small>Vorlauf, Kanal und Ausschlüsse</small>
+                </div>
+              </li>
+              <li>
+                <span class="gate-state gate-open" aria-hidden="true"></span>
+                <div>
+                  <strong>Zapier-Deduplizierung nachweisen</strong>
+                  <small>Keine doppelte Kundenaktion bei Retry</small>
+                </div>
+              </li>
+            </ol>
+          </aside>
+
+          <section class="panel runs-panel" aria-labelledby="runs-title">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Technisches Protokoll</div>
+                <h2 id="runs-title">Letzte Läufe</h2>
+              </div>
+              <span class="privacy-note">Ohne Personendaten</span>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Zeitpunkt</th>
+                    <th scope="col">Modus</th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Gelesen</th>
+                    <th scope="col">Kandidaten</th>
+                    <th scope="col">Ereignisse</th>
+                  </tr>
+                </thead>
+                <tbody id="runs-body">
+                  <tr>
+                    <td class="empty-state" colspan="6">
+                      Noch keine Läufe vorhanden.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <aside class="panel next-panel" aria-labelledby="next-title">
+            <div class="eyebrow">Nächster Schritt</div>
+            <h2 id="next-title">Read-only Probe vorbereiten</h2>
+            <p>
+              Der erste reale Abruf ermittelt ausschließlich Struktur,
+              Feldnamen und Mengen. Rohdaten werden weder gespeichert noch
+              angezeigt.
+            </p>
+            <button class="button button-primary" id="dry-run" type="button" disabled>
+              Dry Run noch gesperrt
+            </button>
+            <p class="action-message" id="action-message" aria-live="polite"></p>
+          </aside>
+        </div>
+      </main>
+
+      <footer>
+        <span>KwonRo Sportschule · interne Middleware</span>
+        <span>Keine MATOOL-Profile werden im Dashboard angezeigt.</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

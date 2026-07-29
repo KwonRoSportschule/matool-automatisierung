@@ -1,0 +1,81 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "matool-middleware-hub",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-07-29",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "ACCESS_AUD": "configure-with-cloudflare-access",
+    "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
+    "MATOOL_BASE_URL": "https://core.matool.de",
+    "OUTBOUND_DELIVERY_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "matool-middleware-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "matool-middleware-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "APP_ENV": "staging",
+        "ACCESS_AUD": "configure-with-cloudflare-access",
+        "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
+        "MATOOL_BASE_URL": "https://core.matool.de",
+        "OUTBOUND_DELIVERY_ENABLED": "false"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "matool-middleware-staging",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "triggers": {
+        "crons": []
+      }
+    },
+    "production": {
+      "name": "matool-middleware-production",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "APP_ENV": "production",
+        "ACCESS_AUD": "configure-with-cloudflare-access",
+        "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
+        "MATOOL_BASE_URL": "https://core.matool.de",
+        "OUTBOUND_DELIVERY_ENABLED": "false"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "matool-middleware-production",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "triggers": {
+        "crons": []
+      }
+    }
+  }
+}

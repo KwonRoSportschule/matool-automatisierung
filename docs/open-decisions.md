@@ -5,44 +5,37 @@ Stand: 29. Juli 2026
 
 Keine dieser Entscheidungen erfordert Zugangsdaten im Chat oder Repository.
 
+## Bestätigte Entscheidungen
+
+### BD-001: Hosting
+
+Die Anwendung wird als Cloudflare Worker mit Static Assets umgesetzt. Ein
+getrenntes Cloudflare-Pages-Projekt ist nicht vorgesehen.
+
+### BD-002: Umfang der Webseite
+
+Die Webseite ist ausschließlich ein internes, durch Cloudflare Access
+geschütztes Mitarbeiter-Dashboard und dient als Oberfläche der Middleware.
+
+### BD-003: Erster Pilot
+
+Der erste Pilot kontaktiert Interessenten automatisiert vor ihrem ersten
+Probetraining. Der GLZ-Verlängerungsprozess ist eine spätere Prozessnotiz und
+nicht Teil des aktiven Piloten.
+
+### BD-004: Private Zapier-App
+
+Eine vorhandene private Zapier-MATOOL-App oder deren Quellcode ist nicht
+verfügbar. Die benötigte private Zapier-App wird im Projekt neu gebaut und
+kommuniziert ausschließlich mit der Middleware, nicht direkt mit
+MATOOL-Zugangsdaten.
+
+### BD-005: Zapier-Tarif
+
+Zapier Professional ist vorhanden. Google Sheets ist für den ersten Pilot weder
+Transportweg noch Zustandsquelle.
+
 ## Priorität 0: vor realem Connector oder Echtdaten
-
-### OD-000: Cloudflare-Hostingmodell
-
-Der ursprüngliche Wunsch nennt Cloudflare Pages. Der technische Vorschlag
-verwendet stattdessen einen Worker mit Static Assets.
-
-Optionen:
-
-1. **Worker mit Static Assets – empfohlen:** ein Deployment für UI, API, Cron,
-   D1 und Access-Prüfung.
-2. **Pages plus separater Worker:** zwei Deployments, zusätzliche
-   Serviceauthentifizierung und getrennte Preview-Konfiguration.
-
-Die Wahl muss bestätigt werden, bevor das Projektgrundgerüst erstellt wird.
-
-### OD-001: Umfang der ersten Webseite
-
-**Empfehlung:** internes, durch Cloudflare Access geschütztes Admin-Dashboard.
-
-Alternativen:
-
-1. nur Admin-Dashboard;
-2. Admin-Dashboard plus öffentliche Verlängerungsseite;
-3. ausschließlich Backend ohne sichtbare Oberfläche.
-
-Eine öffentliche Seite benötigt Tokenverwaltung, Rechts- und Prozessabnahme,
-Missbrauchsschutz und einen deutlich größeren Testumfang.
-
-### OD-002: Quellcode der vorhandenen Zapier-MATOOL-Integration
-
-Zu klären: Ist der Quellcode oder ein Export der privaten Integration mit
-„Find Memberships / Upcoming Membership Renewals“ verfügbar?
-
-**Empfehlung:** zuerst diesen Quellcode beschaffen. Er kann Login-, Parser- und
-Feldwissen enthalten, das in der HAR fehlt.
-
-Falls nicht verfügbar, wird ein lokaler, redigierender Probe-Client gebaut.
 
 ### OD-003: Zustimmung und Nutzungsrahmen für MATOOL-Automation
 
@@ -57,30 +50,27 @@ Zu klären:
 **Empfehlung:** vor Produktivbetrieb schriftlich klären. Ein lokaler,
 read-only PoC erfolgt nur mit interner Autorisierung und minimaler Frequenz.
 
-### OD-004: Stabile Entitäts- und Vertragsperioden-ID
+### OD-004: Stabile Interessenten- und Termin-ID
 
 Zu klären:
 
-- unveränderliche Mitgliedschafts-ID;
-- unveränderliche Vertrags- oder Vertragsperioden-ID;
-- Verhalten der ID bei Verlängerung und Korrektur des Vertragsendes.
+- unveränderliche Interessenten-ID;
+- eindeutige Kennung oder stabile Zuordnung des ersten Probetrainingstermins;
+- Verhalten der Kennungen bei Terminverschiebung, Absage und erneutem
+  Probetraining.
 
-Ohne beide Identitätsebenen wird kein produktiver Collector freigegeben. Name,
-E-Mail und veränderliche Datumswerte genügen nicht.
+Ohne stabile Identität und kontrollierte Terminzuordnung wird kein produktiver
+Collector freigegeben. Name, E-Mail und veränderliche Datumswerte genügen nicht.
 
-### OD-005: Exakte GLZ-Regeln
+### OD-005: Technische Struktur der Interessentenseite
 
-Vor dem Shadow-Vergleich sind einzeln zu bestätigen:
+Nachzuweisen sind:
 
-- welches MATOOL-Feld „Ende der Grundlaufzeit“ bedeutet;
-- Vertragsstart `> 01.01.2026` oder `>= 01.01.2026`;
-- ob die Startgrenze dauerhaft bestehen bleibt;
-- Wochenend- und Feiertagsverhalten;
-- Ausfallnachholung und maximale Lookback-Grenze;
-- Definition einer gültigen E-Mail;
-- vollständige fachliche Ausschlussliste.
-
-Die allgemeine Bestätigung „GLZ als Pilot“ ersetzt diese Festlegungen nicht.
+- Request-Sequenz für die Interessentenliste;
+- Feld und Format des ersten Probetrainingstermins;
+- Status-, Absage- und Archivmerkmale;
+- Pagination, Standortwechsel und Vollständigkeitsprüfung;
+- stabile Selektoren oder andere strukturierte Feldgrenzen.
 
 ### OD-006: Echtdatenumgebungen, EU-Jurisdiktion und Aufbewahrung
 
@@ -112,25 +102,42 @@ Vor weiterer Nutzung des bestehenden öffentlichen XLSX-Exports:
 Die bestehende Reportlogik kann funktional außerhalb des Piloten bleiben. Ihre
 öffentliche Datenfreigabe ist deshalb nicht automatisch akzeptiert.
 
-## Priorität 1: vor Zapier-Test
+## Priorität 1: vor Shadow-Betrieb
 
-### OD-008: Zapier-Tarif und Richtung
+### OD-008: Kontaktzeitpunkt
 
-Benötigte Information: aktueller Zapier-Tarif.
+Zu klären:
 
-**Empfehlung bei Professional/Team/Enterprise:** Worker sendet deduplizierte
-Outbox-Ereignisse an einen Catch Hook.
+- wie lange vor dem ersten Probetraining kontaktiert wird;
+- welche Kontaktzeiten und Wochentage zulässig sind;
+- wie ausgefallene Läufe nachgeholt werden;
+- wie kurzfristig eingetragene oder verschobene Termine behandelt werden.
 
-**Fallback:** signierte Google-Apps-Script-Brücke mit privater Tabelle und
-append-only Ereignisblatt.
+### OD-009: Kontaktmedium und Inhalt
 
-Zu entscheiden:
+Zu klären:
 
-- Worker pusht an Zapier;
-- Zapier pollt eine Middleware-API;
-- Google Sheets vermittelt.
+- E-Mail, SMS, Messenger oder anderes freigegebenes Medium;
+- benötigte Personalisierungsfelder;
+- verantwortlicher Zap und Zielsystem;
+- freigegebener Text, Absender und Antwortweg.
 
-### OD-009: Verbindliche Ziel-Deduplizierung
+### OD-010: Einwilligung und Ausschlüsse
+
+Zu klären:
+
+- erforderliche Einwilligung oder andere Rechtsgrundlage;
+- Opt-out-, Sperr- und Bereits-kontaktiert-Merkmale;
+- Verhalten bei Absage, Archivierung oder unklarem Status;
+- Standorte oder Interessentengruppen ohne automatische Kontaktfreigabe.
+
+## Priorität 2: vor Zapier-Test
+
+### OD-011: Trigger-Richtung und verbindliche Ziel-Deduplizierung
+
+Zu entscheiden ist, ob die neue private Zapier-App Ereignisse per REST Hook
+empfängt oder kontrolliert von der Middleware pollt. Ein direkter Zugriff der
+Zapier-App auf MATOOL ist ausgeschlossen.
 
 Der Transport arbeitet mindestens einmal. Verlorener 2xx-Response und Timeout
 können deshalb einen Retry auslösen.
@@ -145,26 +152,45 @@ Eine reine Rückbestätigung, Transportannahme oder manuelle Freigabe verhindert
 allein keine Doppelaktion. Ohne nachgewiesene Ziel-Deduplizierung wird keine
 automatische Kundenaktion aktiviert.
 
-### OD-010: Bestehender Wochenreport
+## Priorität 3: vor Produktivfreigabe
 
-Zu entscheiden:
-
-- unverändert weiterführen, nachdem der öffentliche Export abgesichert wurde;
-- durch `follow_up_due`-Ereignisse der Middleware ersetzen;
-- während der Migration parallel vergleichen.
-
-## Priorität 2: vor Produktivfreigabe oder Ausbau
-
-### OD-011: Standorte und Sektoren
+### OD-012: Standorte und Sektoren
 
 Zu klären:
 
 - ein gemeinsamer Lauf oder getrennte Läufe je Standort;
 - eigene Zugangsdaten je Standort;
-- standortabhängige Tarife und Empfänger;
+- standortabhängige Kontaktregeln und Empfänger;
 - maximale Kandidatenzahl je Lauf.
 
-### OD-012: Verlängerungsformular
+### OD-013: Datenaufbewahrung
+
+Fristen festlegen für:
+
+- technische Runs und Fehler;
+- aktuelle Interessenten- und Termindatensätze;
+- Ereignisversionen;
+- erfolgreiche und fehlgeschlagene Zustellungen;
+- erfolgreiche Kontakte und technische Ausschlüsse.
+
+### OD-014: Cloudflare-Zugriff und Domain
+
+Benötigt werden später:
+
+- Cloudflare-Konto und gewünschte Domain;
+- erlaubte Mitarbeiteridentitäten für Cloudflare Access;
+- GitHub-Repository-Verknüpfung;
+- ausdrücklich getrennte Staging- und Produktions-Builds.
+
+## Spätere Ausbaustufen
+
+### OD-015: GLZ-Prozess
+
+Die Verlängerung nach GLZ bleibt als spätere Prozessnotiz erhalten. Vor ihrer
+Aktivierung werden Identitäts-, Datums-, Lookback-, Ausschluss- und
+Zustellregeln separat freigegeben.
+
+### OD-016: Verlängerungsformular
 
 Optionen:
 
@@ -174,25 +200,11 @@ Optionen:
 
 Hierfür sind Datenschutz-, Vertrags- und Prozessprüfung gesondert erforderlich.
 
-### OD-013: Cloudflare-Zugriff und Domain
+## Nächste fachliche Antworten
 
-Benötigt werden später:
+Für den nächsten Implementierungsschnitt werden zuerst benötigt:
 
-- Cloudflare-Konto und gewünschte Domain;
-- erlaubte Admin-Identitäten für Cloudflare Access;
-- GitHub-Repository-Verknüpfung;
-- ausdrücklich getrennte Staging- und Produktions-Builds.
-
-## Empfohlene Antwortreihenfolge
-
-Für den nächsten Implementierungsschnitt reichen zunächst fünf Antworten:
-
-1. Worker mit Static Assets statt klassischem Pages-Projekt akzeptiert?
-2. Admin-Dashboard zuerst?
-3. GLZ als erster Prozess?
-4. Quellcode der privaten MATOOL-Zapier-App verfügbar?
-5. aktueller Zapier-Tarif?
-
-Die Detailentscheidungen OD-004 bis OD-007 werden danach vor dem ersten
-Echtdatenlauf gemeinsam abgeschlossen.
-
+1. Wie lange vor dem ersten Probetraining soll die Kontaktaufnahme erfolgen?
+2. Über welches Kontaktmedium und mit welchem freigegebenen Inhalt?
+3. Welche Status-, Absage-, Archiv- und Bereits-kontaktiert-Regeln gelten?
+4. Welche Einwilligungs-, Sperr- und Opt-out-Regeln müssen geprüft werden?

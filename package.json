@@ -1,0 +1,32 @@
+{
+  "name": "matool-middleware-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "build": "pnpm run build:web && pnpm run build:worker",
+    "build:web": "vite build",
+    "build:worker": "wrangler deploy --dry-run --outdir dist/worker --env staging",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build:worker && pnpm run scan",
+    "cf:types": "wrangler types src/worker-configuration.d.ts",
+    "db:migrate:local": "wrangler d1 migrations apply matool-middleware-local --local",
+    "dev": "pnpm run build:web && wrangler dev",
+    "scan": "node scripts/check-repository.mjs",
+    "test": "pnpm run build:web && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+  },
+  "dependencies": {
+    "jose": "6.2.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.19.0",
+    "@cloudflare/workers-types": "5.20260729.1",
+    "@types/node": "26.1.2",
+    "typescript": "7.0.2",
+    "vite": "8.1.5",
+    "vitest": "4.1.10",
+    "wrangler": "4.115.0"
+  }
+}

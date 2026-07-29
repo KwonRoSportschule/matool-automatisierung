@@ -1,6 +1,6 @@
 # Zielarchitektur
 
-Status: Vorschlag zur gemeinsamen Freigabe  
+Status: Hosting, Oberfläche und erster Pilot bestätigt; fachliche Detailregeln offen<br>
 Stand: 29. Juli 2026
 
 ## 1. Ziel
@@ -12,23 +12,25 @@ Zapier. Sie übernimmt drei Aufgaben:
 2. Validierung, Normalisierung und Änderungserkennung;
 3. sichere Bereitstellung deduplizierter fachlicher Ereignisse.
 
-Die Webseite ist zunächst ein internes Admin- und Statuswerkzeug. Eine
-öffentliche Vertragsverlängerungsseite ist eine getrennt freizugebende
-Ausbaustufe.
+Die Webseite ist ausschließlich ein internes Mitarbeiter-, Admin- und
+Statuswerkzeug. Der erste Pilot erkennt Interessenten, die vor ihrem ersten
+Probetraining kontaktiert werden sollen. Eine öffentliche
+Vertragsverlängerungsseite und der GLZ-Prozess sind getrennt freizugebende
+Ausbaustufen.
 
 ## 2. Systemübersicht
 
 ```mermaid
 flowchart LR
-    A["Admin-Browser"] -->|Cloudflare Access| W["Worker + Static Assets"]
+    A["Mitarbeiter-Browser"] -->|Cloudflare Access| W["Worker + Static Assets"]
     C["Cron Trigger"] --> W
     W --> S["Sync-Orchestrator"]
     S --> M["MATOOL-Client<br/>fetch + CookieJar"]
     M --> H["core.matool.de"]
     S <--> D[("D1 EU")]
     S --> O["Ausgabeadapter"]
-    O --> Z["Zapier Catch Hook<br/>bei geeignetem Tarif"]
-    O --> G["Google Sheets<br/>nur als Fallback"]
+    O --> Z["neu gebaute private Zapier-App<br/>Zapier Professional"]
+    Z --> P["freigegebener Zapier-Ablauf"]
 ```
 
 Der Quellcode liegt in GitHub. Cloudflare Workers Builds kann Commits aus dem
@@ -36,7 +38,7 @@ Repository bauen und als Version beziehungsweise Deployment veröffentlichen.
 
 ## 3. Hostingentscheidung
 
-Empfohlen wird ein Worker mit Static Assets:
+Bestätigt ist ein Worker mit Static Assets:
 
 - ein gemeinsames Deployment für Webseite, API und Cron;
 - direkte Bindings an D1 und Secrets;
@@ -44,8 +46,7 @@ Empfohlen wird ein Worker mit Static Assets:
 - identische Preview-Version für Frontend und Backend;
 - weniger Konfiguration und weniger öffentliche Angriffsfläche.
 
-Falls Cloudflare Pages verbindlich als Produkt gewählt wird, wird das Repository
-als Monorepo aufgebaut:
+Die nicht gewählte Alternative wäre ein Monorepo mit getrennten Deployments:
 
 ```text
 apps/web       Cloudflare Pages
@@ -53,18 +54,19 @@ apps/worker    Cloudflare Worker mit Cron und D1
 packages/core  gemeinsame Schemas und Fachlogik
 ```
 
-Diese Alternative besitzt zwei Deployments und benötigt eine explizite
-Authentifizierung zwischen Pages und Worker.
+Diese Alternative mit Cloudflare Pages besitzt zwei Deployments, benötigt eine
+explizite Authentifizierung zwischen Pages und Worker und ist nicht Teil der
+ersten Umsetzung.
 
 ## 4. Komponenten
 
-### 4.1 Admin-Webseite
+### 4.1 Internes Mitarbeiter-Dashboard
 
 Erster Umfang:
 
 - Systemstatus ohne Personendaten;
 - letzte Läufe mit Dauer und Mengen;
-- Collector-Status und Shadow-/Produktionsmodus;
+- Status des Interessenten-Collectors und Shadow-/Produktionsmodus;
 - Fehlerkategorien mit redigierten Details;
 - manueller Dry Run;
 - Ereigniszähler und Zustellstatus.
@@ -116,6 +118,14 @@ Ein Collector definiert:
 Collectors laufen innerhalb eines Kontos seriell, weil MATOOL-Endpunkte
 Sessionzustand verändern können.
 
+Der erste Collector erzeugt ausschließlich das Ereignis
+`prospect_trial_contact_due`. Er benötigt mindestens eine stabile
+Interessenten-ID, den nachweislich ersten Probetrainingstermin, den
+Interessentenstatus und das Ergebnis der freigegebenen Kontaktprüfung. Das
+Kontaktmedium, der Vorlauf vor dem Termin sowie Regeln für Absagen,
+Verschiebungen und bereits kontaktierte Personen werden vor dem Shadow-Betrieb
+fachlich festgelegt.
+
 ### 4.4 D1
 
 D1 wird bei Erstellung auf `jurisdiction=eu` beschränkt. Vorgesehene Tabellen:
@@ -165,35 +175,34 @@ deliver(event) -> accepted | retryable_error | permanent_error
 Geplante Adapter:
 
 1. `ShadowSink`: speichert und zeigt Ereignisse, sendet aber nichts.
-2. `ZapierWebhookSink`: sendet an einen geheimen Catch Hook.
-3. `GoogleSheetsSink`: Fallback über eine signierte Apps-Script-Web-App.
+2. `ZapierAppSink`: stellt freigegebene Ereignisse der neu zu bauenden privaten
+   Zapier-App bereit beziehungsweise stellt sie an diese zu.
 
-Der direkte Zapier-Adapter ist vorzuziehen, wenn Tarif und fachliche
-Deduplizierung dies erlauben. Google Sheets darf nicht öffentlich per Link
-freigegeben werden.
+Zapier Professional ist bestätigt. Die private App wird in diesem Projekt neu
+gebaut; sie verwendet die `event_id` als stabilen
+Zapier-Deduplizierungsschlüssel und authentifiziert sich an einer eng begrenzten
+Service-API. Google Sheets ist für den ersten Pilot weder Transport noch
+Zustandsquelle.
 
 ## 5. Zeitsteuerung
 
-Fachliches Fenster:
+Ein Cron Trigger startet regelmäßige Interessenten-Abrufe. Die fachliche
+Eignungsprüfung verwendet Datum und Uhrzeit des ersten Probetrainings in
+`Europe/Berlin`; UTC-Zeitstempel allein dürfen keine Verschiebung des lokalen
+Kontakttags verursachen.
 
-- Montag bis Freitag;
-- volle Stunde;
-- 08:00 bis 20:00 Uhr `Europe/Berlin`;
-- 13 fachliche Läufe pro Werktag.
+Vor Aktivierung des Cron werden festgelegt:
 
-Breiter UTC-Cron:
+- gewünschter Vorlauf vor dem ersten Probetraining;
+- zulässige Kontaktzeiten und Wochentage;
+- Verhalten bei ausgefallenen Läufen;
+- Lookback-Fenster für verschobene oder nachträglich eingetragene Termine.
 
-```text
-0 6-19 * * MON-FRI
-```
-
-Lokale Prüfung vor Login, Lease und Datenzugriff:
-
-- Sommerzeit: UTC 06:00 bis 18:00 ausführen, UTC 19:00 verwerfen.
-- Winterzeit: UTC 07:00 bis 19:00 ausführen, UTC 06:00 verwerfen.
-- `minute === 0` als explizite Invariante prüfen.
-- als Zeitquelle ausschließlich `controller.scheduledTime` verwenden, damit
-  eine verspätete tatsächliche Ausführung das fachliche Fenster nicht verändert.
+Der Cron darf breiter als das fachliche Kontaktfenster laufen. Eine lokale
+Prüfung erfolgt vor Login, Lease, Datenzugriff und Ereigniserzeugung. Als
+Zeitquelle dient ausschließlich `controller.scheduledTime`, damit eine verspätete
+tatsächliche Ausführung das fachliche Fenster nicht verändert. Wiederholte
+Läufe erzeugen aufgrund derselben `event_id` keine zweite Kontaktaktion.
 
 ## 6. Zustands- und Fehlersemantik
 
@@ -210,13 +219,12 @@ stateDiagram-v2
     retry_wait --> queued
     retry_wait --> failed
     transport_accepted --> action_confirmed
-    action_confirmed --> renewed
-    action_confirmed --> follow_up_due
+    action_confirmed --> [*]
 ```
 
 Regeln:
 
-- Baseline erzeugt standardmäßig keine ausgehenden Ereignisse.
+- `baseline` erzeugt standardmäßig keine ausgehenden Ereignisse.
 - `unchanged` ist ein Laufergebnis, kein gespeicherter Ereignisstatus.
 - Ein unveränderter Datensatz erzeugt weder neue Version noch neue Zustellung.
 - Leere oder stark verkleinerte Antworten sind Fehler, keine Löschung.
@@ -237,8 +245,10 @@ POST /api/admin/v1/sync/dry-run       Cloudflare Access + CSRF-Schutz
 POST /api/admin/v1/sync/shadow        Cloudflare Access + CSRF-Schutz
 ```
 
-Ein Zapier-Service-Endpunkt wird erst festgelegt, wenn Push, Polling oder
-Google-Sheets-Fallback entschieden ist.
+Die private Zapier-App erhält eine versionierte Service-Grenze mit eigener
+Authentifizierung. Ob sie Ereignisse per REST Hook empfängt oder kontrolliert
+pollt, wird vor ihrer Implementierung festgelegt; beide Varianten verwenden
+`event_id` und ein explizites Zustellprotokoll.
 
 ## 8. Deployment und Umgebungen
 
@@ -253,7 +263,7 @@ Secrets, Access-Anwendungen und Cron-Konfigurationen. Nicht-produktive Branches
 werden ausdrücklich gegen den Staging-Worker gebaut, beispielsweise mit
 `wrangler versions upload --env staging`; sie laden keine Version mit
 Produktionsbindungen hoch. Ein Preview-Deployment erhält niemals produktive
-MATOOL-Secrets oder einen produktiven Zapier-Hook.
+MATOOL-Secrets oder produktive Zugangsdaten der privaten Zapier-App.
 
 ## 9. Kapazitätsrisiko
 

@@ -14,29 +14,38 @@ vorgelagerten Gates bestanden und fachlich bestätigt sind.
 
 ## Phase 0: Entscheidungen und Sicherheitsvorbereitung
 
+Bestätigte Ausgangsbasis:
+
+- Cloudflare Worker mit Static Assets;
+- ausschließlich internes Mitarbeiter-Dashboard;
+- erster Pilot: Kontaktaufnahme mit Interessenten vor ihrem ersten
+  Probetraining;
+- keine vorhandene private Zapier-MATOOL-App; sie wird neu gebaut;
+- Zapier Professional.
+
 ### Aufgaben
 
 - produktives MATOOL-Passwort aus der HAR vorsorglich rotieren;
 - bestehende MATOOL-Sessions nach Rotation ungültig machen;
-- vorhandenen Quellcode der privaten MATOOL-Zapier-Integration suchen;
-- Cloudflare-Hostingmodell und UI-Umfang bestätigen;
-- GLZ-Pilot und seine exakten Datums-, Lookback- und Ausschlussregeln
-  bestätigen;
-- stabile Mitgliedschafts- und Vertragsperioden-ID als notwendiges Gate
-  festlegen;
+- Vorlauf, Kontaktmedium, Kontaktzeiten und fachliche Statusregeln des ersten
+  Probetraining-Piloten bestätigen;
+- Consent-, Sperr- und Opt-out-Regeln für die Kontaktaufnahme bestätigen;
+- stabile Interessenten-ID und eindeutige Zuordnung des ersten
+  Probetrainingstermins als notwendiges Gate festlegen;
 - Nutzungsrahmen der automatisierten MATOOL-Zugriffe klären;
 - Cloudflare-Account, Domain und spätere Access-Identitäten erfassen;
 - Staging, Produktion, D1-EU-Jurisdiktion und Aufbewahrungsregeln vor dem ersten
   Echtdatenlauf festlegen;
 - öffentlichen Google-Sheets-/XLSX-Zugriff des Altprozesses absichern oder als
   befristetes Risiko mit Verantwortlichem dokumentieren;
-- Zapier-Tarif spätestens vor Phase 5 erfassen.
+- Schnittstellenrichtung der neuen privaten Zapier-App vor Phase 5 festlegen.
 
 ### Ergebnisse
 
 - beantwortete Priorität-0-Punkte aus `docs/open-decisions.md`;
 - keine produktiven Secrets in Dateien oder Chat;
-- bestätigte technische Ausgangsquelle: Altcode oder lokaler Probe-Client.
+- bestätigte technische Ausgangsquelle: lokaler, redigierender Probe-Client;
+- freigegebene fachliche Eignungs- und Ausschlussregeln für den Shadow-Betrieb.
 
 ### Gate
 
@@ -48,8 +57,7 @@ Persistenz beginnt erst nach Umgebungs-, EU- und Aufbewahrungsentscheidung.
 
 ### Aufgaben
 
-- nach Annahme von ADR 0001 einen TypeScript-Worker mit Static Assets anlegen;
-  bei Wahl von Pages stattdessen das dokumentierte Monorepo aufbauen;
+- TypeScript-Worker mit Static Assets anlegen;
 - Wrangler-Konfiguration für `staging` und `production` vorbereiten;
 - lokale Testumgebung und Workers-kompatible Tests einrichten;
 - API-Routing, Fehlerformat und Log-Redaktion implementieren;
@@ -66,6 +74,7 @@ src/
   collectors/
   sinks/
 web/
+zapier/
 migrations/
 test/
 fixtures/synthetic/
@@ -92,8 +101,9 @@ Noch keine externe Cloudflare-Ressource und kein produktiver MATOOL-Abruf.
 - optionalen initialen GET und Login-POST testen;
 - Redirects manuell behandeln;
 - Login durch eine authentifizierte Folgeseite verifizieren;
-- GLZ-relevante Listenstruktur anonymisiert vermessen;
-- stabile Mitgliedschafts- und Vertragsperioden-ID sowie Feldselektoren
+- Interessentenliste und Struktur des ersten Probetrainingstermins anonymisiert
+  vermessen;
+- stabile Interessenten-ID, Termin-, Status- und Kontaktfeldselektoren
   nachweisen;
 - Antwortgröße, CPU-Zeit, Wall-Time und Subrequests messen.
 
@@ -121,15 +131,15 @@ Verboten:
 - erfolgreicher und fehlgeschlagener Login unterscheidbar;
 - Sessionablauf und höchstens eine begrenzte, erkannte Re-Authentifizierung
   getestet;
-- GLZ-Seite liefert reproduzierbare Struktur;
+- Interessentenseite liefert reproduzierbare Struktur;
 - stabiler Schlüssel anhand mindestens zweier Abrufe bestätigt;
 - keine schreibende MATOOL-Anfrage;
 - Messwerte entscheiden Free versus Paid Worker.
 
 ### Gate
 
-Ohne stabile Mitgliedschafts- und Vertragsperioden-ID sowie synthetische
-Parser-Fixture wird Phase 3 nicht freigegeben.
+Ohne stabile Interessenten-ID, eindeutigen ersten Probetrainingstermin und
+synthetische Parser-Fixture wird Phase 3 nicht freigegeben.
 
 ## Phase 3: Kernlogik und D1
 
@@ -141,6 +151,7 @@ Parser-Fixture wird Phase 3 nicht freigegeben.
 - Lease mit Owner-ID, DB-Zeit, TTL, Heartbeat, owner-geprüfter Freigabe und
   monotonem Fencing-Token implementieren;
 - Baseline- und Shadow-Modus implementieren;
+- Ereignisschema `prospect_trial_contact_due` implementieren;
 - Adminansicht für Mengen und technische Zustände anbinden.
 
 ### Verifikation
@@ -159,13 +170,15 @@ Parser-Fixture wird Phase 3 nicht freigegeben.
 
 Die gesamte Phase läuft mit synthetischen Fixtures.
 
-## Phase 4: GLZ-Shadow-Betrieb
+## Phase 4: Shadow-Betrieb für Interessenten vor dem Probetraining
 
 ### Aufgaben
 
-- GLZ-Collector gegen die bestätigte MATOOL-Struktur implementieren;
-- Berlin-Stichtagslogik und 42-Tage-Regel aktivieren;
+- Interessenten-Collector gegen die bestätigte MATOOL-Struktur implementieren;
+- bestätigten Vorlauf und lokale Terminlogik in `Europe/Berlin` aktivieren;
 - fachliche Ausschlüsse als explizite Regeln abbilden;
+- Absagen, Verschiebungen, fehlende Termine und bereits erfolgte Kontakte
+  abbilden;
 - reale Staging-D1 mit EU-Jurisdiktion und aktiver Löschregel verwenden;
 - geplanten Cron zunächst nur in Staging aktivieren;
 - Vergleichsprotokoll für MATOOL und Middleware erstellen.
@@ -175,11 +188,15 @@ Die gesamte Phase läuft mit synthetischen Fixtures.
 - zehn aufeinanderfolgende stabile reale read-only Läufe;
 - Kandidatenmenge und stabile Schlüssel pro Lauf manuell bestätigt;
 - zweiter unveränderter Lauf erzeugt null neue Ereignisse;
-- Testfälle für 41, 42 und 43 Tage bestehen;
+- Fälle vor, genau in und nach dem bestätigten Kontaktfenster sind getestet;
+- Absage oder Verschiebung erzeugt keine unzulässige Kontaktaktion;
+- ein Interessent wird für denselben ersten Probetrainingstermin höchstens
+  einmal freigegeben;
 - Sommer-/Winterzeit, Monats-/Jahreswechsel und Schaltjahr bestehen;
-- gültiges Null-Ergebnis, Trunkierung, Pagination, Duplikate und mehr als 500
-  Treffer sind unterscheidbar;
-- korrigiertes Vertragsende erzeugt keine zweite Kundenaktion;
+- gültiges Null-Ergebnis, Trunkierung, Pagination, Duplikate und ungewöhnlich
+  große Ergebnismengen sind unterscheidbar;
+- korrigierter Probetrainingstermin erzeugt keine unkontrollierte zweite
+  Kundenaktion;
 - ein simulierter Parser- oder D1-Fehler erzeugt keine negative Aktion;
 - keine Personendaten in Logs oder Build-Artefakten.
 
@@ -187,11 +204,14 @@ Die gesamte Phase läuft mit synthetischen Fixtures.
 
 Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 
-## Phase 5: Zapier-Testzustellung
+## Phase 5: Private Zapier-App und Testzustellung
 
 ### Aufgaben
 
-- gewählten Ausgabeadapter implementieren;
+- private Zapier-App für Zapier Professional neu aufbauen;
+- authentifizierten Trigger beziehungsweise Ausgabeadapter zur Middleware
+  implementieren;
+- `prospect_trial_contact_due` als versioniertes Trigger-Ereignis definieren;
 - Outbox-Retry mit Backoff und maximaler Versuchszahl ergänzen;
 - dauerhafte Ziel-Deduplizierung der `event_id` vor der Nebenwirkung
   implementieren oder eine nachweislich idempotente Zielaktion wählen;
@@ -204,7 +224,8 @@ Schriftliche fachliche Bestätigung der Shadow-Ergebnisse.
 - wiederholtes Senden derselben `event_id` erzeugt keine zweite Folgeaktion;
 - 2xx, verlorener 2xx-Response, 4xx, 5xx und Timeout sind getestet;
 - permanenter Fehler wird pausiert und sichtbar;
-- Zapier-Hook oder Google-Endpunkt steht in keinem Frontend-Bundle oder Log;
+- Service-Token oder Zapier-Endpunkt steht in keinem Frontend-Bundle oder Log;
+- private Zapier-App greift nicht direkt mit MATOOL-Zugangsdaten auf MATOOL zu;
 - produktive Empfänger bleiben deaktiviert.
 
 ### Gate
@@ -228,7 +249,8 @@ ungefährlichen Testaktion.
 - Produktionskonfiguration ist von Staging getrennt;
 - Rollback auf vorherige Worker-Version getestet;
 - Erstimport bleibt aktionsfrei;
-- reale Änderung erzeugt genau eine freigegebene Aktion;
+- ein fälliger Interessent erzeugt höchstens eine freigegebene Kontaktaktion je
+  erstem Probetrainingstermin;
 - Aufbewahrungs- und Löschjob funktioniert;
 - Lauf- und Fehlerstatus sind für Verantwortliche sichtbar.
 
@@ -242,9 +264,10 @@ Diese Phase ist optional und erhält pro Funktion eine eigene Freigabe:
 
 - tokenisierte öffentliche Verlängerungsseite;
 - Jotform- oder WordPress-Anbindung;
+- GLZ-Collector und Verlängerungsprozess;
 - Rückkanal `renewed`;
 - wöchentliche Nachfassereignisse;
-- Interessenten- und weitere MATOOL-Collectors;
+- weitere MATOOL-Collectors;
 - später eventuell kontrollierte schreibende MATOOL-Aktionen.
 
 Schreibende MATOOL-Aktionen sind kein automatischer Bestandteil des
@@ -279,7 +302,8 @@ Das Projekt ist erst fertig, wenn:
 
 1. Webseite, Worker, D1 und GitHub-Deployment produktiv verbunden sind;
 2. MATOOL read-only zuverlässig und autorisiert abgerufen wird;
-3. GLZ-Ereignisse korrekt, minimal und dedupliziert erzeugt werden;
+3. `prospect_trial_contact_due`-Ereignisse korrekt, minimal und dedupliziert
+   erzeugt werden;
 4. Zapier genau eine freigegebene Folgeaktion pro Ereignis ausführt;
 5. Adminzugriff, Logs, Secrets, Aufbewahrung und Fehlerwege geprüft sind;
 6. Shadow- und Produktionsabnahme dokumentiert sind;

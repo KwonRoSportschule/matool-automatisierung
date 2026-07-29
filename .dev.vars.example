@@ -1,0 +1,13 @@
+# Dieses Template enthält absichtlich keine echten Secrets.
+# Für lokales Browsen ist der Bypass ausschließlich auf Loopback-Adressen aktiv.
+DEV_AUTH_BYPASS=allow-loopback-only
+CSRF_SECRET=replace-with-at-least-24-random-characters
+
+# Erst nach Passwortrotation und ausdrücklicher read-only-Freigabe lokal setzen:
+# MATOOL_EMAIL=
+# MATOOL_PASSWORD=
+# MATOOL_REAL_RUNS_ENABLED=confirmed-read-only
+
+# Erst beim synthetischen Zapier-Test lokal setzen:
+# ZAPIER_CATCH_HOOK_URL=
+# ZAPIER_SIGNING_SECRET=
