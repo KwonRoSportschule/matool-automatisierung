@@ -472,4 +472,87 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       expect(serializedFailure).not.toContain(privateValue);
     }
   });
+
+  it("extrahiert allowlist-basierte Tabellenzeilen mit stabilen IDs und Redaction", async () => {
+    const longCell = "x".repeat(700);
+    const page = `
+      <html><body><h1>Interessenten</h1>
+        <table>
+          <tr><th>Name</th><th>Details</th><th>Zahlung</th></tr>
+          <tr onclick="formular_fuellen(900001)">
+            <td>Alice<script>PRIVATE-SCRIPT</script>
+              <input value="PRIVATE-INPUT"><img alt="PRIVATE-IMAGE">
+            </td>
+            <td><a href="/index.php?show=interessenten&amp;interessent=900001">Öffnen</a></td>
+            <td>DE89 3704 0044 0532 0130 00</td>
+          </tr>
+          <tr onclick="formular_fuellen(900001)">
+            <td>Duplikat</td><td>Duplikat</td><td>Duplikat</td>
+          </tr>
+          <tr><td><a href="/index.php?show=interessenten&amp;page=2">Weiter</a></td></tr>
+          <tr><td>${longCell}</td><td>Ohne technische ID</td></tr>
+        </table>
+      </body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    expect(result).toMatchObject({
+      area: "interessenten",
+      bodyBytes: new TextEncoder().encode(page).byteLength,
+      rowCount: 2
+    });
+    expect(result.records[0]).toEqual({
+      sourceId: "900001",
+      payload: {
+        c00: "Alice",
+        c01: "Öffnen",
+        c02: "",
+        columnCount: 3,
+        tableIndex: 0
+      }
+    });
+    expect(result.records[1]?.sourceId).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.records[1]?.payload.c00).toHaveLength(500);
+    const serialized = JSON.stringify(result);
+    for (const forbidden of [
+      "PRIVATE-SCRIPT",
+      "PRIVATE-INPUT",
+      "PRIVATE-IMAGE",
+      "DE89",
+      "Duplikat"
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("blockiert nicht freigegebene Listenbereiche vor dem Login", async () => {
+    let requestCount = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        requestCount += 1;
+        throw new Error("network must not be reached");
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "kasse"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_area_not_allowed",
+      status: 400
+    });
+    expect(requestCount).toBe(0);
+  });
 });

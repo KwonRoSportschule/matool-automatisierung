@@ -1,18 +1,84 @@
+import { toAppError } from "../core/app-error";
+import { MatoolClient } from "../matool/client";
 import type { Env } from "./env";
+import {
+  persistMatoolSnapshotRun,
+  recordMatoolSnapshotFailure
+} from "./matool-store";
 import { processZapierOutbox } from "./outbox";
 import { getProcessMode } from "./repository";
+import { evaluateBerlinScheduleWindow } from "./schedule-window";
+
+// Reihenfolge nach fachlichem Wert: Bricht ein Lauf an einer CPU- oder
+// Subrequest-Grenze ab, sind die wichtigsten Bereiche bereits gespeichert.
+export const MATOOL_SNAPSHOT_AREAS = [
+  "interessenten",
+  "schueler",
+  "checkin",
+  "pruefungen",
+  "klassen",
+  "artikel",
+  "lager",
+  "newsletter",
+  "archiv",
+  "telemetrie",
+  "berichte",
+  "karte"
+] as const;
+
+export interface CollectSnapshotsAreaResult {
+  area: string;
+  errorCode?: string;
+  status: "succeeded" | "failed";
+  storedCount?: number;
+}
+
+export interface CollectSnapshotsResult {
+  areas: CollectSnapshotsAreaResult[];
+  failed: number;
+  storedTotal: number;
+  succeeded: number;
+}
+
+const SNAPSHOT_PAYLOAD_FIELDS = [
+  "tableIndex",
+  "columnCount",
+  "displayNumber",
+  "createdDate",
+  "firstName",
+  "lastName",
+  "status",
+  ...Array.from({ length: 64 }, (_, index) =>
+    `c${index.toString().padStart(2, "0")}`
+  )
+];
 
 export async function handleScheduledInvocation(
   controller: ScheduledController,
   env: Env
 ): Promise<void> {
-  const mode = await getProcessMode(env);
-
-  if (mode === "disabled") {
+  const scheduleWindow = evaluateBerlinScheduleWindow(
+    controller.scheduledTime
+  );
+  if (!scheduleWindow.allowed) {
     console.info(
       JSON.stringify({
-        event: "scheduled_run_skipped",
-        reason: "process_disabled",
+        event: "matool_snapshot_schedule_skipped",
+        holiday: scheduleWindow.holiday,
+        localDate: scheduleWindow.localDate,
+        localHour: scheduleWindow.localHour,
+        reason: scheduleWindow.reason,
+        scheduledTime: new Date(controller.scheduledTime).toISOString()
+      })
+    );
+    return;
+  }
+
+  if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+    console.info(
+      JSON.stringify({
+        event: "matool_snapshot_schedule_skipped",
+        reason: "matool_not_configured",
         scheduledTime: new Date(controller.scheduledTime).toISOString()
       })
     );
@@ -22,7 +88,7 @@ export async function handleScheduledInvocation(
   if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
     console.info(
       JSON.stringify({
-        event: "scheduled_run_skipped",
+        event: "matool_snapshot_schedule_skipped",
         reason: "real_matool_runs_not_confirmed",
         scheduledTime: new Date(controller.scheduledTime).toISOString()
       })
@@ -30,6 +96,9 @@ export async function handleScheduledInvocation(
     return;
   }
 
+  await collectMatoolSnapshots(env, controller.scheduledTime);
+
+  const mode = await getProcessMode(env);
   if (
     mode === "active" &&
     env.OUTBOUND_DELIVERY_ENABLED === "true"
@@ -57,12 +126,111 @@ export async function handleScheduledInvocation(
       );
     }
   }
+}
 
-  console.info(
-    JSON.stringify({
-      event: "collector_run_skipped",
-      reason: "collector_source_mapping_not_verified",
-      scheduledTime: new Date(controller.scheduledTime).toISOString()
-    })
-  );
+export async function collectMatoolSnapshots(
+  env: Env,
+  scheduledTime: number,
+  areas: readonly string[] = MATOOL_SNAPSHOT_AREAS
+): Promise<CollectSnapshotsResult> {
+  const summary: CollectSnapshotsResult = {
+    areas: [],
+    failed: 0,
+    storedTotal: 0,
+    succeeded: 0
+  };
+  if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+    return summary;
+  }
+
+  // Ein Client für den gesamten Lauf: genau eine Anmeldung, eine Session.
+  const client = new MatoolClient(env.MATOOL_BASE_URL);
+  try {
+    for (const area of areas) {
+    const runId = `snapshot_${area}_${crypto.randomUUID()}`;
+    const startedAt = new Date().toISOString();
+    try {
+      const credentials = {
+        email: env.MATOOL_EMAIL,
+        password: env.MATOOL_PASSWORD
+      };
+      const records =
+        area === "interessenten"
+          ? (await client.extractInteressenten(credentials)).map(
+              (record) => ({
+                payload: {
+                  createdDate: record.createdDate,
+                  displayNumber: record.displayNumber,
+                  firstName: record.firstName,
+                  lastName: record.lastName,
+                  status: record.status
+                },
+                sourceId: record.sourceId
+              })
+            )
+          : (await client.extractSafeArea(credentials, area)).records;
+      const finishedAt = new Date().toISOString();
+      const result = await persistMatoolSnapshotRun(env.DB, {
+        allowedPayloadFields: SNAPSHOT_PAYLOAD_FIELDS,
+        area,
+        finishedAt,
+        observedAt: finishedAt,
+        records,
+        runId,
+        startedAt
+      });
+      summary.succeeded += 1;
+      summary.storedTotal += result.storedCount;
+      summary.areas.push({
+        area,
+        status: "succeeded",
+        storedCount: result.storedCount
+      });
+      console.info(
+        JSON.stringify({
+          area,
+          event: "matool_snapshot_succeeded",
+          scheduledTime: new Date(scheduledTime).toISOString(),
+          storedCount: result.storedCount
+        })
+      );
+    } catch (error) {
+      const finishedAt = new Date().toISOString();
+      const errorCode = toAppError(error).code;
+      summary.failed += 1;
+      summary.areas.push({ area, errorCode, status: "failed" });
+      try {
+        await recordMatoolSnapshotFailure(env.DB, {
+          area,
+          errorCode,
+          finishedAt,
+          runId,
+          startedAt
+        });
+      } catch {
+        console.error(
+          JSON.stringify({
+            area,
+            errorCode: "matool_snapshot_failure_not_recorded",
+            event: "matool_snapshot_failed",
+            scheduledTime: new Date(scheduledTime).toISOString()
+          })
+        );
+        continue;
+      }
+      console.error(
+        JSON.stringify({
+          area,
+          errorCode,
+          event: "matool_snapshot_failed",
+          scheduledTime: new Date(scheduledTime).toISOString()
+        })
+      );
+    }
+    }
+  } finally {
+    client.clearSession();
+  }
+
+  return summary;
 }

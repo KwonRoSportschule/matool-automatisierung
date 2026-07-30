@@ -55,7 +55,7 @@
         }
       ],
       "triggers": {
-        "crons": []
+        "crons": ["0 7-18 * * mon-fri"]
       }
     },
     "production": {

@@ -273,6 +273,50 @@
               </section>
             </div>
           </aside>
+
+          <section class="panel runs-panel" aria-labelledby="snapshot-title">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Datenbestand</div>
+                <h2 id="snapshot-title">MATOOL-Daten in der Datenbank</h2>
+              </div>
+              <span class="privacy-note" id="snapshot-total">Noch keine Daten</span>
+            </div>
+
+            <p>
+              Holt alle freigegebenen MATOOL-Bereiche ab und speichert sie
+              versioniert in der Datenbank. Unveränderte Datensätze erzeugen
+              keine neue Version.
+            </p>
+
+            <button
+              class="button button-primary"
+              id="sync-all"
+              type="button"
+              disabled
+            >
+              Datenabruf noch gesperrt
+            </button>
+            <p class="action-message" id="sync-message" aria-live="polite"></p>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Bereich</th>
+                    <th scope="col">Datensätze</th>
+                  </tr>
+                </thead>
+                <tbody id="snapshot-body">
+                  <tr>
+                    <td class="empty-state" colspan="2">
+                      Noch keine Daten abgerufen.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </main>
 

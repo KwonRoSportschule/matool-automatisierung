@@ -10,7 +10,10 @@ import { requireAccessIdentity } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import type { Env } from "./env";
 import { getAdminStatus, listRuns } from "./repository";
-import { handleScheduledInvocation } from "./schedule";
+import {
+  collectMatoolSnapshots,
+  handleScheduledInvocation
+} from "./schedule";
 import { handleZapierApiRequest } from "./zapier-api";
 
 const worker = {
@@ -207,6 +210,32 @@ async function handleApiRequest(
     } finally {
       client.clearSession();
     }
+  }
+
+  if (url.pathname === "/api/admin/v1/matool/sync") {
+    await requireValidCsrfRequest(request, identity, env);
+
+    if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+      throw new AppError(
+        "matool_not_configured",
+        409,
+        "Die MATOOL-Verbindung ist noch nicht eingerichtet."
+      );
+    }
+
+    if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
+      throw new AppError(
+        "matool_runs_not_confirmed",
+        409,
+        "Read-only-Echtdatenläufe sind noch nicht freigegeben."
+      );
+    }
+
+    const result = await collectMatoolSnapshots(env, Date.now());
+    return jsonResponse({
+      schemaVersion: 1,
+      sync: result
+    });
   }
 
   if (url.pathname === "/api/admin/v1/matool/probe") {

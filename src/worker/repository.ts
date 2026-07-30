@@ -36,6 +36,23 @@ interface TotalCountRow {
   count: number;
 }
 
+interface MatoolSnapshotRunRow {
+  area: string;
+  error_code: string | null;
+  failure_count: number;
+  fetched_count: number;
+  finished_at: string;
+  run_id: string;
+  started_at: string;
+  status: "failed" | "succeeded";
+  success_count: number;
+}
+
+interface MatoolSnapshotAreaCountRow {
+  area: string;
+  count: number;
+}
+
 interface FirstTrialConfig {
   contactChannel: "email" | "sms" | "staff_task" | null;
   contactLeadMinutes: number | null;
@@ -49,7 +66,9 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
       lastRun,
       eventCounts,
       activeSubscriptions,
-      unconfirmedClaims
+      unconfirmedClaims,
+      lastMatoolSnapshotRun,
+      matoolSnapshotCounts
     ] = await Promise.all([
       env.DB.prepare(
         `SELECT process_key, display_name, mode, policy_version, config_json, updated_at
@@ -89,7 +108,20 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
          FROM event_claims
          WHERE confirmed_at IS NULL
            AND datetime(review_after) <= CURRENT_TIMESTAMP`
-      ).first<TotalCountRow>()
+      ).first<TotalCountRow>(),
+      env.DB.prepare(
+        `SELECT run_id, area, status, started_at, finished_at,
+                fetched_count, success_count, failure_count, error_code
+         FROM matool_snapshot_runs
+         ORDER BY started_at DESC
+         LIMIT 1`
+      ).first<MatoolSnapshotRunRow>(),
+      env.DB.prepare(
+        `SELECT area, COUNT(*) AS count
+         FROM matool_snapshots
+         GROUP BY area
+         ORDER BY area`
+      ).all<MatoolSnapshotAreaCountRow>()
     ]);
 
     if (!process) {
@@ -144,6 +176,27 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
         }
       },
       lastRun: lastRun ? mapRun(lastRun) : null,
+      matoolSnapshots: {
+        areas: Object.fromEntries(
+          matoolSnapshotCounts.results.map((row) => [
+            row.area,
+            row.count
+          ])
+        ),
+        lastRun: lastMatoolSnapshotRun
+          ? {
+              area: lastMatoolSnapshotRun.area,
+              errorCode: lastMatoolSnapshotRun.error_code,
+              failureCount: lastMatoolSnapshotRun.failure_count,
+              fetchedCount: lastMatoolSnapshotRun.fetched_count,
+              finishedAt: lastMatoolSnapshotRun.finished_at,
+              id: lastMatoolSnapshotRun.run_id,
+              startedAt: lastMatoolSnapshotRun.started_at,
+              status: lastMatoolSnapshotRun.status,
+              successCount: lastMatoolSnapshotRun.success_count
+            }
+          : null
+      },
       eventCounts: Object.fromEntries(
         eventCounts.results.map((row) => [row.status, row.count])
       ),

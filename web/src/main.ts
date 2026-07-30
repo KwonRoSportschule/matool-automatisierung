@@ -30,6 +30,15 @@ interface AdminStatus {
     };
   };
   lastRun: RunSummary | null;
+  matoolSnapshots: {
+    areas: Record<string, number>;
+    lastRun: {
+      area: string;
+      errorCode: string | null;
+      status: string;
+      successCount: number;
+    } | null;
+  };
   safetyGates: SafetyGate[];
 }
 
@@ -129,6 +138,10 @@ const elements = {
   runDetail: byId("run-detail"),
   runsBody: byId<HTMLTableSectionElement>("runs-body"),
   runStatus: byId("run-status"),
+  snapshotBody: byId<HTMLTableSectionElement>("snapshot-body"),
+  snapshotTotal: byId("snapshot-total"),
+  syncAll: byId<HTMLButtonElement>("sync-all"),
+  syncMessage: byId("sync-message"),
   zapierDetail: byId("zapier-detail"),
   zapierStatus: byId("zapier-status")
 };
@@ -139,6 +152,10 @@ elements.refresh.addEventListener("click", () => {
 
 elements.discoverStructure.addEventListener("click", () => {
   void discoverMatoolStructure();
+});
+
+elements.syncAll.addEventListener("click", () => {
+  void syncAllMatoolData();
 });
 
 void loadDashboard();
@@ -228,6 +245,12 @@ function renderStatus(status: AdminStatus): void {
     ? "Struktur erkennen"
     : "Strukturprobe noch gesperrt";
 
+  elements.syncAll.disabled = !discoveryAvailable;
+  elements.syncAll.textContent = discoveryAvailable
+    ? "Alle MATOOL-Daten jetzt abholen"
+    : "Datenabruf noch gesperrt";
+  renderSnapshots(status.matoolSnapshots);
+
   if (
     status.process.mode === "active" &&
     status.connections.zapier.outboundEnabled
@@ -240,6 +263,107 @@ function renderStatus(status: AdminStatus): void {
   } else {
     elements.overallStatus.textContent = "Einrichtung läuft";
     elements.overallDot.className = "status-dot status-dot-warning";
+  }
+}
+
+function renderSnapshots(
+  snapshots: AdminStatus["matoolSnapshots"]
+): void {
+  const entries = Object.entries(snapshots.areas).sort(
+    ([left], [right]) => left.localeCompare(right)
+  );
+  const total = entries.reduce((sum, [, count]) => sum + count, 0);
+
+  elements.snapshotTotal.textContent =
+    total === 0
+      ? "Noch keine Daten"
+      : `${formatNumber(total)} Datensätze · ${entries.length} Bereiche`;
+
+  if (entries.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.className = "empty-state";
+    cell.colSpan = 2;
+    cell.textContent = "Noch keine Daten abgerufen.";
+    row.append(cell);
+    elements.snapshotBody.replaceChildren(row);
+    return;
+  }
+
+  elements.snapshotBody.replaceChildren(
+    ...entries.map(([area, count]) => {
+      const row = document.createElement("tr");
+      appendCell(row, areaLabel(area));
+      appendCell(row, formatNumber(count));
+      return row;
+    })
+  );
+}
+
+function areaLabel(area: string): string {
+  return (
+    {
+      archiv: "Archiv",
+      artikel: "Artikel",
+      berichte: "Berichte",
+      checkin: "Check-ins",
+      interessenten: "Interessenten",
+      karte: "Karte",
+      klassen: "Klassen",
+      lager: "Lager",
+      newsletter: "Newsletter",
+      pruefungen: "Prüfungen",
+      schueler: "Schüler",
+      telemetrie: "Telemetrie"
+    }[area] ?? area
+  );
+}
+
+async function syncAllMatoolData(): Promise<void> {
+  elements.syncAll.disabled = true;
+  elements.syncAll.setAttribute("aria-busy", "true");
+  elements.syncMessage.textContent =
+    "Alle MATOOL-Bereiche werden abgerufen und gespeichert … das dauert einen Moment.";
+
+  try {
+    const csrf = await requestJson<{ token: string }>(
+      "/api/admin/v1/csrf"
+    );
+    const result = await requestJson<{
+      sync: {
+        areas: { area: string; errorCode?: string; status: string }[];
+        failed: number;
+        storedTotal: number;
+        succeeded: number;
+      };
+    }>("/api/admin/v1/matool/sync", {
+      body: "{}",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRF-Token": csrf.token
+      },
+      method: "POST"
+    });
+
+    const failedAreas = result.sync.areas
+      .filter((entry) => entry.status === "failed")
+      .map((entry) => `${areaLabel(entry.area)} (${entry.errorCode ?? "Fehler"})`);
+
+    elements.syncMessage.textContent =
+      `${formatNumber(result.sync.storedTotal)} Datensätze aus ` +
+      `${result.sync.succeeded} Bereichen gespeichert.` +
+      (failedAreas.length > 0
+        ? ` Fehlgeschlagen: ${failedAreas.join(", ")}.`
+        : "");
+    await loadDashboard();
+  } catch (error) {
+    elements.syncMessage.textContent =
+      error instanceof Error
+        ? error.message
+        : "Der Datenabruf ist fehlgeschlagen.";
+  } finally {
+    elements.syncAll.removeAttribute("aria-busy");
+    elements.syncAll.disabled = !discoveryAvailable;
   }
 }
 

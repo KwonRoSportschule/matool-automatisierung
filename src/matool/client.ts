@@ -1,4 +1,5 @@
 import { AppError } from "../core/app-error";
+import { canonicalJson, sha256Hex } from "../core/crypto";
 import { RunCookieJar } from "./cookie-jar";
 
 const ALLOWED_MATOOL_HOST = "core.matool.de";
@@ -11,7 +12,25 @@ const MAX_STRUCTURE_TEXT_LENGTH = 200;
 const MAX_INTERESSENTEN_RECORDS = 500;
 const MAX_INTERESSENTEN_CELL_LENGTH = 150;
 const MAX_INTERESSENTEN_ID_LENGTH = 32;
+const MAX_SAFE_AREA_RECORDS = 20_000;
+const MAX_SAFE_AREA_CELLS = 64;
+const MAX_SAFE_AREA_CELL_LENGTH = 500;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
+const SAFE_MATOOL_AREAS = [
+  "archiv",
+  "artikel",
+  "berichte",
+  "checkin",
+  "interessenten",
+  "karte",
+  "klassen",
+  "lager",
+  "newsletter",
+  "pruefungen",
+  "schueler",
+  "telemetrie"
+] as const;
+const SAFE_MATOOL_AREA_SET = new Set<string>(SAFE_MATOOL_AREAS);
 const INTERESSENTEN_HEADERS = [
   "Nr.",
   "Datum",
@@ -45,6 +64,19 @@ export interface MatoolInteressent {
 }
 
 export type MatoolArea = "interessenten";
+export type MatoolSafeArea = (typeof SAFE_MATOOL_AREAS)[number];
+
+export interface MatoolSafeAreaRecord {
+  payload: Record<string, string | number>;
+  sourceId: string;
+}
+
+export interface MatoolSafeAreaResult {
+  area: MatoolSafeArea;
+  bodyBytes: number;
+  records: MatoolSafeAreaRecord[];
+  rowCount: number;
+}
 
 export interface MatoolStructureDiscoveryResult {
   bereich: MatoolArea;
@@ -74,6 +106,7 @@ export class MatoolClient {
   readonly #baseUrl: URL;
   readonly #cookies = new RunCookieJar();
   readonly #fetch: typeof fetch;
+  #authenticated = false;
 
   constructor(baseUrl: string, fetchImplementation: typeof fetch = fetch) {
     this.#baseUrl = validateMatoolBaseUrl(baseUrl);
@@ -257,11 +290,71 @@ export class MatoolClient {
     );
   }
 
+  async extractSafeArea(
+    credentials: MatoolCredentials,
+    area: string
+  ): Promise<MatoolSafeAreaResult> {
+    const allowedArea = requireAllowedSafeArea(area);
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const response = await this.request(
+      `/index.php?show=${encodeURIComponent(allowedArea)}`,
+      {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+        method: "GET"
+      }
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat für die angeforderte Ansicht einen unerwarteten Status geliefert."
+      );
+    }
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat für die angeforderte Ansicht kein HTML geliefert."
+      );
+    }
+
+    const body = await readBoundedBody(response);
+    const records = await extractSafeAreaRows(
+      body,
+      contentType,
+      allowedArea
+    );
+    return {
+      area: allowedArea,
+      bodyBytes: body.byteLength,
+      records,
+      rowCount: records.length
+    };
+  }
+
   clearSession(): void {
     this.#cookies.clear();
+    this.#authenticated = false;
   }
 
   private async login(credentials: MatoolCredentials): Promise<void> {
+    // Ein Lauf meldet sich genau einmal an; alle weiteren Bereiche
+    // verwenden dieselbe Session und dasselbe Subrequest-Budget.
+    if (this.#authenticated) {
+      return;
+    }
+    await this.performLogin(credentials);
+    this.#authenticated = true;
+  }
+
+  private async performLogin(
+    credentials: MatoolCredentials
+  ): Promise<void> {
     const primeResponse = await this.request("/index.php", {
       headers: {
         Accept: "text/html,application/xhtml+xml"
@@ -388,6 +481,289 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+}
+
+interface SafeAreaRowCapture {
+  cells: string[];
+  hrefIds: Array<{ id: string; key: string }>;
+  linkCount: number;
+  onclickIds: string[];
+  tableIndex: number;
+  tdCount: number;
+  thCount: number;
+}
+
+async function extractSafeAreaRows(
+  body: Uint8Array,
+  contentType: string,
+  area: MatoolSafeArea
+): Promise<MatoolSafeAreaRecord[]> {
+  const rows: SafeAreaRowCapture[] = [];
+  const tableStack: number[] = [];
+  let tableCount = 0;
+  let activeRow: SafeAreaRowCapture | undefined;
+  let activeCell:
+    | { ignoredDepth: number; row: SafeAreaRowCapture; text: string }
+    | undefined;
+  let mailFieldDetected = false;
+  let passwordFieldDetected = false;
+
+  const startCell = (kind: "td" | "th"): void => {
+    if (!activeRow || activeRow.cells.length >= MAX_SAFE_AREA_CELLS) {
+      activeCell = undefined;
+      return;
+    }
+    if (kind === "td") {
+      activeRow.tdCount += 1;
+    } else {
+      activeRow.thCount += 1;
+    }
+    activeCell = { ignoredDepth: 0, row: activeRow, text: "" };
+  };
+  const endCell = (): void => {
+    if (!activeCell) {
+      return;
+    }
+    activeCell.row.cells.push(activeCell.text);
+    activeCell = undefined;
+  };
+  const appendText = (value: string): void => {
+    if (activeCell && activeCell.ignoredDepth === 0) {
+      activeCell.text = appendBounded(
+        activeCell.text,
+        value,
+        MAX_SAFE_AREA_CELL_LENGTH
+      );
+    }
+  };
+
+  const rewriter = new HTMLRewriter()
+    .on("table", {
+      element(element) {
+        tableStack.push(tableCount);
+        tableCount += 1;
+        element.onEndTag(() => {
+          tableStack.pop();
+        });
+      }
+    })
+    .on("table tr", {
+      element(element) {
+        const row: SafeAreaRowCapture = {
+          cells: [],
+          hrefIds: [],
+          linkCount: 0,
+          onclickIds: [],
+          tableIndex: tableStack.at(-1) ?? -1,
+          tdCount: 0,
+          thCount: 0
+        };
+        activeRow = row;
+        rows.push(row);
+        element.onEndTag(() => {
+          if (activeRow === row) {
+            activeRow = undefined;
+          }
+        });
+      }
+    })
+    .on("table td", {
+      element(element) {
+        startCell("td");
+        element.onEndTag(endCell);
+      },
+      text(text) {
+        appendText(text.text);
+      }
+    })
+    .on("table th", {
+      element(element) {
+        startCell("th");
+        element.onEndTag(endCell);
+      },
+      text(text) {
+        appendText(text.text);
+      }
+    })
+    .on("table a[href]", {
+      element(element) {
+        if (!activeRow) {
+          return;
+        }
+        activeRow.linkCount += 1;
+        const href = element.getAttribute("href") ?? "";
+        let url: URL;
+        try {
+          url = new URL(
+            href.replace(/&amp;/giu, "&"),
+            "https://core.matool.de"
+          );
+        } catch {
+          return;
+        }
+        for (const key of ["id", "interessent", "schueler", "artikel"]) {
+          const id = url.searchParams.get(key) ?? "";
+          if (/^\d{1,64}$/u.test(id)) {
+            activeRow.hrefIds.push({ id, key });
+          }
+        }
+      }
+    })
+    .on("table [onclick]", {
+      element(element) {
+        if (!activeRow) {
+          return;
+        }
+        const match =
+          /^\s*(?:formular_fuellen|open\w*|show\w*|load\w*|edit\w*|.*(?:daten|detail)\w*)\s*\(\s*['"]?(\d{1,64})/iu.exec(
+            element.getAttribute("onclick") ?? ""
+          );
+        if (match?.[1]) {
+          activeRow.onclickIds.push(match[1]);
+        }
+      }
+    })
+    .on("input", {
+      element(element) {
+        const name = element.getAttribute("name")?.trim().toLowerCase();
+        mailFieldDetected ||= name === "mail";
+        passwordFieldDetected ||= name === "pass";
+      }
+    })
+    .on("table script", {
+      element(element) {
+        const cell = activeCell;
+        if (cell) {
+          cell.ignoredDepth += 1;
+          element.onEndTag(() => {
+            cell.ignoredDepth -= 1;
+          });
+        }
+      }
+    })
+    .on("table style", {
+      element(element) {
+        const cell = activeCell;
+        if (cell) {
+          cell.ignoredDepth += 1;
+          element.onEndTag(() => {
+            cell.ignoredDepth -= 1;
+          });
+        }
+      }
+    })
+    .on("table template", {
+      element(element) {
+        const cell = activeCell;
+        if (cell) {
+          cell.ignoredDepth += 1;
+          element.onEndTag(() => {
+            cell.ignoredDepth -= 1;
+          });
+        }
+      }
+    });
+
+  const transformed = rewriter.transform(
+    new Response(body, { headers: { "Content-Type": contentType } })
+  );
+  await drainBody(transformed.body);
+
+  if (mailFieldDetected && passwordFieldDetected) {
+    throw new AppError(
+      "matool_authentication_unverified",
+      502,
+      "Die angemeldete MATOOL-Ansicht konnte nicht bestätigt werden."
+    );
+  }
+
+  const prepared: Array<{
+    explicitId?: string;
+    payload: Record<string, string | number>;
+  }> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.cells.length === 0 || row.tdCount === 0) {
+      continue;
+    }
+    const cells = row.cells.map(normalizeSafeAreaCell);
+    if (
+      cells.every((cell) => cell.length === 0) ||
+      (cells.length === 1 &&
+        row.linkCount > 0 &&
+        row.hrefIds.length === 0 &&
+        row.onclickIds.length === 0)
+    ) {
+      continue;
+    }
+    const payload: Record<string, string | number> = {
+      columnCount: cells.length,
+      tableIndex: row.tableIndex
+    };
+    cells.forEach((cell, index) => {
+      payload[`c${index.toString().padStart(2, "0")}`] = cell;
+    });
+    const explicitId = selectSafeAreaSourceId(row, area);
+    const rowKey = explicitId
+      ? `id:${explicitId}`
+      : `payload:${canonicalJson(payload)}`;
+    if (seen.has(rowKey)) {
+      continue;
+    }
+    seen.add(rowKey);
+    if (prepared.length >= MAX_SAFE_AREA_RECORDS) {
+      throw new AppError(
+        "matool_safe_area_limit_exceeded",
+        502,
+        "Die MATOOL-Antwort überschreitet das sichere Datensatzlimit."
+      );
+    }
+    prepared.push({ ...(explicitId ? { explicitId } : {}), payload });
+  }
+
+  return Promise.all(
+    prepared.map(async ({ explicitId, payload }) => ({
+      payload,
+      sourceId:
+        explicitId ?? (await sha256Hex(canonicalJson(payload)))
+    }))
+  );
+}
+
+function selectSafeAreaSourceId(
+  row: SafeAreaRowCapture,
+  area: MatoolSafeArea
+): string | undefined {
+  const areaKey =
+    area === "interessenten"
+      ? "interessent"
+      : area === "schueler" || area === "artikel"
+        ? area
+        : "id";
+  for (const key of [areaKey, "id", "interessent", "schueler", "artikel"]) {
+    const ids = new Set(
+      row.hrefIds
+        .filter((candidate) => candidate.key === key)
+        .map((candidate) => candidate.id)
+    );
+    if (ids.size === 1) {
+      return ids.values().next().value;
+    }
+  }
+  const onclickIds = new Set(row.onclickIds);
+  return onclickIds.size === 1
+    ? onclickIds.values().next().value
+    : undefined;
+}
+
+function normalizeSafeAreaCell(value: string): string {
+  const normalized = value
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
+  return /[A-Z]{2}\d{2}(?:[\s-]?[A-Z0-9]){11,30}/iu.test(normalized)
+    ? ""
+    : normalized;
 }
 
 interface InteressentenRowCapture {
@@ -643,6 +1019,17 @@ function requireAllowedDiscoveryArea(bereich: string): MatoolArea {
     );
   }
   return bereich as MatoolArea;
+}
+
+function requireAllowedSafeArea(area: string): MatoolSafeArea {
+  if (!SAFE_MATOOL_AREA_SET.has(area)) {
+    throw new AppError(
+      "matool_area_not_allowed",
+      400,
+      "Dieser MATOOL-Bereich ist für den read-only-Abruf nicht freigegeben."
+    );
+  }
+  return area as MatoolSafeArea;
 }
 
 async function readBoundedBody(response: Response): Promise<Uint8Array> {
