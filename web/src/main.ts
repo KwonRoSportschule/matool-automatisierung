@@ -55,6 +55,33 @@ interface SafetyGate {
   state: "open" | "ready" | "requires_confirmation";
 }
 
+interface DiscoveryResponse {
+  schemaVersion: number;
+  discovery: {
+    bereich: string;
+    bodyBytes: number;
+    fields: Array<{
+      element: "input" | "select";
+      name: string;
+      optionCount?: number;
+      type?: string;
+    }>;
+    idPatterns: Array<{
+      attribute: "href" | "id" | "onclick";
+      occurrences: number;
+      pattern: string;
+    }>;
+    rowCount: number;
+    status: number;
+    tableCount: number;
+    tables: Array<{
+      headers: string[];
+      index: number;
+      rowCount: number;
+    }>;
+  };
+}
+
 const gateLabels: Record<string, [string, string]> = {
   matool_password_rotated: [
     "MATOOL-Passwort rotieren",
@@ -74,11 +101,17 @@ const gateLabels: Record<string, [string, string]> = {
   ]
 };
 
-let probeAvailable = false;
+let discoveryAvailable = false;
 
 const elements = {
   actionMessage: byId("action-message"),
-  dryRun: byId<HTMLButtonElement>("dry-run"),
+  discoveryArea: byId<HTMLSelectElement>("discovery-area"),
+  discoveryFields: byId<HTMLUListElement>("discovery-fields"),
+  discoveryPatterns: byId<HTMLUListElement>("discovery-patterns"),
+  discoveryResult: byId("discovery-result"),
+  discoverySummary: byId("discovery-summary"),
+  discoveryTables: byId<HTMLUListElement>("discovery-tables"),
+  discoverStructure: byId<HTMLButtonElement>("discover-structure"),
   environment: byId("environment"),
   gateCount: byId("gate-count"),
   gateList: byId<HTMLOListElement>("gate-list"),
@@ -104,8 +137,8 @@ elements.refresh.addEventListener("click", () => {
   void loadDashboard();
 });
 
-elements.dryRun.addEventListener("click", () => {
-  void runMatoolProbe();
+elements.discoverStructure.addEventListener("click", () => {
+  void discoverMatoolStructure();
 });
 
 void loadDashboard();
@@ -186,12 +219,13 @@ function renderStatus(status: AdminStatus): void {
     openGates === 1 ? "1 offen" : `${openGates} offen`;
   renderGates(status.safetyGates);
 
-  probeAvailable =
+  discoveryAvailable =
     status.connections.matool.configured &&
     status.connections.matool.realRunsEnabled;
-  elements.dryRun.disabled = !probeAvailable;
-  elements.dryRun.textContent = probeAvailable
-    ? "Read-only Strukturprobe starten"
+  elements.discoveryArea.disabled = !discoveryAvailable;
+  elements.discoverStructure.disabled = !discoveryAvailable;
+  elements.discoverStructure.textContent = discoveryAvailable
+    ? "Struktur erkennen"
     : "Strukturprobe noch gesperrt";
 
   if (
@@ -209,35 +243,34 @@ function renderStatus(status: AdminStatus): void {
   }
 }
 
-async function runMatoolProbe(): Promise<void> {
-  elements.dryRun.disabled = true;
-  elements.dryRun.setAttribute("aria-busy", "true");
+async function discoverMatoolStructure(): Promise<void> {
+  elements.discoverStructure.disabled = true;
+  elements.discoverStructure.setAttribute("aria-busy", "true");
+  elements.discoveryResult.hidden = true;
   elements.actionMessage.textContent =
-    "MATOOL-Struktur wird ohne Speicherung geprüft …";
+    "MATOOL-Struktur wird ohne Zellinhalte geprüft …";
 
   try {
     const csrf = await requestJson<{ token: string }>(
       "/api/admin/v1/csrf"
     );
-    const result = await requestJson<{
-      probe: {
-        bodyBytes: number;
-        rowMarkerCount: number;
-        status: number;
-      };
-    }>("/api/admin/v1/matool/probe", {
-      body: "{}",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRF-Token": csrf.token
-      },
-      method: "POST"
-    });
+    const result = await requestJson<DiscoveryResponse>(
+      "/api/admin/v1/matool/discovery",
+      {
+        body: JSON.stringify({
+          bereich: elements.discoveryArea.value
+        }),
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf.token
+        },
+        method: "POST"
+      }
+    );
 
     elements.actionMessage.textContent =
-      `Probe erfolgreich: HTTP ${result.probe.status}, ` +
-      `${formatNumber(result.probe.bodyBytes)} Bytes, ` +
-      `${formatNumber(result.probe.rowMarkerCount)} Zeilenmarker.`;
+      "Struktur erfolgreich erkannt. Es wurden keine Zellinhalte übernommen.";
+    renderDiscovery(result.discovery);
     await loadDashboard();
   } catch (error) {
     elements.actionMessage.textContent =
@@ -245,9 +278,82 @@ async function runMatoolProbe(): Promise<void> {
         ? error.message
         : "Die Strukturprobe ist fehlgeschlagen.";
   } finally {
-    elements.dryRun.removeAttribute("aria-busy");
-    elements.dryRun.disabled = !probeAvailable;
+    elements.discoverStructure.removeAttribute("aria-busy");
+    elements.discoverStructure.disabled = !discoveryAvailable;
   }
+}
+
+function renderDiscovery(
+  discovery: DiscoveryResponse["discovery"]
+): void {
+  elements.discoverySummary.textContent =
+    `HTTP ${discovery.status} · ${formatNumber(discovery.bodyBytes)} Bytes · ` +
+    `${formatNumber(discovery.tableCount)} Tabellen · ` +
+    `${formatNumber(discovery.rowCount)} Zeilen`;
+
+  elements.discoveryTables.replaceChildren(
+    ...discovery.tables.map((table) => {
+      const item = document.createElement("li");
+      const headers =
+        table.headers.length > 0
+          ? table.headers.join(" · ")
+          : "keine Spaltenüberschriften";
+      item.textContent =
+        `Tabelle ${table.index + 1}: ${formatNumber(table.rowCount)} Zeilen · ` +
+        headers;
+      return item;
+    })
+  );
+
+  elements.discoveryFields.replaceChildren(
+    ...discovery.fields.map((field) => {
+      const item = document.createElement("li");
+      const type = field.type ? ` · Typ ${field.type}` : "";
+      const options =
+        field.optionCount === undefined
+          ? ""
+          : ` · ${formatNumber(field.optionCount)} Optionen`;
+      item.textContent = `${field.element} · ${field.name}${type}${options}`;
+      return item;
+    })
+  );
+
+  elements.discoveryPatterns.replaceChildren(
+    ...discovery.idPatterns.map((idPattern) => {
+      const item = document.createElement("li");
+      item.textContent =
+        `${idPattern.attribute} · ${idPattern.pattern} · ` +
+        `${formatNumber(idPattern.occurrences)}×`;
+      return item;
+    })
+  );
+
+  ensureListFallback(
+    elements.discoveryTables,
+    "Keine Tabellenstruktur erkannt."
+  );
+  ensureListFallback(
+    elements.discoveryFields,
+    "Keine benannten Formularfelder erkannt."
+  );
+  ensureListFallback(
+    elements.discoveryPatterns,
+    "Keine technischen ID-Muster erkannt."
+  );
+  elements.discoveryResult.hidden = false;
+}
+
+function ensureListFallback(
+  list: HTMLUListElement,
+  message: string
+): void {
+  if (list.childElementCount > 0) {
+    return;
+  }
+
+  const item = document.createElement("li");
+  item.textContent = message;
+  list.append(item);
 }
 
 function renderGates(gates: SafetyGate[]): void {

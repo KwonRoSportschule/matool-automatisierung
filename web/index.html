@@ -234,18 +234,44 @@
             </div>
           </section>
 
-          <aside class="panel next-panel" aria-labelledby="next-title">
-            <div class="eyebrow">Nächster Schritt</div>
-            <h2 id="next-title">Read-only Probe vorbereiten</h2>
+          <aside class="panel next-panel" aria-labelledby="discovery-title">
+            <div class="eyebrow">Einrichtung</div>
+            <h2 id="discovery-title">Struktur erkennen</h2>
             <p>
-              Der erste reale Abruf ermittelt ausschließlich technische
-              Struktur und Mengen. Rohdaten werden weder gespeichert noch
-              angezeigt.
+              Der geschützte Abruf zeigt ausschließlich Tabellenüberschriften,
+              Mengen und technische ID-Muster. Zellinhalte und Personendaten
+              werden weder gespeichert noch angezeigt.
             </p>
-            <button class="button button-primary" id="dry-run" type="button" disabled>
+            <label class="discovery-field" for="discovery-area">
+              Datenbereich
+              <select id="discovery-area">
+                <option value="interessenten">Interessenten</option>
+              </select>
+            </label>
+            <button
+              class="button button-primary"
+              id="discover-structure"
+              type="button"
+              disabled
+            >
               Strukturprobe noch gesperrt
             </button>
             <p class="action-message" id="action-message" aria-live="polite"></p>
+            <div class="discovery-result" id="discovery-result" hidden>
+              <p id="discovery-summary"></p>
+              <section aria-labelledby="discovery-tables-title">
+                <h3 id="discovery-tables-title">Tabellen</h3>
+                <ul id="discovery-tables"></ul>
+              </section>
+              <section aria-labelledby="discovery-fields-title">
+                <h3 id="discovery-fields-title">Formularfelder</h3>
+                <ul id="discovery-fields"></ul>
+              </section>
+              <section aria-labelledby="discovery-patterns-title">
+                <h3 id="discovery-patterns-title">ID-Muster</h3>
+                <ul id="discovery-patterns"></ul>
+              </section>
+            </div>
           </aside>
         </div>
       </main>

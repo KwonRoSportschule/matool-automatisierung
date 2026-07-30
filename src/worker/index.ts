@@ -133,6 +133,44 @@ async function handleApiRequest(
     );
   }
 
+  if (url.pathname === "/api/admin/v1/matool/discovery") {
+    await requireValidCsrfRequest(request, identity, env);
+    const bereich = await parseMatoolDiscoveryBody(request);
+
+    if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+      throw new AppError(
+        "matool_not_configured",
+        409,
+        "Die MATOOL-Verbindung ist noch nicht eingerichtet."
+      );
+    }
+
+    if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
+      throw new AppError(
+        "matool_runs_not_confirmed",
+        409,
+        "Passwortrotation und read-only-Strukturprobe müssen zuerst bestätigt werden."
+      );
+    }
+
+    const client = new MatoolClient(env.MATOOL_BASE_URL);
+    try {
+      const discovery = await client.discoverStructure(
+        {
+          email: env.MATOOL_EMAIL,
+          password: env.MATOOL_PASSWORD
+        },
+        bereich
+      );
+      return jsonResponse({
+        schemaVersion: 1,
+        discovery
+      });
+    } finally {
+      client.clearSession();
+    }
+  }
+
   if (url.pathname === "/api/admin/v1/matool/probe") {
     await requireValidCsrfRequest(request, identity, env);
 
@@ -180,6 +218,54 @@ async function handleApiRequest(
     404,
     "Die angeforderte API-Route existiert nicht."
   );
+}
+
+async function parseMatoolDiscoveryBody(
+  request: Request
+): Promise<"interessenten"> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new AppError(
+      "invalid_matool_body",
+      400,
+      "Die Discovery-Anfrage enthält kein gültiges JSON."
+    );
+  }
+
+  if (
+    body === null ||
+    typeof body !== "object" ||
+    Array.isArray(body) ||
+    Object.keys(body).length !== 1 ||
+    !Object.prototype.hasOwnProperty.call(body, "bereich")
+  ) {
+    throw new AppError(
+      "invalid_matool_body",
+      400,
+      "Die Discovery-Anfrage erwartet ausschließlich das Feld 'bereich'."
+    );
+  }
+
+  const bereich = (body as { bereich?: unknown }).bereich;
+  if (typeof bereich !== "string") {
+    throw new AppError(
+      "invalid_matool_body",
+      400,
+      "Das Feld 'bereich' muss eine Zeichenfolge sein."
+    );
+  }
+
+  if (bereich !== "interessenten") {
+    throw new AppError(
+      "invalid_matool_bereich",
+      400,
+      "Aktuell kann nur der Bereich 'interessenten' erkannt werden."
+    );
+  }
+
+  return bereich;
 }
 
 export default worker;

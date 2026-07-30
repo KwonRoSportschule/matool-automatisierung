@@ -3,6 +3,12 @@ import { RunCookieJar } from "./cookie-jar";
 
 const ALLOWED_MATOOL_HOST = "core.matool.de";
 const MAX_PROBE_BYTES = 2_000_000;
+const MAX_DISCOVERY_TABLES = 250;
+const MAX_HEADERS_PER_TABLE = 100;
+const MAX_ID_PATTERNS = 100;
+const MAX_FIELDS = 100;
+const MAX_STRUCTURE_TEXT_LENGTH = 200;
+const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 
 export interface MatoolCredentials {
   email: string;
@@ -17,6 +23,32 @@ export interface InteressentenProbeResult {
   loginFormDetected: boolean;
   rowMarkerCount: number;
   status: number;
+}
+
+export type MatoolArea = "interessenten";
+
+export interface MatoolStructureDiscoveryResult {
+  bereich: MatoolArea;
+  bodyBytes: number;
+  rowCount: number;
+  status: number;
+  tableCount: number;
+  tables: Array<{
+    headers: string[];
+    index: number;
+    rowCount: number;
+  }>;
+  idPatterns: Array<{
+    attribute: "href" | "id" | "onclick";
+    occurrences: number;
+    pattern: string;
+  }>;
+  fields: Array<{
+    element: "input" | "select";
+    name: string;
+    optionCount?: number;
+    type?: string;
+  }>;
 }
 
 export class MatoolClient {
@@ -109,11 +141,86 @@ export class MatoolClient {
     };
   }
 
+  async discoverStructure(
+    credentials: MatoolCredentials,
+    bereich: string
+  ): Promise<MatoolStructureDiscoveryResult> {
+    const allowedArea = requireAllowedDiscoveryArea(bereich);
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const response = await this.request(
+      `/index.php?show=${encodeURIComponent(allowedArea)}`,
+      {
+        headers: {
+          Accept: "text/html,application/xhtml+xml"
+        },
+        method: "GET"
+      }
+    );
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat für die angeforderte Ansicht einen unerwarteten Status geliefert."
+      );
+    }
+
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat für die angeforderte Ansicht kein HTML geliefert."
+      );
+    }
+
+    const body = await readBoundedBody(response);
+    const structure = await inspectStructure(body, contentType);
+    if (structure.loginFormDetected || !structure.areaMarkerDetected) {
+      throw new AppError(
+        "matool_authentication_unverified",
+        502,
+        "Die angemeldete MATOOL-Ansicht konnte nicht bestätigt werden."
+      );
+    }
+
+    return {
+      bereich: allowedArea,
+      bodyBytes: body.byteLength,
+      rowCount: structure.rowCount,
+      status: response.status,
+      tableCount: structure.tableCount,
+      tables: structure.tables,
+      idPatterns: structure.idPatterns,
+      fields: structure.fields
+    };
+  }
+
   clearSession(): void {
     this.#cookies.clear();
   }
 
   private async login(credentials: MatoolCredentials): Promise<void> {
+    const primeResponse = await this.request("/index.php", {
+      headers: {
+        Accept: "text/html,application/xhtml+xml"
+      },
+      method: "GET"
+    });
+    if (!primeResponse.ok) {
+      await primeResponse.body?.cancel();
+      throw new AppError(
+        "matool_session_prime_failed",
+        502,
+        "Die MATOOL-Sitzung konnte nicht initialisiert werden."
+      );
+    }
+    await primeResponse.body?.cancel();
+
     const body = new URLSearchParams({
       mail: credentials.email,
       pass: credentials.password
@@ -224,6 +331,592 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+}
+
+interface StructureInspection {
+  areaMarkerDetected: boolean;
+  fields: MatoolStructureDiscoveryResult["fields"];
+  idPatterns: MatoolStructureDiscoveryResult["idPatterns"];
+  loginFormDetected: boolean;
+  rowCount: number;
+  tableCount: number;
+  tables: MatoolStructureDiscoveryResult["tables"];
+}
+
+type DiscoveredTable = MatoolStructureDiscoveryResult["tables"][number];
+type DiscoveredField = MatoolStructureDiscoveryResult["fields"][number];
+type DiscoveredIdPattern =
+  MatoolStructureDiscoveryResult["idPatterns"][number];
+
+function requireAllowedDiscoveryArea(bereich: string): MatoolArea {
+  if (!ALLOWED_DISCOVERY_AREAS.has(bereich)) {
+    throw new AppError(
+      "matool_area_not_allowed",
+      400,
+      "Dieser MATOOL-Bereich ist für die Strukturerkennung nicht freigegeben."
+    );
+  }
+  return bereich as MatoolArea;
+}
+
+async function readBoundedBody(response: Response): Promise<Uint8Array> {
+  const declaredLength = response.headers.get("Content-Length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (
+      Number.isFinite(parsedLength) &&
+      parsedLength > MAX_PROBE_BYTES
+    ) {
+      await response.body?.cancel();
+      throw responseTooLargeError();
+    }
+  }
+
+  if (!response.body) {
+    return new Uint8Array();
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bodyBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (bodyBytes + value.byteLength > MAX_PROBE_BYTES) {
+        await reader.cancel();
+        throw responseTooLargeError();
+      }
+      chunks.push(value);
+      bodyBytes += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const body = new Uint8Array(bodyBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function responseTooLargeError(): AppError {
+  return new AppError(
+    "matool_response_too_large",
+    502,
+    "Die MATOOL-Antwort überschreitet das sichere Probe-Limit."
+  );
+}
+
+async function inspectStructure(
+  body: Uint8Array,
+  contentType: string
+): Promise<StructureInspection> {
+  const tables: DiscoveredTable[] = [];
+  const activeTables: Array<DiscoveredTable | undefined> = [];
+  const idPatterns: DiscoveredIdPattern[] = [];
+  const idPatternByKey = new Map<string, DiscoveredIdPattern>();
+  const fields: DiscoveredField[] = [];
+  const fieldIndexByKey = new Map<string, number>();
+  const activeSelects: Array<{
+    fieldIndex: number | undefined;
+    optionCount: number;
+  }> = [];
+
+  let tableCount = 0;
+  let rowCount = 0;
+  let activeHeader:
+    | {
+        table: DiscoveredTable;
+        text: string;
+      }
+    | undefined;
+  let areaMarkerDetected = false;
+  let markerTail = "";
+  let mailFieldDetected = false;
+  let passwordFieldDetected = false;
+
+  const upsertField = (field: DiscoveredField): number | undefined => {
+    const key = `${field.element}\u0000${field.name}\u0000${field.type ?? ""}`;
+    const existingIndex = fieldIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      return existingIndex;
+    }
+    if (fields.length >= MAX_FIELDS) {
+      return undefined;
+    }
+    const index = fields.length;
+    fields.push(field);
+    fieldIndexByKey.set(key, index);
+    return index;
+  };
+
+  const recordPattern = (
+    attribute: DiscoveredIdPattern["attribute"],
+    rawValue: string | null
+  ): void => {
+    if (!rawValue) {
+      return;
+    }
+    const pattern = deriveIdPattern(attribute, rawValue);
+    if (!pattern) {
+      return;
+    }
+    const key = `${attribute}\u0000${pattern}`;
+    const existing = idPatternByKey.get(key);
+    if (existing) {
+      existing.occurrences += 1;
+      return;
+    }
+    if (idPatterns.length >= MAX_ID_PATTERNS) {
+      return;
+    }
+    const discovered: DiscoveredIdPattern = {
+      attribute,
+      occurrences: 1,
+      pattern
+    };
+    idPatterns.push(discovered);
+    idPatternByKey.set(key, discovered);
+  };
+
+  const rewriter = new HTMLRewriter()
+    .on("body", {
+      text(text) {
+        const markerWindow = `${markerTail}${text.text}`;
+        if (/interessent/iu.test(markerWindow)) {
+          areaMarkerDetected = true;
+        }
+        markerTail = markerWindow.slice(-32);
+      }
+    })
+    .on("table", {
+      element(element) {
+        const index = tableCount;
+        tableCount += 1;
+        const table =
+          index < MAX_DISCOVERY_TABLES
+            ? {
+                headers: [],
+                index,
+                rowCount: 0
+              }
+            : undefined;
+        if (table) {
+          tables.push(table);
+        }
+        activeTables.push(table);
+        element.onEndTag(() => {
+          activeTables.pop();
+        });
+      }
+    })
+    .on("table tr", {
+      element() {
+        rowCount += 1;
+        const table = activeTables.at(-1);
+        if (table) {
+          table.rowCount += 1;
+        }
+      }
+    })
+    .on("table th", {
+      element(element) {
+        const table = activeTables.at(-1);
+        if (!table || table.headers.length >= MAX_HEADERS_PER_TABLE) {
+          activeHeader = undefined;
+          return;
+        }
+        const capture = { table, text: "" };
+        activeHeader = capture;
+        element.onEndTag(() => {
+          if (activeHeader === capture) {
+            table.headers.push(normalizeStructureText(capture.text));
+            activeHeader = undefined;
+          }
+        });
+      },
+      text(text) {
+        if (activeHeader) {
+          activeHeader.text = appendBounded(
+            activeHeader.text,
+            text.text,
+            MAX_STRUCTURE_TEXT_LENGTH * 2
+          );
+        }
+      }
+    })
+    .on("[id]", {
+      element(element) {
+        recordPattern("id", element.getAttribute("id"));
+      }
+    })
+    .on("[href]", {
+      element(element) {
+        recordPattern("href", element.getAttribute("href"));
+      }
+    })
+    .on("[onclick]", {
+      element(element) {
+        recordPattern("onclick", element.getAttribute("onclick"));
+      }
+    })
+    .on("input", {
+      element(element) {
+        const rawName = element.getAttribute("name")?.trim() ?? "";
+        if (rawName.toLowerCase() === "mail") {
+          mailFieldDetected = true;
+        }
+        if (rawName.toLowerCase() === "pass") {
+          passwordFieldDetected = true;
+        }
+        const name = sanitizeFieldName(rawName);
+        if (!name) {
+          return;
+        }
+        upsertField({
+          element: "input",
+          name,
+          type: sanitizeInputType(element.getAttribute("type"))
+        });
+      }
+    })
+    .on("select", {
+      element(element) {
+        const name = sanitizeFieldName(
+          element.getAttribute("name")?.trim() ?? ""
+        );
+        const fieldIndex = name
+          ? upsertField({
+              element: "select",
+              name,
+              optionCount: 0
+            })
+          : undefined;
+        const capture = { fieldIndex, optionCount: 0 };
+        activeSelects.push(capture);
+        element.onEndTag(() => {
+          activeSelects.pop();
+          if (capture.fieldIndex === undefined) {
+            return;
+          }
+          const field = fields[capture.fieldIndex];
+          if (field?.element === "select") {
+            field.optionCount = Math.max(
+              field.optionCount ?? 0,
+              capture.optionCount
+            );
+          }
+        });
+      }
+    })
+    .on("select option", {
+      element() {
+        const select = activeSelects.at(-1);
+        if (select) {
+          select.optionCount += 1;
+        }
+      }
+    });
+
+  const transformed = rewriter.transform(
+    new Response(body, {
+      headers: {
+        "Content-Type": contentType
+      }
+    })
+  );
+  await drainBody(transformed.body);
+
+  return {
+    areaMarkerDetected,
+    fields,
+    idPatterns,
+    loginFormDetected: mailFieldDetected && passwordFieldDetected,
+    rowCount,
+    tableCount,
+    tables
+  };
+}
+
+async function drainBody(
+  body: ReadableStream<Uint8Array> | null
+): Promise<void> {
+  if (!body) {
+    return;
+  }
+  const reader = body.getReader();
+  try {
+    while (!(await reader.read()).done) {
+      // Consuming the transformed stream drives HTMLRewriter without
+      // retaining a second copy of the MATOOL page.
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function deriveIdPattern(
+  attribute: DiscoveredIdPattern["attribute"],
+  rawValue: string
+): string | undefined {
+  if (attribute === "onclick") {
+    return deriveCallPattern(rawValue);
+  }
+  if (attribute === "href") {
+    return deriveHrefPattern(rawValue);
+  }
+  return deriveDynamicTemplate(rawValue);
+}
+
+function deriveDynamicTemplate(rawValue: string): string | undefined {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let changed = false;
+  const pattern = trimmed
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu,
+      () => {
+        changed = true;
+        return "{uuid}";
+      }
+    )
+    .replace(/\b[0-9a-f]{12,}\b/giu, () => {
+      changed = true;
+      return "{hex}";
+    })
+    .replace(/\d+/gu, () => {
+      changed = true;
+      return "{number}";
+    });
+
+  return changed ? capPatternText(pattern) : undefined;
+}
+
+function deriveHrefPattern(rawValue: string): string | undefined {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/^javascript:/iu.test(trimmed)) {
+    return deriveCallPattern(trimmed.replace(/^javascript:\s*/iu, ""));
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed, "https://core.matool.de");
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return undefined;
+  }
+
+  const pathSegments = url.pathname.split("/");
+  let idSignalDetected = pathSegments.some(
+    (segment) => deriveDynamicTemplate(segment) !== undefined
+  );
+  const queryParts: string[] = [];
+  let queryCount = 0;
+  for (const [rawKey, value] of url.searchParams) {
+    if (queryCount >= 20) {
+      break;
+    }
+    queryCount += 1;
+    const key = sanitizeFieldName(rawKey);
+    if (!key) {
+      continue;
+    }
+    if (/(?:^|[_\[])(?:id|uid)(?:$|[_\]])|interessent/iu.test(rawKey)) {
+      idSignalDetected = true;
+    }
+    queryParts.push(`${key}=${classifyTemplateValue(value)}`);
+  }
+
+  if (!idSignalDetected) {
+    return undefined;
+  }
+  const path = sanitizeHrefPath(url.pathname);
+  return capPatternText(
+    `${path}${queryParts.length > 0 ? `?${queryParts.join("&")}` : ""}`
+  );
+}
+
+function sanitizeHrefPath(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => {
+      if (!segment || segment === "index.php") {
+        return segment;
+      }
+      return deriveDynamicTemplate(segment) ?? "{segment}";
+    })
+    .join("/");
+}
+
+function deriveCallPattern(rawValue: string): string | undefined {
+  const match = /^\s*([A-Za-z_$][\w$]{0,127})\s*\(([\s\S]*)\)\s*;?\s*$/u.exec(
+    rawValue
+  );
+  if (!match) {
+    return undefined;
+  }
+  const rawArguments = splitCallArguments(match[2] ?? "");
+  if (!rawArguments || rawArguments.length === 0) {
+    return undefined;
+  }
+  const hasIdentifierCandidate = rawArguments.some((argument) =>
+    isIdentifierCandidate(argument)
+  );
+  if (!hasIdentifierCandidate) {
+    return undefined;
+  }
+  const functionName =
+    deriveDynamicTemplate(match[1] ?? "") ?? (match[1] ?? "");
+  const argumentsTemplate = rawArguments
+    .slice(0, 20)
+    .map(classifyCallArgument)
+    .join(",");
+  return capPatternText(`${functionName}(${argumentsTemplate})`);
+}
+
+function splitCallArguments(value: string): string[] | undefined {
+  if (value.trim().length === 0) {
+    return [];
+  }
+  const result: string[] = [];
+  let start = 0;
+  let quote: "'" | '"' | "`" | undefined;
+  let escaped = false;
+  let depth = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (character === "\\") {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character === ")" || character === "]" || character === "}") {
+      depth -= 1;
+      if (depth < 0) {
+        return undefined;
+      }
+      continue;
+    }
+    if (character === "," && depth === 0) {
+      result.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+
+  if (quote || depth !== 0) {
+    return undefined;
+  }
+  result.push(value.slice(start).trim());
+  return result;
+}
+
+function isIdentifierCandidate(argument: string): boolean {
+  const value = argument.trim();
+  return (
+    /^['"`][\s\S]*['"`]$/u.test(value) ||
+    /^-?\d+(?:\.\d+)?$/u.test(value) ||
+    /\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/iu.test(value)
+  );
+}
+
+function classifyCallArgument(argument: string): string {
+  const value = argument.trim();
+  if (/^-?\d+(?:\.\d+)?$/u.test(value)) {
+    return "{number}";
+  }
+  if (
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/iu.test(
+      value
+    )
+  ) {
+    return "{uuid}";
+  }
+  if (/^['"`][\s\S]*['"`]$/u.test(value)) {
+    return "{string}";
+  }
+  return "{value}";
+}
+
+function classifyTemplateValue(value: string): string {
+  if (/^-?\d+(?:\.\d+)?$/u.test(value)) {
+    return "{number}";
+  }
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      value
+    )
+  ) {
+    return "{uuid}";
+  }
+  return "{value}";
+}
+
+function sanitizeFieldName(rawName: string): string {
+  const trimmed = rawName.trim();
+  if (!trimmed) {
+    return "";
+  }
+  return capStructureText(deriveDynamicTemplate(trimmed) ?? trimmed);
+}
+
+function sanitizeInputType(rawType: string | null): string {
+  const type = (rawType ?? "text").trim().toLowerCase();
+  return /^[a-z][a-z0-9-]{0,31}$/u.test(type) ? type : "other";
+}
+
+function appendBounded(
+  current: string,
+  addition: string,
+  maxLength: number
+): string {
+  if (current.length >= maxLength) {
+    return current;
+  }
+  return `${current}${addition}`.slice(0, maxLength);
+}
+
+function normalizeStructureText(value: string): string {
+  return capStructureText(value.replace(/\s+/gu, " ").trim());
+}
+
+function capStructureText(value: string): string {
+  return value.slice(0, MAX_STRUCTURE_TEXT_LENGTH);
+}
+
+function capPatternText(value: string): string {
+  return value.length <= MAX_STRUCTURE_TEXT_LENGTH
+    ? value
+    : "{redacted-pattern}";
 }
 
 export function validateMatoolBaseUrl(value: string): URL {

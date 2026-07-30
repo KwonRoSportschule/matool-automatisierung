@@ -44,7 +44,8 @@ select {
 }
 
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+select:focus-visible {
   outline: 3px solid rgb(14 101 73 / 30%);
   outline-offset: 3px;
 }
@@ -648,10 +649,69 @@ th {
   margin-top: auto;
 }
 
+.discovery-field {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.discovery-field select {
+  width: 100%;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: white;
+}
+
 .action-message {
   min-height: 1.4rem;
   margin-bottom: 0;
   font-size: 0.75rem !important;
+}
+
+.discovery-result {
+  display: grid;
+  gap: 0.85rem;
+  max-height: 34rem;
+  margin-top: 0.35rem;
+  padding-top: 0.9rem;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.discovery-result[hidden] {
+  display: none;
+}
+
+.discovery-result section {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.discovery-result h3,
+.discovery-result p {
+  margin: 0;
+}
+
+.discovery-result h3 {
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.discovery-result ul {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
 }
 
 footer {
