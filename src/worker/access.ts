@@ -10,7 +10,10 @@ import type { Env } from "./env";
 export interface AccessIdentity {
   subject: string;
   email?: string;
-  authentication: "cloudflare-access" | "local-development";
+  authentication:
+    | "cloudflare-access"
+    | "local-development"
+    | "public-read-only";
 }
 
 export type AccessScope = "employee" | "zapier-service";
@@ -25,6 +28,11 @@ export async function requireAccessIdentity(
   env: Env,
   scope: AccessScope = "employee"
 ): Promise<AccessIdentity> {
+  const publicIdentity = getPublicReadOnlyIdentity(request, env, scope);
+  if (publicIdentity) {
+    return publicIdentity;
+  }
+
   const localIdentity = getLocalDevelopmentIdentity(request, env);
   if (localIdentity) {
     return localIdentity;
@@ -149,6 +157,38 @@ export function normalizeAccessTeamDomain(value: string): string {
   }
 
   return url.origin;
+}
+
+function getPublicReadOnlyIdentity(
+  request: Request,
+  env: Env,
+  scope: AccessScope
+): AccessIdentity | null {
+  if (
+    scope !== "employee" ||
+    env.APP_ENV !== "staging" ||
+    env.PUBLIC_DASHBOARD_READ_ONLY !== "true" ||
+    (request.method !== "GET" && request.method !== "HEAD")
+  ) {
+    return null;
+  }
+
+  const pathname = new URL(request.url).pathname;
+  const isReadOnlyApi =
+    request.method === "GET" &&
+    (
+      pathname === "/api/admin/v1/status" ||
+      pathname === "/api/admin/v1/runs"
+    );
+  const isStaticAsset = !pathname.startsWith("/api/");
+  if (!isReadOnlyApi && !isStaticAsset) {
+    return null;
+  }
+
+  return {
+    subject: "public-dashboard-read-only",
+    authentication: "public-read-only"
+  };
 }
 
 function createAndCacheRemoteJwks(

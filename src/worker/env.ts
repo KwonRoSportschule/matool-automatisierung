@@ -8,6 +8,7 @@ export interface Env {
   ACCESS_TEAM_DOMAIN: string;
   MATOOL_BASE_URL: string;
   OUTBOUND_DELIVERY_ENABLED: string;
+  PUBLIC_DASHBOARD_READ_ONLY?: string;
 
   ADMIN_ORIGIN?: string;
   CSRF_SECRET?: string;

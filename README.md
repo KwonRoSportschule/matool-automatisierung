@@ -83,10 +83,12 @@ Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 
 ## Erste Staging-Version hosten
 
-Die erste sichere Version läuft über
-`matool-middleware-staging.<account>.workers.dev`. Sie enthält das Dashboard,
-aber keine aktive Automatisierung: Outbound-Zustellung bleibt deaktiviert,
-Cron bleibt leer und der Prozess startet im Modus `disabled`.
+Die erste Version läuft über
+`matool-middleware-staging.<account>.workers.dev`. Das Staging-Dashboard und
+seine aggregierte Laufhistorie sind vorübergehend öffentlich lesbar. Aktionen,
+MATOOL-Zugriffe und alle Zapier-Endpunkte bleiben geschützt. Außerdem bleibt
+die Outbound-Zustellung deaktiviert, Cron leer und der Prozess im Modus
+`disabled`.
 
 Nach Cloudflare-Login, Anlage der EU-D1-Datenbank und Einsetzen ihrer ID:
 
@@ -95,10 +97,11 @@ pnpm run db:migrate:staging
 pnpm run deploy:staging
 ```
 
-Anschließend muss für die `workers.dev`-Route Cloudflare Access aktiviert und
-auf die freigegebenen Mitarbeiter begrenzt werden. Die dabei erzeugte
-Access-Audience sowie die Team-Domain werden in `env.staging` eingetragen und
-nochmals mit `pnpm run deploy:staging` veröffentlicht.
+Vor der Nutzung echter Daten wird `PUBLIC_DASHBOARD_READ_ONLY` deaktiviert.
+Danach muss für die `workers.dev`-Route Cloudflare Access aktiviert und auf die
+freigegebenen Mitarbeiter begrenzt werden. Die dabei erzeugte Access-Audience
+sowie die Team-Domain werden in `env.staging` eingetragen und nochmals mit
+`pnpm run deploy:staging` veröffentlicht.
 
 ## Planungsdokumente
 

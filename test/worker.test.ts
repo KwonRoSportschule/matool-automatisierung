@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import worker from "../src/worker";
+import type { Env } from "../src/worker/env";
 
 async function dispatch(request: Request): Promise<Response> {
   const context = createExecutionContext();
@@ -38,6 +39,33 @@ describe("Worker-Grenzen", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "access_denied" }
     });
+  });
+
+  it("gibt im öffentlichen Staging nur Dashboard-Lesezugriffe frei", async () => {
+    const context = createExecutionContext();
+    const publicEnv = {
+      ...env,
+      APP_ENV: "staging",
+      PUBLIC_DASHBOARD_READ_ONLY: "true"
+    } as Env;
+    const status = await worker.fetch(
+      new Request(
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/status"
+      ),
+      publicEnv,
+      context
+    );
+    expect(status.status).toBe(200);
+
+    const csrf = await worker.fetch(
+      new Request(
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/csrf"
+      ),
+      publicEnv,
+      context
+    );
+    expect(csrf.status).toBe(403);
+    await waitOnExecutionContext(context);
   });
 
   it("liefert lokal nur aggregierten Prozessstatus", async () => {
