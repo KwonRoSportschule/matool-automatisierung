@@ -8,7 +8,17 @@ const MAX_HEADERS_PER_TABLE = 100;
 const MAX_ID_PATTERNS = 100;
 const MAX_FIELDS = 100;
 const MAX_STRUCTURE_TEXT_LENGTH = 200;
+const MAX_INTERESSENTEN_RECORDS = 500;
+const MAX_INTERESSENTEN_CELL_LENGTH = 150;
+const MAX_INTERESSENTEN_ID_LENGTH = 32;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
+const INTERESSENTEN_HEADERS = [
+  "Nr.",
+  "Datum",
+  "Vorname",
+  "Name",
+  "Status"
+] as const;
 
 export interface MatoolCredentials {
   email: string;
@@ -23,6 +33,15 @@ export interface InteressentenProbeResult {
   loginFormDetected: boolean;
   rowMarkerCount: number;
   status: number;
+}
+
+export interface MatoolInteressent {
+  sourceId: string;
+  displayNumber: string;
+  createdDate: string;
+  firstName: string;
+  lastName: string;
+  status: string;
 }
 
 export type MatoolArea = "interessenten";
@@ -200,6 +219,44 @@ export class MatoolClient {
     };
   }
 
+  async extractInteressenten(
+    credentials: MatoolCredentials
+  ): Promise<MatoolInteressent[]> {
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const response = await this.request("/index.php?show=interessenten", {
+      headers: {
+        Accept: "text/html,application/xhtml+xml"
+      },
+      method: "GET"
+    });
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat fuer die Interessentenansicht einen unerwarteten Status geliefert."
+      );
+    }
+
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat fuer die Interessentenansicht kein HTML geliefert."
+      );
+    }
+
+    return extractInteressentenFromHtml(
+      await readBoundedBody(response),
+      contentType
+    );
+  }
+
   clearSession(): void {
     this.#cookies.clear();
   }
@@ -331,6 +388,235 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+}
+
+interface InteressentenRowCapture {
+  cells: string[];
+  formIds: string[];
+  header: boolean;
+  invalidIdentifier: boolean;
+  linkIds: string[];
+  tableIndex: number;
+}
+
+async function extractInteressentenFromHtml(
+  body: Uint8Array,
+  contentType: string
+): Promise<MatoolInteressent[]> {
+  const rows: InteressentenRowCapture[] = [];
+  const tableStack: number[] = [];
+  let tableCount = 0;
+  let activeRow: InteressentenRowCapture | undefined;
+  let activeCell:
+    | {
+        row: InteressentenRowCapture;
+        text: string;
+      }
+    | undefined;
+
+  const rewriter = new HTMLRewriter()
+    .on("table", {
+      element(element) {
+        const tableIndex = tableCount;
+        tableCount += 1;
+        tableStack.push(tableIndex);
+        element.onEndTag(() => {
+          tableStack.pop();
+        });
+      }
+    })
+    .on("tr", {
+      element(element) {
+        const row: InteressentenRowCapture = {
+          cells: [],
+          formIds: [],
+          header: false,
+          invalidIdentifier: false,
+          linkIds: [],
+          tableIndex: tableStack.at(-1) ?? -1
+        };
+        activeRow = row;
+        rows.push(row);
+        element.onEndTag(() => {
+          if (activeRow === row) {
+            activeRow = undefined;
+          }
+        });
+      }
+    })
+    .on("tr.master_tab_tr_head", {
+      element() {
+        if (activeRow) {
+          activeRow.header = true;
+        }
+      }
+    })
+    .on("tr td", {
+      element(element) {
+        if (!activeRow) {
+          return;
+        }
+        const capture = { row: activeRow, text: "" };
+        activeCell = capture;
+        element.onEndTag(() => {
+          capture.row.cells.push(capture.text);
+          if (activeCell === capture) {
+            activeCell = undefined;
+          }
+        });
+      },
+      text(text) {
+        if (activeCell) {
+          activeCell.text = appendBounded(
+            activeCell.text,
+            text.text,
+            MAX_INTERESSENTEN_CELL_LENGTH + 1
+          );
+        }
+      }
+    })
+    .on("[onclick]", {
+      element(element) {
+        if (!activeRow) {
+          return;
+        }
+        const value = element.getAttribute("onclick") ?? "";
+        if (!value.includes("formular_fuellen")) {
+          return;
+        }
+        const matches = [
+          ...value.matchAll(
+            /\bformular_fuellen\s*\(\s*(\d{1,32})\s*\)/gu
+          )
+        ];
+        if (matches.length !== 1) {
+          activeRow.invalidIdentifier = true;
+          return;
+        }
+        activeRow.formIds.push(matches[0]?.[1] ?? "");
+      }
+    })
+    .on("a[href]", {
+      element(element) {
+        if (!activeRow) {
+          return;
+        }
+        const rawHref = element.getAttribute("href") ?? "";
+        let url: URL;
+        try {
+          url = new URL(
+            rawHref.replace(/&amp;/giu, "&"),
+            "https://core.matool.de"
+          );
+        } catch {
+          return;
+        }
+        if (
+          url.searchParams.get("show") !== "schueler" ||
+          url.searchParams.get("todo") !== "3"
+        ) {
+          return;
+        }
+        const sourceId = url.searchParams.get("interessent") ?? "";
+        if (!/^\d{1,32}$/u.test(sourceId)) {
+          activeRow.invalidIdentifier = true;
+          return;
+        }
+        activeRow.linkIds.push(sourceId);
+      }
+    });
+
+  const transformed = rewriter.transform(
+    new Response(body, {
+      headers: {
+        "Content-Type": contentType
+      }
+    })
+  );
+  await drainBody(transformed.body);
+
+  const headerRows = rows.filter((row) => row.header);
+  if (
+    headerRows.length !== 1 ||
+    !sameStrings(
+      headerRows[0]?.cells.map(normalizeInteressentenCell) ?? [],
+      INTERESSENTEN_HEADERS
+    )
+  ) {
+    throw interessentenSchemaError();
+  }
+
+  const tableIndex = headerRows[0]?.tableIndex;
+  const dataRows = rows.filter(
+    (row) =>
+      !row.header &&
+      row.tableIndex === tableIndex &&
+      row.cells.length > 0
+  );
+  if (dataRows.length > MAX_INTERESSENTEN_RECORDS) {
+    throw interessentenSchemaError();
+  }
+
+  const seenSourceIds = new Set<string>();
+  const seenDisplayNumbers = new Set<string>();
+  const records: MatoolInteressent[] = [];
+  for (const row of dataRows) {
+    const cells = row.cells.map(normalizeInteressentenCell);
+    const sourceId = row.formIds[0] ?? "";
+    const displayNumber = cells[0] ?? "";
+    if (
+      row.invalidIdentifier ||
+      cells.length !== INTERESSENTEN_HEADERS.length ||
+      cells.some((cell) => cell.length === 0) ||
+      row.formIds.length !== 1 ||
+      row.linkIds.length !== 1 ||
+      sourceId !== row.linkIds[0] ||
+      sourceId.length > MAX_INTERESSENTEN_ID_LENGTH ||
+      !/^\d+$/u.test(displayNumber) ||
+      seenSourceIds.has(sourceId) ||
+      seenDisplayNumbers.has(displayNumber)
+    ) {
+      throw interessentenSchemaError();
+    }
+    seenSourceIds.add(sourceId);
+    seenDisplayNumbers.add(displayNumber);
+    records.push({
+      sourceId,
+      displayNumber,
+      createdDate: cells[1] ?? "",
+      firstName: cells[2] ?? "",
+      lastName: cells[3] ?? "",
+      status: cells[4] ?? ""
+    });
+  }
+
+  return records;
+}
+
+function normalizeInteressentenCell(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length > MAX_INTERESSENTEN_CELL_LENGTH) {
+    throw interessentenSchemaError();
+  }
+  return normalized;
+}
+
+function sameStrings(
+  actual: readonly string[],
+  expected: readonly string[]
+): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every((value, index) => value === expected[index])
+  );
+}
+
+function interessentenSchemaError(): AppError {
+  return new AppError(
+    "matool_interessenten_schema_mismatch",
+    502,
+    "Die MATOOL-Interessentenstruktur entspricht nicht dem freigegebenen Schema."
+  );
 }
 
 interface StructureInspection {

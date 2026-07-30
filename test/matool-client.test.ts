@@ -7,6 +7,84 @@ import {
   validateMatoolBaseUrl
 } from "../src/matool/client";
 
+function clientForInteressentenPage(page: string): MatoolClient {
+  const responses = [
+    new Response("<html><body>Session</body></html>", {
+      headers: {
+        "Content-Type": "text/html",
+        "Set-Cookie":
+          "synthetic_session=opaque-test-value; Path=/; Secure; HttpOnly"
+      },
+      status: 200
+    }),
+    new Response(null, {
+      headers: { Location: "/index.php" },
+      status: 302
+    }),
+    new Response("<html><body>Angemeldet</body></html>", {
+      headers: { "Content-Type": "text/html" },
+      status: 200
+    }),
+    new Response(page, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+      status: 200
+    })
+  ];
+  return new MatoolClient(
+    "https://core.matool.de",
+    (async () => {
+      const response = responses.shift();
+      if (!response) {
+        throw new Error("unexpected synthetic request");
+      }
+      return response;
+    }) as typeof fetch
+  );
+}
+
+function interessentenPage(
+  rows: string,
+  headers = ["Nr.", "Datum", "Vorname", "Name", "Status"]
+): string {
+  return `
+    <html>
+      <body>
+        <h1>Interessenten</h1>
+        <table class="master_tab">
+          <tr class="master_tab_tr_head">
+            ${headers.map((header) => `<td>${header}</td>`).join("")}
+          </tr>
+          ${rows}
+        </table>
+      </body>
+    </html>
+  `;
+}
+
+function interessentRow(input: {
+  createdDate: string;
+  displayNumber: string;
+  firstName: string;
+  lastName: string;
+  linkId?: string;
+  sourceId: string;
+  status: string;
+}): string {
+  return `
+    <tr onclick="formular_fuellen(${input.sourceId})">
+      <td>
+        <a href="/index.php?show=schueler&amp;todo=3&amp;interessent=${input.linkId ?? input.sourceId}">
+          ${input.displayNumber}
+        </a>
+      </td>
+      <td>${input.createdDate}</td>
+      <td>${input.firstName}</td>
+      <td>${input.lastName}</td>
+      <td>${input.status}</td>
+    </tr>
+  `;
+}
+
 describe("MATOOL-Ausgangs-Host-Allowlist", () => {
   it("akzeptiert ausschließlich die verifizierte HTTPS-Basisadresse", () => {
     expect(validateMatoolBaseUrl("https://core.matool.de").origin).toBe(
@@ -267,5 +345,131 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       code: "matool_area_not_allowed"
     });
     expect(requestCount).toBe(0);
+  });
+
+  it("extrahiert ausschliesslich das freigegebene Interessenten-Schema", async () => {
+    const page = interessentenPage(
+      interessentRow({
+        createdDate: "29.07.2026",
+        displayNumber: "4711",
+        firstName: "Alice",
+        lastName: "Beispiel",
+        sourceId: "900001",
+        status: "Probetraining"
+      }) +
+        interessentRow({
+          createdDate: "30.07.2026",
+          displayNumber: "4712",
+          firstName: "Bob",
+          lastName: "Muster",
+          sourceId: "900002",
+          status: "Neu"
+        })
+    );
+
+    await expect(
+      clientForInteressentenPage(page).extractInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).resolves.toEqual([
+      {
+        sourceId: "900001",
+        displayNumber: "4711",
+        createdDate: "29.07.2026",
+        firstName: "Alice",
+        lastName: "Beispiel",
+        status: "Probetraining"
+      },
+      {
+        sourceId: "900002",
+        displayNumber: "4712",
+        createdDate: "30.07.2026",
+        firstName: "Bob",
+        lastName: "Muster",
+        status: "Neu"
+      }
+    ]);
+  });
+
+  it("verwendet die interne Interessenten-ID stabil statt der sichtbaren Nummer", async () => {
+    const credentials = {
+      email: "service-account@example.invalid",
+      password: "synthetic-password"
+    };
+    const firstPage = interessentenPage(
+      interessentRow({
+        createdDate: "29.07.2026",
+        displayNumber: "12",
+        firstName: "Alice",
+        lastName: "Beispiel",
+        sourceId: "987654",
+        status: "Neu"
+      })
+    );
+    const secondPage = interessentenPage(
+      interessentRow({
+        createdDate: "29.07.2026",
+        displayNumber: "999",
+        firstName: "Alice",
+        lastName: "Beispiel",
+        sourceId: "987654",
+        status: "Neu"
+      })
+    );
+
+    const first = await clientForInteressentenPage(
+      firstPage
+    ).extractInteressenten(credentials);
+    const second = await clientForInteressentenPage(
+      secondPage
+    ).extractInteressenten(credentials);
+
+    expect(first[0]?.sourceId).toBe("987654");
+    expect(second[0]?.sourceId).toBe(first[0]?.sourceId);
+    expect(second[0]?.displayNumber).not.toBe(first[0]?.displayNumber);
+  });
+
+  it("bricht bei ID-Mismatch ohne Teilresultat oder PII in der Fehlermeldung ab", async () => {
+    const privateValues = [
+      "PRIVATE-FIRST-NAME",
+      "PRIVATE-LAST-NAME",
+      "private-person@example.invalid"
+    ];
+    const page = interessentenPage(
+      interessentRow({
+        createdDate: "private-person@example.invalid",
+        displayNumber: "4711",
+        firstName: "PRIVATE-FIRST-NAME",
+        lastName: "PRIVATE-LAST-NAME",
+        linkId: "900099",
+        sourceId: "900001",
+        status: "PRIVATE-STATUS"
+      })
+    );
+
+    let failure: unknown;
+    try {
+      await clientForInteressentenPage(page).extractInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toMatchObject({
+      code: "matool_interessenten_schema_mismatch",
+      status: 502
+    });
+    const serializedFailure = JSON.stringify(failure, [
+      "name",
+      "message",
+      "code",
+      "status"
+    ]);
+    for (const privateValue of privateValues) {
+      expect(serializedFailure).not.toContain(privateValue);
+    }
   });
 });
