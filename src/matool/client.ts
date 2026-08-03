@@ -12,6 +12,7 @@ const MAX_STRUCTURE_TEXT_LENGTH = 200;
 const MAX_INTERESSENTEN_RECORDS = 500;
 const MAX_INTERESSENTEN_CELL_LENGTH = 150;
 const MAX_INTERESSENTEN_ID_LENGTH = 32;
+const MAX_KLASSEN_RECORDS = 500;
 const MAX_SAFE_AREA_RECORDS = 20_000;
 const MAX_SAFE_AREA_CELLS = 64;
 const MAX_SAFE_AREA_CELL_LENGTH = 500;
@@ -38,6 +39,43 @@ const INTERESSENTEN_HEADERS = [
   "Name",
   "Status"
 ] as const;
+export const MATOOL_KLASSEN_PAYLOAD_FIELDS = [
+  "alter_ende",
+  "alter_start",
+  "benutzer",
+  "beschreibung",
+  "bildDa",
+  "endzeit_h",
+  "endzeit_m",
+  "freiklasse",
+  "id",
+  "id_schulintern",
+  "kapazitaet",
+  "klassenende",
+  "klassenfarbe",
+  "klassenstart",
+  "kurzname",
+  "online",
+  "probetraining_kontingent",
+  "raum",
+  "schule",
+  "sms30",
+  "sparte",
+  "startzeit_h",
+  "startzeit_m",
+  "teilnehmerMax",
+  "wochentag"
+] as const;
+const KLASSEN_EXCLUDED_FIELDS = [
+  "liveLink",
+  "schueler_liste_sms",
+  "schuelerliste",
+  "sms30Text"
+] as const;
+const KLASSEN_RESPONSE_FIELDS = new Set<string>([
+  ...MATOOL_KLASSEN_PAYLOAD_FIELDS,
+  ...KLASSEN_EXCLUDED_FIELDS
+]);
 
 export interface MatoolCredentials {
   email: string;
@@ -67,7 +105,7 @@ export type MatoolArea = "interessenten";
 export type MatoolSafeArea = (typeof SAFE_MATOOL_AREAS)[number];
 
 export interface MatoolSafeAreaRecord {
-  payload: Record<string, string | number>;
+  payload: Record<string, boolean | number | string | null>;
   sourceId: string;
 }
 
@@ -340,6 +378,75 @@ export class MatoolClient {
     };
   }
 
+  async extractKlassen(
+    credentials: MatoolCredentials
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const listResponse = await this.request("/index.php?show=klassen", {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+      method: "GET"
+    });
+    if (!listResponse.ok) {
+      await listResponse.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat für die Klassenansicht einen unerwarteten Status geliefert."
+      );
+    }
+    const listContentType = listResponse.headers.get("Content-Type") ?? "";
+    if (!listContentType.toLowerCase().includes("text/html")) {
+      await listResponse.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat für die Klassenansicht kein HTML geliefert."
+      );
+    }
+
+    const listBody = await readBoundedBody(listResponse);
+    const handles = await extractKlassenHandles(listBody, listContentType);
+    const records: MatoolSafeAreaRecord[] = [];
+    const sourceIds = new Set<string>();
+    let bodyBytes = listBody.byteLength;
+
+    for (const handle of handles) {
+      const response = await this.request(
+        "/json/klassen_daten.php?todo=daten",
+        {
+          body: new URLSearchParams({ id: handle }),
+          headers: {
+            Accept: "application/json,text/javascript,*/*;q=0.01",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          method: "POST"
+        }
+      );
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw klassenSchemaError();
+      }
+      const responseBody = await readBoundedBody(response);
+      bodyBytes += responseBody.byteLength;
+      const record = parseKlassenResponse(responseBody);
+      if (sourceIds.has(record.sourceId)) {
+        throw klassenSchemaError();
+      }
+      sourceIds.add(record.sourceId);
+      records.push(record);
+    }
+
+    return {
+      area: "klassen",
+      bodyBytes,
+      records,
+      rowCount: records.length
+    };
+  }
+
   clearSession(): void {
     this.#cookies.clear();
     this.#authenticated = false;
@@ -511,6 +618,143 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+}
+
+async function extractKlassenHandles(
+  body: Uint8Array,
+  contentType: string
+): Promise<string[]> {
+  const handles: string[] = [];
+  const seen = new Set<string>();
+  let mailFieldDetected = false;
+  let paginationDetected = false;
+  let passwordFieldDetected = false;
+
+  const transformed = new HTMLRewriter()
+    .on("div[onclick]", {
+      element(element) {
+        const match =
+          /^\s*formular_fuellen\(\s*(['"])(\d{1,64})\1\s*\)\s*;?\s*$/u.exec(
+            element.getAttribute("onclick") ?? ""
+          );
+        const handle = match?.[2];
+        if (!handle) {
+          return;
+        }
+        if (seen.has(handle)) {
+          return;
+        }
+        seen.add(handle);
+        handles.push(handle);
+      }
+    })
+    .on("input", {
+      element(element) {
+        const name = element.getAttribute("name")?.trim().toLowerCase();
+        mailFieldDetected ||= name === "mail";
+        passwordFieldDetected ||= name === "pass";
+      }
+    })
+    .on("a[href]", {
+      element(element) {
+        const href = element.getAttribute("href") ?? "";
+        let url: URL;
+        try {
+          url = new URL(href.replace(/&amp;/giu, "&"), "https://core.matool.de");
+        } catch {
+          return;
+        }
+        paginationDetected ||= [
+          "page",
+          "seite",
+          "offset",
+          "limit",
+          "start",
+          "length"
+        ].some((key) => url.searchParams.has(key));
+      }
+    });
+
+  await drainBody(
+    transformed.transform(
+      new Response(body, { headers: { "Content-Type": contentType } })
+    ).body
+  );
+
+  if (mailFieldDetected && passwordFieldDetected) {
+    throw new AppError(
+      "matool_authentication_unverified",
+      502,
+      "Die angemeldete MATOOL-Klassenansicht konnte nicht bestätigt werden."
+    );
+  }
+  if (
+    handles.length === 0 ||
+    handles.length > MAX_KLASSEN_RECORDS ||
+    paginationDetected
+  ) {
+    throw klassenSchemaError();
+  }
+  return handles;
+}
+
+function parseKlassenResponse(body: Uint8Array): MatoolSafeAreaRecord {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw klassenSchemaError();
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw klassenSchemaError();
+  }
+  const candidate = parsed[0];
+  if (
+    !candidate ||
+    typeof candidate !== "object" ||
+    Array.isArray(candidate)
+  ) {
+    throw klassenSchemaError();
+  }
+
+  const source = candidate as Record<string, unknown>;
+  const keys = Object.keys(source);
+  if (
+    keys.length !== KLASSEN_RESPONSE_FIELDS.size ||
+    keys.some((key) => !KLASSEN_RESPONSE_FIELDS.has(key))
+  ) {
+    throw klassenSchemaError();
+  }
+  if (
+    !Array.isArray(source.schuelerliste) ||
+    KLASSEN_EXCLUDED_FIELDS.filter((field) => field !== "schuelerliste").some(
+      (field) => typeof source[field] !== "string"
+    )
+  ) {
+    throw klassenSchemaError();
+  }
+
+  const payload: Record<string, string | null> = {};
+  for (const field of MATOOL_KLASSEN_PAYLOAD_FIELDS) {
+    const value = source[field];
+    if (value !== null && typeof value !== "string") {
+      throw klassenSchemaError();
+    }
+    payload[field] = value;
+  }
+  const sourceId = payload.id;
+  if (typeof sourceId !== "string" || !/^\d{1,64}$/u.test(sourceId)) {
+    throw klassenSchemaError();
+  }
+  return { payload, sourceId };
+}
+
+function klassenSchemaError(): AppError {
+  return new AppError(
+    "matool_klassen_schema_mismatch",
+    502,
+    "Die MATOOL-Klassendaten entsprechen nicht dem bestätigten Schema."
+  );
 }
 
 interface SafeAreaRowCapture {

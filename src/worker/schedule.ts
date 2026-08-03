@@ -1,5 +1,8 @@
 import { toAppError } from "../core/app-error";
-import { MatoolClient } from "../matool/client";
+import {
+  MatoolClient,
+  MATOOL_KLASSEN_PAYLOAD_FIELDS
+} from "../matool/client";
 import type { Env } from "./env";
 import {
   persistMatoolSnapshotRun,
@@ -12,11 +15,11 @@ import { evaluateBerlinScheduleWindow } from "./schedule-window";
 // Reihenfolge nach fachlichem Wert: Bricht ein Lauf an einer CPU- oder
 // Subrequest-Grenze ab, sind die wichtigsten Bereiche bereits gespeichert.
 export const MATOOL_SNAPSHOT_AREAS = [
+  "klassen",
   "interessenten",
   "schueler",
   "checkin",
   "pruefungen",
-  "klassen",
   "artikel",
   "lager",
   "newsletter",
@@ -159,11 +162,17 @@ export async function collectMatoolSnapshots(
       // Extraktor erwartet Kopf und Daten in derselben Tabelle und fand
       // deshalb null Zeilen. Der generische Extraktor kommt damit zurecht
       // und leitet die stabile ID aus dem Interessenten-Link ab.
-      const records = (await client.extractSafeArea(credentials, area))
-        .records;
+      const records = (
+        area === "klassen"
+          ? await client.extractKlassen(credentials)
+          : await client.extractSafeArea(credentials, area)
+      ).records;
       const finishedAt = new Date().toISOString();
       const result = await persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields: SNAPSHOT_PAYLOAD_FIELDS,
+        allowedPayloadFields:
+          area === "klassen"
+            ? MATOOL_KLASSEN_PAYLOAD_FIELDS
+            : SNAPSHOT_PAYLOAD_FIELDS,
         area,
         finishedAt,
         observedAt: finishedAt,

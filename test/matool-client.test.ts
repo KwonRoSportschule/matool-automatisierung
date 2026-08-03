@@ -42,6 +42,52 @@ function clientForInteressentenPage(page: string): MatoolClient {
   );
 }
 
+function klassenDetailResponse(
+  sourceId: string,
+  overrides: Record<string, unknown> = {}
+): Response {
+  return new Response(
+    JSON.stringify([
+      {
+        alter_ende: "99",
+        alter_start: "1",
+        benutzer: "1000",
+        beschreibung: "Synthetic class",
+        bildDa: null,
+        endzeit_h: "20",
+        endzeit_m: "00",
+        freiklasse: "0",
+        id: sourceId,
+        id_schulintern: "1",
+        kapazitaet: "20",
+        klassenende: "2030-12-31",
+        klassenfarbe: "abcdef",
+        klassenstart: "2026-01-01",
+        kurzname: "Synthetic",
+        liveLink: "PRIVATE-LIVE-LINK",
+        online: "0",
+        probetraining_kontingent: "2",
+        raum: "1",
+        schueler_liste_sms: "PRIVATE-SMS-LIST",
+        schuelerliste: [{ private: "PRIVATE-STUDENT" }],
+        schule: "1",
+        sms30: "0",
+        sms30Text: "PRIVATE-SMS-TEXT",
+        sparte: "1",
+        startzeit_h: "19",
+        startzeit_m: "00",
+        teilnehmerMax: "20",
+        wochentag: "1",
+        ...overrides
+      }
+    ]),
+    {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+      status: 200
+    }
+  );
+}
+
 function interessentenPage(
   rows: string,
   headers = ["Nr.", "Datum", "Vorname", "Name", "Status"]
@@ -529,6 +575,147 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  it("liest alle Klassen-Griffe und speichert nur freigegebene Klassendaten mit stabiler Antwort-ID", async () => {
+    const requests: Array<{ init?: RequestInit; url: string }> = [];
+    const page = `
+      <html><body>
+        <div id="klassengrafik_90000000001"
+             onclick="formular_fuellen('90000000001')"></div>
+        <div onclick=" formular_fuellen('90000000002') ; "></div>
+        <div onclick="formular_fuellen('90000000001')"></div>
+        <div onclick="formular_fuellen(90000000003)"></div>
+        <span onclick="formular_fuellen('90000000004')"></span>
+      </body></html>
+    `;
+    const responses = [
+      new Response("<html><body>Session</body></html>", {
+        headers: {
+          "Content-Type": "text/html",
+          "Set-Cookie":
+            "synthetic_session=opaque-test-value; Path=/; Secure; HttpOnly"
+        },
+        status: 200
+      }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", {
+        headers: { "Content-Type": "text/html" },
+        status: 200
+      }),
+      new Response(page, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: 200
+      }),
+      klassenDetailResponse("70000000001"),
+      klassenDetailResponse("70000000002")
+    ];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ ...(init ? { init } : {}), url: String(input) });
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    const result = await client.extractKlassen({
+      email: "service-account@example.invalid",
+      password: "synthetic-password"
+    });
+
+    expect(result).toMatchObject({ area: "klassen", rowCount: 2 });
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "70000000001",
+      "70000000002"
+    ]);
+    expect(result.records[0]?.payload).toMatchObject({
+      id: "70000000001",
+      kurzname: "Synthetic",
+      wochentag: "1"
+    });
+    const serialized = JSON.stringify(result);
+    for (const privateValue of [
+      "PRIVATE-LIVE-LINK",
+      "PRIVATE-SMS-LIST",
+      "PRIVATE-STUDENT",
+      "PRIVATE-SMS-TEXT"
+    ]) {
+      expect(serialized).not.toContain(privateValue);
+    }
+
+    const detailRequests = requests.slice(-2);
+    expect(detailRequests.map(({ url }) => url)).toEqual([
+      "https://core.matool.de/json/klassen_daten.php?todo=daten",
+      "https://core.matool.de/json/klassen_daten.php?todo=daten"
+    ]);
+    expect(
+      detailRequests.map(({ init }) => String(init?.body))
+    ).toEqual(["id=90000000001", "id=90000000002"]);
+    expect(
+      detailRequests.every(
+        ({ init }) =>
+          new Headers(init?.headers).get("X-Requested-With") ===
+          "XMLHttpRequest"
+      )
+    ).toBe(true);
+  });
+
+  it("bricht den Klassenabruf bei einer inkonsistenten Detailantwort ohne Teilresultat ab", async () => {
+    const responses = [
+      new Response("<html><body>Session</body></html>", {
+        headers: {
+          "Content-Type": "text/html",
+          "Set-Cookie":
+            "synthetic_session=opaque-test-value; Path=/; Secure; HttpOnly"
+        },
+        status: 200
+      }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", {
+        headers: { "Content-Type": "text/html" },
+        status: 200
+      }),
+      new Response(
+        `<div onclick="formular_fuellen('90000000001')"></div>
+         <div onclick="formular_fuellen('90000000002')"></div>`,
+        {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 200
+        }
+      ),
+      klassenDetailResponse("70000000001"),
+      klassenDetailResponse("70000000001")
+    ];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractKlassen({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).rejects.toMatchObject({
+      code: "matool_klassen_schema_mismatch",
+      status: 502
+    });
   });
 
   it("blockiert nicht freigegebene Listenbereiche vor dem Login", async () => {
