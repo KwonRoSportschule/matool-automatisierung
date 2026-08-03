@@ -154,21 +154,13 @@ export async function collectMatoolSnapshots(
         email: env.MATOOL_EMAIL,
         password: env.MATOOL_PASSWORD
       };
-      const records =
-        area === "interessenten"
-          ? (await client.extractInteressenten(credentials)).map(
-              (record) => ({
-                payload: {
-                  createdDate: record.createdDate,
-                  displayNumber: record.displayNumber,
-                  firstName: record.firstName,
-                  lastName: record.lastName,
-                  status: record.status
-                },
-                sourceId: record.sourceId
-              })
-            )
-          : (await client.extractSafeArea(credentials, area)).records;
+      // MATOOL rendert die Interessentenliste nicht als eine Tabelle,
+      // sondern je Datensatz als eigene Tabellengruppe. Der strikte
+      // Extraktor erwartet Kopf und Daten in derselben Tabelle und fand
+      // deshalb null Zeilen. Der generische Extraktor kommt damit zurecht
+      // und leitet die stabile ID aus dem Interessenten-Link ab.
+      const records = (await client.extractSafeArea(credentials, area))
+        .records;
       const finishedAt = new Date().toISOString();
       const result = await persistMatoolSnapshotRun(env.DB, {
         allowedPayloadFields: SNAPSHOT_PAYLOAD_FIELDS,

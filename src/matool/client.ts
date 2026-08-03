@@ -110,7 +110,10 @@ export class MatoolClient {
 
   constructor(baseUrl: string, fetchImplementation: typeof fetch = fetch) {
     this.#baseUrl = validateMatoolBaseUrl(baseUrl);
-    this.#fetch = fetchImplementation;
+    // Ohne Bindung an globalThis wirft der echte Worker-fetch
+    // "Illegal invocation", sobald er als Objektfeld aufgerufen wird.
+    // Mocks aus den Tests bleiben davon unberührt.
+    this.#fetch = fetchImplementation.bind(globalThis);
   }
 
   async probeInteressenten(
@@ -392,7 +395,21 @@ export class MatoolClient {
         "Die MATOOL-Anmeldung ist fehlgeschlagen."
       );
     }
-    await response.body?.cancel();
+
+    // MATOOL beantwortet falsche Zugangsdaten mit HTTP 200 und der
+    // Loginseite, nicht mit 401 oder 403. Ohne diese Prüfung würde der
+    // Collector anschliessend die Loginseite parsen.
+    const landingPage = await response.text();
+    if (
+      /name\s*=\s*["']mail["']/iu.test(landingPage) &&
+      /name\s*=\s*["']pass["']/iu.test(landingPage)
+    ) {
+      throw new AppError(
+        "matool_login_failed",
+        502,
+        "Die MATOOL-Anmeldung ist fehlgeschlagen."
+      );
+    }
   }
 
   private async request(
@@ -427,7 +444,20 @@ export class MatoolClient {
           redirect: "manual",
           signal: init.signal ?? AbortSignal.timeout(15_000)
         });
-      } catch {
+      } catch (error) {
+        // Technische Ursache protokollieren: Ein Verbindungsfehler enthält
+        // weder Zugangsdaten noch Personendaten, ist zur Abgrenzung von
+        // Sperre, Zeitüberschreitung und TLS-Problem aber notwendig.
+        const cause = error as Error;
+        console.error(
+          JSON.stringify({
+            event: "matool_fetch_failed",
+            host: url.hostname,
+            method,
+            name: cause?.name ?? "unknown",
+            reason: cause?.message ?? "unknown"
+          })
+        );
         throw new AppError(
           "matool_network_error",
           502,
@@ -932,6 +962,23 @@ async function extractInteressentenFromHtml(
   if (dataRows.length > MAX_INTERESSENTEN_RECORDS) {
     throw interessentenSchemaError();
   }
+
+  // Reine Struktur-Kennzahlen zur Fehlersuche: keine Zellinhalte,
+  // keine Personendaten.
+  const rowsPerTable = new Map<number, number>();
+  for (const row of rows) {
+    rowsPerTable.set(row.tableIndex, (rowsPerTable.get(row.tableIndex) ?? 0) + 1);
+  }
+  console.info(
+    JSON.stringify({
+      event: "matool_interessenten_structure",
+      bodyBytes: body.byteLength,
+      dataRowCount: dataRows.length,
+      headerTableIndex: tableIndex,
+      rowsPerTable: Object.fromEntries(rowsPerTable),
+      totalRowCount: rows.length
+    })
+  );
 
   const seenSourceIds = new Set<string>();
   const seenDisplayNumbers = new Set<string>();

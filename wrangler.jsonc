@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "matool-middleware-hub",
   "main": "src/worker/index.ts",
@@ -54,6 +54,9 @@
           "migrations_dir": "migrations"
         }
       ],
+      // Hinweis: "limits": { "cpu_ms": ... } benoetigt Workers Paid.
+      // Auf dem Free-Tarif bricht ein Lauf nach etwa fuenf Bereichen mit
+      // "exceededCpu" ab.
       "triggers": {
         "crons": ["0 7-18 * * mon-fri"]
       }
