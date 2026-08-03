@@ -619,6 +619,50 @@ th {
   text-align: center;
 }
 
+.browser-panel {
+  grid-column: 1 / -1;
+}
+
+.browser-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.browser-controls label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.eingabe-select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.browser-panel .table-wrap {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+.browser-panel td {
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+td.muted {
+  color: var(--muted);
+}
+
 .run-state {
   font-weight: 700;
 }

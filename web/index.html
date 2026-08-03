@@ -317,6 +317,65 @@
               </table>
             </div>
           </section>
+
+          <section class="panel browser-panel" aria-labelledby="browser-title">
+            <div class="panel-heading">
+              <div>
+                <div class="eyebrow">Datensätze ansehen</div>
+                <h2 id="browser-title">Gespeicherte Daten</h2>
+              </div>
+              <span class="privacy-note" id="browser-mode">Werte maskiert</span>
+            </div>
+
+            <div class="browser-controls">
+              <label for="browser-area">Bereich</label>
+              <select id="browser-area" class="eingabe-select">
+                <option value="interessenten">Interessenten</option>
+                <option value="schueler">Schüler / Mitglieder</option>
+                <option value="pruefungen">Prüfungen</option>
+                <option value="checkin">Check-ins</option>
+                <option value="newsletter">Newsletter</option>
+                <option value="klassen">Klassen</option>
+                <option value="artikel">Artikel</option>
+                <option value="lager">Lager</option>
+                <option value="archiv">Archiv</option>
+                <option value="telemetrie">Telemetrie</option>
+                <option value="berichte">Berichte</option>
+                <option value="karte">Karte</option>
+              </select>
+
+              <label for="browser-limit">Zeilen</label>
+              <select id="browser-limit" class="eingabe-select">
+                <option value="25">25</option>
+                <option value="100" selected>100</option>
+                <option value="500">500</option>
+              </select>
+
+              <button class="button button-secondary" id="browser-load" type="button">
+                Anzeigen
+              </button>
+            </div>
+
+            <p class="action-message" id="browser-message" aria-live="polite"></p>
+
+            <div class="table-wrap">
+              <table id="browser-table">
+                <thead id="browser-head">
+                  <tr>
+                    <th scope="col">MATOOL-ID</th>
+                    <th scope="col">Zuletzt gesehen</th>
+                  </tr>
+                </thead>
+                <tbody id="browser-body">
+                  <tr>
+                    <td class="empty-state" colspan="2">
+                      Bereich wählen und „Anzeigen“ drücken.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
       </main>
 

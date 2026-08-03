@@ -9,8 +9,13 @@ import { MatoolClient } from "../matool/client";
 import { requireAccessIdentity } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import type { Env } from "./env";
-import { getAdminStatus, listRuns } from "./repository";
 import {
+  getAdminStatus,
+  listAreaSnapshots,
+  listRuns
+} from "./repository";
+import {
+  MATOOL_SNAPSHOT_AREAS,
   collectMatoolSnapshots,
   handleScheduledInvocation
 } from "./schedule";
@@ -98,6 +103,34 @@ async function handleApiRequest(
       ? Math.min(50, Math.max(1, rawLimit))
       : 20;
     return jsonResponse(await listRuns(env, limit));
+  }
+
+  if (url.pathname === "/api/admin/v1/snapshots") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+
+    const area = url.searchParams.get("area") ?? "";
+    if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+      throw new AppError(
+        "unknown_matool_area",
+        400,
+        "Dieser MATOOL-Bereich ist nicht freigegeben."
+      );
+    }
+
+    const rawLimit = Number.parseInt(
+      url.searchParams.get("limit") ?? "100",
+      10
+    );
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(500, Math.max(1, rawLimit))
+      : 100;
+
+    // Klartext nur für bestätigte Mitarbeiterzugriffe. Der öffentliche
+    // Staging-Lesezugriff sieht ausschliesslich maskierte Werte.
+    const masked = identity.authentication === "public-read-only";
+    return jsonResponse(await listAreaSnapshots(env, area, limit, masked));
   }
 
   if (url.pathname === "/api/admin/v1/csrf") {

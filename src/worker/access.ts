@@ -178,7 +178,9 @@ function getPublicReadOnlyIdentity(
     request.method === "GET" &&
     (
       pathname === "/api/admin/v1/status" ||
-      pathname === "/api/admin/v1/runs"
+      pathname === "/api/admin/v1/runs" ||
+      // Liefert ohne Access-Anmeldung ausschliesslich maskierte Werte.
+      pathname === "/api/admin/v1/snapshots"
     );
   const isStaticAsset = !pathname.startsWith("/api/");
   if (!isReadOnlyApi && !isStaticAsset) {

@@ -264,6 +264,94 @@ export async function listRuns(
   }
 }
 
+interface SnapshotDetailRow {
+  content_hash: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  payload_json: string;
+  source_id: string;
+}
+
+/**
+ * Gespeicherte MATOOL-Datensätze eines Bereichs für die Mitarbeiteransicht.
+ *
+ * `masked` verbirgt alle Zellinhalte. Das ist die Voreinstellung, solange
+ * der Zugriff nicht über Cloudflare Access bestätigt wurde: Das
+ * Staging-Dashboard ist öffentlich erreichbar, die Datensätze enthalten
+ * aber Personendaten.
+ */
+export async function listAreaSnapshots(
+  env: Env,
+  area: string,
+  limit: number,
+  masked: boolean
+): Promise<unknown> {
+  let rows: { results: SnapshotDetailRow[] };
+  try {
+    rows = await env.DB.prepare(
+      `SELECT source_id, content_hash, payload_json, first_seen_at, last_seen_at
+       FROM matool_snapshots
+       WHERE area = ?
+       ORDER BY last_seen_at DESC, source_id
+       LIMIT ?`
+    )
+      .bind(area, limit)
+      .all<SnapshotDetailRow>();
+  } catch {
+    throw new AppError(
+      "snapshot_store_unavailable",
+      503,
+      "Die gespeicherten MATOOL-Datensätze sind momentan nicht abrufbar."
+    );
+  }
+
+  const columns = new Set<string>();
+  const records = rows.results.map((row) => {
+    const values: Record<string, string> = {};
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(row.payload_json);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
+      }
+    } catch {
+      payload = {};
+    }
+
+    for (const [key, value] of Object.entries(payload)) {
+      columns.add(key);
+      const text = value === null || value === undefined ? "" : String(value);
+      values[key] = masked ? maskValue(text) : text;
+    }
+
+    return {
+      sourceId: row.source_id,
+      hasMatoolId: /^\d+$/u.test(row.source_id),
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      isNew: row.first_seen_at === row.last_seen_at,
+      values
+    };
+  });
+
+  return {
+    schemaVersion: 1,
+    area,
+    masked,
+    count: records.length,
+    columns: [...columns].sort(),
+    records
+  };
+}
+
+function maskValue(value: string): string {
+  if (value.length === 0) {
+    return "";
+  }
+  // Nur Länge und Zeichenart erkennbar lassen, keinen Inhalt.
+  return "•".repeat(Math.min(8, Math.max(1, value.length)));
+}
+
 export async function getProcessMode(
   env: Env
 ): Promise<ProcessRow["mode"]> {

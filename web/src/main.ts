@@ -138,6 +138,13 @@ const elements = {
   runDetail: byId("run-detail"),
   runsBody: byId<HTMLTableSectionElement>("runs-body"),
   runStatus: byId("run-status"),
+  browserArea: byId<HTMLSelectElement>("browser-area"),
+  browserBody: byId<HTMLTableSectionElement>("browser-body"),
+  browserHead: byId<HTMLTableSectionElement>("browser-head"),
+  browserLimit: byId<HTMLSelectElement>("browser-limit"),
+  browserLoad: byId<HTMLButtonElement>("browser-load"),
+  browserMessage: byId("browser-message"),
+  browserMode: byId("browser-mode"),
   snapshotBody: byId<HTMLTableSectionElement>("snapshot-body"),
   snapshotTotal: byId("snapshot-total"),
   syncAll: byId<HTMLButtonElement>("sync-all"),
@@ -158,7 +165,104 @@ elements.syncAll.addEventListener("click", () => {
   void syncAllMatoolData();
 });
 
+elements.browserLoad.addEventListener("click", () => {
+  void loadAreaRecords();
+});
+
+elements.browserArea.addEventListener("change", () => {
+  void loadAreaRecords();
+});
+
 void loadDashboard();
+void loadAreaRecords();
+
+interface AreaSnapshotRecord {
+  firstSeenAt: string;
+  hasMatoolId: boolean;
+  isNew: boolean;
+  lastSeenAt: string;
+  sourceId: string;
+  values: Record<string, string>;
+}
+
+interface AreaSnapshotResponse {
+  area: string;
+  columns: string[];
+  count: number;
+  masked: boolean;
+  records: AreaSnapshotRecord[];
+  schemaVersion: number;
+}
+
+async function loadAreaRecords(): Promise<void> {
+  const area = elements.browserArea.value;
+  const limit = elements.browserLimit.value;
+  elements.browserLoad.disabled = true;
+  elements.browserMessage.textContent = "Lade Datensätze …";
+
+  try {
+    const data = await requestJson<AreaSnapshotResponse>(
+      `/api/admin/v1/snapshots?area=${encodeURIComponent(area)}` +
+        `&limit=${encodeURIComponent(limit)}`
+    );
+    renderAreaRecords(data);
+    elements.browserMessage.textContent =
+      data.count === 0
+        ? "Für diesen Bereich sind noch keine Datensätze gespeichert."
+        : `${formatNumber(data.count)} Datensätze angezeigt.`;
+  } catch (error) {
+    elements.browserMessage.textContent =
+      error instanceof Error
+        ? error.message
+        : "Die Datensätze konnten nicht geladen werden.";
+  } finally {
+    elements.browserLoad.disabled = false;
+  }
+}
+
+function renderAreaRecords(data: AreaSnapshotResponse): void {
+  elements.browserMode.textContent = data.masked
+    ? "Werte maskiert · Anmeldung erforderlich"
+    : "Klartext · angemeldet";
+
+  const headers = ["MATOOL-ID", "Zuletzt gesehen", "Neu", ...data.columns];
+  const headRow = document.createElement("tr");
+  for (const label of headers) {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = label;
+    headRow.append(cell);
+  }
+  elements.browserHead.replaceChildren(headRow);
+
+  if (data.records.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.className = "empty-state";
+    cell.colSpan = headers.length;
+    cell.textContent = "Keine Datensätze in diesem Bereich.";
+    row.append(cell);
+    elements.browserBody.replaceChildren(row);
+    return;
+  }
+
+  elements.browserBody.replaceChildren(
+    ...data.records.map((record) => {
+      const row = document.createElement("tr");
+      appendCell(
+        row,
+        record.hasMatoolId ? record.sourceId : "—",
+        record.hasMatoolId ? "" : "muted"
+      );
+      appendCell(row, formatDateTime(record.lastSeenAt));
+      appendCell(row, record.isNew ? "neu" : "");
+      for (const column of data.columns) {
+        appendCell(row, record.values[column] ?? "");
+      }
+      return row;
+    })
+  );
+}
 
 async function loadDashboard(): Promise<void> {
   setLoading(true);
