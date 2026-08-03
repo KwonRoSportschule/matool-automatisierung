@@ -14,6 +14,7 @@ import {
 } from "./delivery-repository";
 import type { Env } from "./env";
 import { requireZapierServiceRequest } from "./integration-auth";
+import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
 
 const MAX_JSON_BODY_BYTES = 8_192;
 const SYNTHETIC_EVENT_ID = "0".repeat(64);
@@ -36,6 +37,7 @@ export async function handleZapierApiRequest(
       id: "kwonro-matool-middleware",
       environment: env.APP_ENV,
       event_types: [FIRST_TRIAL_EVENT_TYPE],
+      snapshot_areas: MATOOL_SNAPSHOT_AREAS,
       subscription_limit_per_event_type: 1,
       token_scopes: [
         "subscriptions:write",
@@ -97,6 +99,13 @@ export async function handleZapierApiRequest(
       id: subscriptionId,
       disabled: true
     });
+  }
+
+  if (url.pathname === "/api/zapier/v1/snapshots") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(await listSnapshotsForZapier(request, url, env));
   }
 
   if (url.pathname === "/api/zapier/v1/events/claim") {
@@ -162,6 +171,94 @@ export async function handleZapierApiRequest(
     404,
     "Die angeforderte API-Route existiert nicht."
   );
+}
+
+interface SnapshotRow {
+  content_hash: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  payload_json: string;
+  source_id: string;
+}
+
+/**
+ * Polling-Quelle für Zapier: liefert die zuletzt gesehenen MATOOL-Datensätze
+ * eines Bereichs. Zapier dedupliziert selbst über das Feld `id`; deshalb
+ * bleibt `id` stabil, solange sich der Datensatz nicht ändert.
+ */
+async function listSnapshotsForZapier(
+  request: Request,
+  url: URL,
+  env: Env
+): Promise<unknown> {
+  const area = url.searchParams.get("area") ?? "";
+  if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+    invalidPayload();
+  }
+
+  const rawLimit = Number.parseInt(
+    url.searchParams.get("limit") ?? "100",
+    10
+  );
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(300, Math.max(1, rawLimit))
+    : 100;
+  const onlyChanged = url.searchParams.get("only_changed") === "true";
+
+  let rows: { results: SnapshotRow[] };
+  try {
+    rows = await env.DB.prepare(
+      `SELECT source_id, content_hash, payload_json, first_seen_at, last_seen_at
+       FROM matool_snapshots
+       WHERE area = ?
+       ORDER BY last_seen_at DESC, source_id
+       LIMIT ?`
+    )
+      .bind(area, limit)
+      .all<SnapshotRow>();
+  } catch {
+    throw new AppError(
+      "snapshot_store_unavailable",
+      503,
+      "Die MATOOL-Datensätze sind momentan nicht abrufbar."
+    );
+  }
+
+  const records = rows.results
+    .filter((row) => !onlyChanged || row.first_seen_at !== row.last_seen_at)
+    .map((row) => {
+      let payload: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(row.payload_json);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          payload = parsed as Record<string, unknown>;
+        }
+      } catch {
+        payload = {};
+      }
+
+      return {
+        // Zapier dedupliziert über `id`. Der Inhaltshash sorgt dafür, dass
+        // eine echte Änderung als neuer Vorgang erkannt wird, ein
+        // unveränderter Datensatz dagegen nicht erneut auslöst.
+        id: `${area}:${row.source_id}:${row.content_hash.slice(0, 16)}`,
+        area,
+        source_id: row.source_id,
+        matool_id: /^\d+$/u.test(row.source_id) ? row.source_id : null,
+        content_hash: row.content_hash,
+        first_seen_at: row.first_seen_at,
+        last_seen_at: row.last_seen_at,
+        is_new: row.first_seen_at === row.last_seen_at,
+        ...payload
+      };
+    });
+
+  return {
+    schema_version: 1,
+    area,
+    count: records.length,
+    records
+  };
 }
 
 function parseClaimInput(body: Record<string, unknown>): {

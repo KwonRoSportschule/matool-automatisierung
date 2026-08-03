@@ -8,6 +8,7 @@ import authentication from "./authentication.js";
 import confirmContactResult from "./creates/confirm-contact-result.js";
 import { addMiddlewareCredentials } from "./middleware.js";
 import firstTrialContact from "./triggers/first-trial-contact.js";
+import matoolRecord from "./triggers/matool-record.js";
 
 export default defineApp({
   version: packageJson.version,
@@ -18,7 +19,8 @@ export default defineApp({
   authentication,
   beforeRequest: [addMiddlewareCredentials],
   triggers: {
-    [firstTrialContact.key]: firstTrialContact
+    [firstTrialContact.key]: firstTrialContact,
+    [matoolRecord.key]: matoolRecord
   },
   creates: {
     [confirmContactResult.key]: confirmContactResult

@@ -9,6 +9,7 @@ export const API_PATHS = {
   claim: "/api/zapier/v1/events/claim",
   confirm: "/api/zapier/v1/events/confirm",
   sample: "/api/zapier/v1/events/sample",
+  snapshots: "/api/zapier/v1/snapshots",
   subscriptions: "/api/zapier/v1/subscriptions"
 } as const;
 
