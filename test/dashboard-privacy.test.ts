@@ -185,13 +185,19 @@ describe("Dashboard-Datenschutz", () => {
       kontaktart: "SYNTHETISCHE-KONTAKTART",
       schule: "SYNTHETISCHE-SCHULE",
       leistung: "SYNTHETISCHE-LEISTUNG",
-      einfuehrung: "SYNTHETISCHES-PROBЕTRAINING-1",
+      einfuehrung: "SYNTHETISCHES-PROBETRAINING-1",
+      einfuehrung_klasse_name: "SYNTHETISCHE-KLASSE-1",
       einfuehrung_zeit: "SYNTHETISCHE-UHRZEIT-1",
-      probetraining: "SYNTHETISCHES-PROBЕTRAINING-2",
+      ergebnis_einfuehrung: "SYNTHETISCHES-ERGEBNIS-1",
+      probetraining: "SYNTHETISCHES-PROBETRAINING-2",
+      probetraining_klasse_name: "SYNTHETISCHE-KLASSE-2",
       probetraining_zeit: "SYNTHETISCHE-UHRZEIT-2",
+      ergebnis_probetraining: "SYNTHETISCHES-ERGEBNIS-2",
       status: "Termin",
       text: "PII-ANMERKUNG-SENTINEL",
-      werbung_formular: "SYNTHETISCHE-WERBEQUELLE"
+      werbung: "SYNTHETISCHE-WERBEQUELLE",
+      werbung_bezeichnung: "SYNTHETISCHE-WERBEQUELLEN-BEZEICHNUNG",
+      werbung_formular: "SYNTHETISCHER-WERBEQUELLEN-FORMULARWERT"
     };
 
     const plaintext = new Map(
@@ -219,6 +225,22 @@ describe("Dashboard-Datenschutz", () => {
       masked: false,
       value: payload.probetraining
     });
+    expect(plaintext.get("einfuehrung_klasse_name")?.label).toBe(
+      "Probetraining 1 - Klassenname"
+    );
+    expect(plaintext.get("ergebnis_einfuehrung")?.label).toBe(
+      "Probetraining 1 - Ergebnis"
+    );
+    expect(plaintext.get("probetraining_klasse_name")?.label).toBe(
+      "Probetraining 2 - Klassenname"
+    );
+    expect(plaintext.get("ergebnis_probetraining")?.label).toBe(
+      "Probetraining 2 - Ergebnis"
+    );
+    expect(plaintext.get("werbung")?.label).toBe("Werbequelle");
+    expect(plaintext.get("werbung_bezeichnung")?.label).toBe(
+      "Werbequelle - Bezeichnung"
+    );
 
     const protectedFields = new Map(
       dashboardFieldValues("interessenten_details", payload).map((field) => [
@@ -339,7 +361,7 @@ describe("Dashboard-Datenschutz", () => {
     const context = createExecutionContext();
     const response = await worker.fetch(
       new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/snapshots?area=interessenten&limit=500"
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/records?area=interessenten&pageSize=100"
       ),
       runtimeEnv,
       context
@@ -387,7 +409,7 @@ describe("Dashboard-Datenschutz", () => {
     const context = createExecutionContext();
     const response = await worker.fetch(
       new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/snapshots?area=interessenten_details&limit=500"
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/records?area=interessenten_details&pageSize=100"
       ),
       runtimeEnv,
       context
@@ -425,7 +447,12 @@ describe("MATOOL-Logging ohne Personendaten", () => {
     });
 
     const serializedLogs = JSON.stringify(errorLog.mock.calls);
-    expect(errorLog).toHaveBeenCalledOnce();
+    // Der Client wiederholt einen abgebrochenen Netzwerkabruf genau einmal
+    // und protokolliert beide anonymisierten Versuche.
+    expect(errorLog).toHaveBeenCalledTimes(2);
+    expect(
+      errorLog.mock.calls.map(([line]) => JSON.parse(String(line)).attempt)
+    ).toEqual([1, 2]);
     expect(serializedLogs).toContain("matool_fetch_failed");
     expect(serializedLogs).not.toContain(piiSentinel);
     expect(serializedLogs).not.toContain("synthetic-privacy-test@example.invalid");

@@ -20,6 +20,7 @@ const MAX_SAFE_AREA_CELL_LENGTH = 500;
 // geladen. Die harte Grenze schuetzt das Subrequest-Budget eines Laufs.
 const MAX_INTERESSENTEN_DETAIL_RECORDS = 25;
 const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
+const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 const SAFE_MATOOL_AREAS = [
   "archiv",
@@ -114,7 +115,7 @@ export interface MatoolSafeAreaRecord {
 }
 
 export interface MatoolSafeAreaResult {
-  area: MatoolSafeArea;
+  area: MatoolSafeArea | "interessenten_details";
   bodyBytes: number;
   records: MatoolSafeAreaRecord[];
   rowCount: number;
@@ -148,14 +149,31 @@ export class MatoolClient {
   readonly #baseUrl: URL;
   readonly #cookies = new RunCookieJar();
   readonly #fetch: typeof fetch;
+  readonly #minRequestIntervalMs: number;
+  #lastRequestFinishedAt = 0;
   #authenticated = false;
 
-  constructor(baseUrl: string, fetchImplementation: typeof fetch = fetch) {
+  /**
+   * `minRequestIntervalMs` haelt einen Mindestabstand zwischen zwei
+   * MATOOL-Anfragen ein. MATOOL beantwortet schnelle Anfragefolgen sonst
+   * ab dem vierten Bereich mit Verbindungsabbruechen. Die Voreinstellung
+   * ist 0, damit Tests ohne Wartezeit laufen; der Betrieb setzt den Wert
+   * bewusst in `schedule.ts`.
+   */
+  constructor(
+    baseUrl: string,
+    fetchImplementation: typeof fetch = fetch,
+    options: { minRequestIntervalMs?: number } = {}
+  ) {
     this.#baseUrl = validateMatoolBaseUrl(baseUrl);
     // Ohne Bindung an globalThis wirft der echte Worker-fetch
     // "Illegal invocation", sobald er als Objektfeld aufgerufen wird.
     // Mocks aus den Tests bleiben davon unberührt.
     this.#fetch = fetchImplementation.bind(globalThis);
+    this.#minRequestIntervalMs = Math.min(
+      5_000,
+      Math.max(0, Math.trunc(options.minRequestIntervalMs ?? 0))
+    );
   }
 
   async probeInteressenten(
@@ -389,28 +407,40 @@ export class MatoolClient {
    */
   async extractInteressentenDetails(
     credentials: MatoolCredentials,
-    maxRecords: number
+    maxRecords: number,
+    sourceIds?: readonly string[]
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
+    const requestedIds = sourceIds
+      ? selectRequestedInteressentIds(sourceIds)
+      : undefined;
     const limit = Math.min(
       MAX_INTERESSENTEN_DETAIL_RECORDS,
       Math.max(0, Math.trunc(maxRecords))
     );
     await this.login(credentials);
 
-    const listBody = await this.fetchInteressentenPage();
-    let bodyBytes = listBody.byteLength;
-    const handles = await extractInteressentenDetailHandles(listBody);
+    let bodyBytes = 0;
+    let selectedHandles: string[];
+    if (requestedIds) {
+      selectedHandles = requestedIds.slice(0, limit);
+    } else {
+      const listBody = await this.fetchInteressentenPage();
+      bodyBytes = listBody.byteLength;
+      selectedHandles = (
+        await extractInteressentenDetailHandles(listBody)
+      ).slice(0, limit);
+    }
     const records: MatoolSafeAreaRecord[] = [];
 
-    for (const handle of handles.slice(0, limit)) {
+    for (const handle of selectedHandles) {
       const detail = await this.fetchInteressentDetail(handle);
       bodyBytes += detail.bodyBytes;
       records.push(detail.record);
     }
 
     return {
-      area: "interessenten",
+      area: "interessenten_details",
       bodyBytes,
       records,
       rowCount: records.length
@@ -626,6 +656,64 @@ export class MatoolClient {
     }
   }
 
+  /**
+   * Fuehrt eine MATOOL-Anfrage mit Mindestabstand aus und wiederholt sie
+   * einmal nach einer laengeren Pause, wenn die Verbindung abbricht.
+   * MATOOL nimmt bei schnellen Anfragefolgen zeitweise keine Verbindungen
+   * mehr an; ein einzelner Bereich soll daran nicht scheitern.
+   */
+  private async fetchWithPacing(
+    url: URL,
+    init: RequestInit
+  ): Promise<Response> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const minimumWait =
+        attempt === 0
+          ? this.#minRequestIntervalMs -
+            (Date.now() - this.#lastRequestFinishedAt)
+          : Math.max(1_500, this.#minRequestIntervalMs * 4);
+      if (minimumWait > 0) {
+        await new Promise((resolve) => setTimeout(resolve, minimumWait));
+      }
+
+      try {
+        const response = await this.#fetch(url, init);
+        this.#lastRequestFinishedAt = Date.now();
+        return response;
+      } catch (error) {
+        this.#lastRequestFinishedAt = Date.now();
+        const category =
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? "timeout"
+            : error instanceof TypeError
+              ? "network"
+              : "other";
+        console.error(
+          JSON.stringify({
+            attempt: attempt + 1,
+            category,
+            event: "matool_fetch_failed",
+            host: url.hostname,
+            method: init.method ?? "GET"
+          })
+        );
+        if (attempt === 1) {
+          throw new AppError(
+            "matool_network_error",
+            502,
+            "MATOOL konnte für die read-only-Probe nicht erreicht werden."
+          );
+        }
+      }
+    }
+
+    throw new AppError(
+      "matool_network_error",
+      502,
+      "MATOOL konnte für die read-only-Probe nicht erreicht werden."
+    );
+  }
+
   private async request(
     path: string,
     init: RequestInit
@@ -648,37 +736,14 @@ export class MatoolClient {
       headers.set("Origin", this.#baseUrl.origin);
       headers.set("Referer", `${this.#baseUrl.origin}/index.php`);
 
-      let response: Response;
-      try {
-        response = await this.#fetch(url, {
-          ...init,
-          body,
-          headers,
-          method,
-          redirect: "manual",
-          signal: init.signal ?? AbortSignal.timeout(15_000)
-        });
-      } catch (error) {
-        const category =
-          error instanceof DOMException && error.name === "TimeoutError"
-            ? "timeout"
-            : error instanceof TypeError
-              ? "network"
-              : "other";
-        console.error(
-          JSON.stringify({
-            category,
-            event: "matool_fetch_failed",
-            host: url.hostname,
-            method
-          })
-        );
-        throw new AppError(
-          "matool_network_error",
-          502,
-          "MATOOL konnte für die read-only-Probe nicht erreicht werden."
-        );
-      }
+      const response = await this.fetchWithPacing(url, {
+        ...init,
+        body,
+        headers,
+        method,
+        redirect: "manual",
+        signal: init.signal ?? AbortSignal.timeout(15_000)
+      });
       this.#cookies.absorb(response.headers);
 
       if (![301, 302, 303, 307, 308].includes(response.status)) {
@@ -915,7 +980,7 @@ function collectSafeAreaHeaderNames(
       continue;
     }
     const consistent = variants.every(
-      (variant) => variant.join(" ") === first.join(" ")
+      (variant) => variant.join("\u0000") === first.join("\u0000")
     );
     if (consistent) {
       resolved.set(columnCount, first);
@@ -963,11 +1028,12 @@ function toSafeAreaFieldName(label: string): string | undefined {
 }
 
 /**
- * Freigegebene Detailfelder eines Interessenten. Freitextnotizen,
- * Werbe- und Bearbeiterfelder bleiben bewusst aussen vor.
+ * Vollstaendige, HAR-bestaetigte Allowlist fuer die Interessentenmaske.
+ * Neue oder unbekannte Antwortfelder werden nicht in Snapshots uebernommen.
  */
 export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
   "id",
+  "datum",
   "anrede",
   "vorname",
   "name",
@@ -977,26 +1043,30 @@ export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
   "email",
   "handy",
   "telefon",
-  "datum",
-  "status",
   "quelle",
-  "schule",
   "kontakt",
   "kontaktart",
+  "schule",
   "leistung",
-  "probetraining",
-  "probetraining_zeit",
-  "probetraining_klasse",
-  "probetraining_anwesend",
   "einfuehrung",
   "einfuehrung_zeit",
   "einfuehrung_klasse",
-  "einfuehrung_anwesend"
+  "einfuehrung_klasse_name",
+  "einfuehrung_benutzer",
+  "einfuehrung_anwesend",
+  "ergebnis_einfuehrung",
+  "probetraining",
+  "probetraining_zeit",
+  "probetraining_klasse",
+  "probetraining_klasse_name",
+  "probetraining_benutzer",
+  "probetraining_anwesend",
+  "ergebnis_probetraining",
+  "status",
+  "text",
+  "werbung",
+  "werbung_bezeichnung"
 ] as const;
-
-const INTERESSENT_DETAIL_FIELD_SET = new Set<string>(
-  MATOOL_INTERESSENT_DETAIL_FIELDS
-);
 
 /** Liest die internen MATOOL-Kennungen der Listenzeilen. */
 async function extractInteressentenDetailHandles(
@@ -1029,68 +1099,123 @@ async function extractInteressentenDetailHandles(
   return handles;
 }
 
-/** Liest das aufgeklappte Detailformular der Interessentenseite. */
-async function extractInteressentDetailPayload(
-  body: Uint8Array
-): Promise<Record<string, string> | undefined> {
-  const payload: Record<string, string> = {};
-  let activeSelect: string | undefined;
-
-  const store = (name: string, value: string): void => {
-    if (!INTERESSENT_DETAIL_FIELD_SET.has(name)) {
-      return;
-    }
-    if (Object.keys(payload).length >= MAX_FIELDS) {
-      return;
-    }
-    payload[name] = value.replace(/\s+/gu, " ").trim().slice(
-      0,
-      MAX_SAFE_AREA_CELL_LENGTH
+function requireInteressentId(sourceId: string): void {
+  if (!/^\d{1,32}$/u.test(sourceId)) {
+    throw new AppError(
+      "matool_invalid_interessent_id",
+      400,
+      "Die MATOOL-Interessentenkennung ist ungueltig."
     );
-  };
+  }
+}
 
-  const rewriter = new HTMLRewriter()
-    .on("input[name]", {
-      element(element) {
-        const name = element.getAttribute("name")?.trim() ?? "";
-        const type = element.getAttribute("type")?.toLowerCase() ?? "text";
-        if (type === "password" || type === "hidden" && name === "todo") {
-          return;
-        }
-        if (
-          (type === "checkbox" || type === "radio") &&
-          element.getAttribute("checked") === null
-        ) {
-          return;
-        }
-        store(name, element.getAttribute("value") ?? "");
-      }
-    })
-    .on("select[name]", {
-      element(element) {
-        activeSelect = element.getAttribute("name")?.trim() ?? undefined;
-        element.onEndTag(() => {
-          activeSelect = undefined;
-        });
-      }
-    })
-    .on("select option[selected]", {
-      element(element) {
-        if (activeSelect) {
-          store(activeSelect, element.getAttribute("value") ?? "");
-        }
-      }
-    });
+function selectRequestedInteressentIds(
+  sourceIds: readonly string[]
+): string[] {
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  for (const sourceId of sourceIds) {
+    requireInteressentId(sourceId);
+    if (seen.has(sourceId)) {
+      throw new AppError(
+        "matool_duplicate_interessent_id",
+        400,
+        "Eine MATOOL-Interessentenkennung wurde mehrfach angefordert."
+      );
+    }
+    seen.add(sourceId);
+    selected.push(sourceId);
+  }
+  return selected;
+}
 
-  await drainBody(
-    rewriter.transform(
-      new Response(body, {
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      })
-    ).body
+/**
+ * Prueft MATOOLs JSON-Detailantwort und kopiert ausschliesslich Felder der
+ * bestaetigten Allowlist. Die ID muss mit der angefragten Listen-ID
+ * uebereinstimmen, bevor irgendein Payload zurueckgegeben wird.
+ */
+function parseInteressentDetailResponse(
+  body: Uint8Array,
+  expectedSourceId: string
+): MatoolSafeAreaRecord {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw interessentDetailSchemaError();
+  }
+  const candidates = collectInteressentDetailCandidates(parsed);
+  if (candidates.length !== 1) {
+    throw interessentDetailSchemaError();
+  }
+  const candidate = candidates[0];
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw interessentDetailSchemaError();
+  }
+
+  const source = candidate as Record<string, unknown>;
+  const id = normalizeInteressentDetailValue(source["id"], false);
+  if (!id || id !== expectedSourceId || !/^\d{1,32}$/u.test(id)) {
+    throw interessentDetailSchemaError();
+  }
+
+  const payload: Record<string, string | null> = {};
+  for (const field of MATOOL_INTERESSENT_DETAIL_FIELDS) {
+    if (!(field in source)) {
+      throw interessentDetailSchemaError();
+    }
+    const value = normalizeInteressentDetailValue(
+      source[field],
+      field === "text"
+    );
+    if (value === undefined) {
+      throw interessentDetailSchemaError();
+    }
+    payload[field] = value;
+  }
+  payload.id = id;
+  return { payload, sourceId: id };
+}
+
+function collectInteressentDetailCandidates(parsed: unknown): unknown[] {
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return [];
+  }
+  const record = parsed as Record<string, unknown>;
+  return Object.hasOwn(record, "id") ? [record] : Object.values(record);
+}
+
+function normalizeInteressentDetailValue(
+  value: unknown,
+  preserveWhitespace: boolean
+): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    return undefined;
+  }
+  const normalized = preserveWhitespace
+    ? String(value).trim()
+    : String(value).replace(/\s+/gu, " ").trim();
+  return normalized.length <= MAX_INTERESSENT_DETAIL_VALUE_LENGTH
+    ? normalized
+    : undefined;
+}
+
+function interessentDetailSchemaError(): AppError {
+  return new AppError(
+    "matool_interessent_detail_schema_mismatch",
+    502,
+    "Die MATOOL-Interessentendetails entsprechen nicht dem bestaetigten Schema."
   );
-
-  return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
 async function extractSafeAreaRows(

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../src/core/app-error";
 import {
   assertAllowedMatoolUrl,
+  MATOOL_INTERESSENT_DETAIL_FIELDS,
   MatoolClient,
   validateMatoolBaseUrl
 } from "../src/matool/client";
@@ -519,43 +520,133 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
-  it("liest Interessenten-Details lesend und schreibt nichts zurueck", async () => {
-    const listPage = `
-      <html><body><h1>Interessenten</h1>
-        <table>
-          <tr class="master_tab_tr_head"><td>Nr.</td><td>Vorname</td></tr>
-          <tr onclick="formular_fuellen(606578)"><td>5336</td><td>Lilli</td></tr>
-        </table>
-      </body></html>
-    `;
-    const detailPage = `
-      <html><body><h1>Interessenten</h1>
-        <form>
-          <input type="hidden" name="id" value="606578" />
-          <input type="hidden" name="todo" value="2" />
-          <input name="vorname" value="Lilli" />
-          <input name="email" value="lilli@example.invalid" />
-          <input name="handy" value="0170 1234567" />
-          <input name="probetraining" value="12.08.2026" />
-          <input name="probetraining_zeit" value="17:30" />
-          <input name="text" value="GEHEIME NOTIZ" />
-          <input type="password" name="pass" value="GEHEIM" />
-          <select name="status">
-            <option value="Offen">Offen</option>
-            <option value="Termin" selected>Termin</option>
-          </select>
-        </form>
-      </body></html>
-    `;
+  it("haelt einen Mindestabstand zwischen MATOOL-Anfragen ein", async () => {
+    const zeitpunkte: number[] = [];
+    const responses = [
+      new Response("<html><body>Session</body></html>", {
+        headers: { "Content-Type": "text/html" },
+        status: 200
+      }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", {
+        headers: { "Content-Type": "text/html" },
+        status: 200
+      }),
+      new Response(
+        "<html><body><h1>Interessenten</h1><table></table></body></html>",
+        {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 200
+        }
+      )
+    ];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        zeitpunkte.push(Date.now());
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch,
+      { minRequestIntervalMs: 60 }
+    );
 
-    const calls: Array<{ body: string; url: string }> = [];
-    const fetchImplementation = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    await client.extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    expect(zeitpunkte.length).toBeGreaterThan(1);
+    for (let index = 1; index < zeitpunkte.length; index += 1) {
+      expect(
+        (zeitpunkte[index] ?? 0) - (zeitpunkte[index - 1] ?? 0)
+      ).toBeGreaterThanOrEqual(50);
+    }
+  });
+
+  it("wiederholt eine abgebrochene Anfrage einmal", async () => {
+    let versuche = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        versuche += 1;
+        throw new TypeError("Network connection lost.");
+      }) as typeof fetch,
+      { minRequestIntervalMs: 0 }
+    );
+
+    await expect(
+      client.probeInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).rejects.toThrow(AppError);
+    expect(versuche).toBe(2);
+  });
+
+  it("liest Interessenten-Details lesend und schreibt nichts zurueck", async () => {
+    const detailResponse = JSON.stringify([
+      {
+        id: "606578",
+        datum: "09.08.2026",
+        anrede: "Weiblich",
+        vorname: "Synthetic",
+        name: "Lead",
+        strasse: "",
+        plz: "",
+        ort: "",
+        telefon: "",
+        handy: "01500000000",
+        email: "lead@example.invalid",
+        quelle: "---",
+        kontakt: "Webformular",
+        kontaktart: "E-Mail",
+        schule: "Teststandort",
+        leistung: "Testklasse",
+        einfuehrung: "12.08.2026",
+        einfuehrung_zeit: "15:00",
+        einfuehrung_klasse: "101",
+        einfuehrung_klasse_name: "Testklasse A",
+        einfuehrung_benutzer: "0",
+        einfuehrung_anwesend: "0",
+        ergebnis_einfuehrung: "leer",
+        probetraining: "19.08.2026",
+        probetraining_zeit: "16:00",
+        probetraining_klasse: "102",
+        probetraining_klasse_name: "Testklasse B",
+        probetraining_benutzer: "0",
+        probetraining_anwesend: "1",
+        ergebnis_probetraining: "erschienen",
+        status: "Termin",
+        text: "Zeile 1\nZeile 2",
+        werbung: "0",
+        werbung_bezeichnung: "Ohne",
+        unknown_private_field: "SHOULD_NOT_LEAK"
+      }
+    ]);
+    const calls: Array<{ body: string; method: string; url: string }> = [];
+    const fetchImplementation = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
       const url = String(input);
       const body =
         init?.body instanceof URLSearchParams ? init.body.toString() : "";
-      calls.push({ body, url });
-      if (url.includes("session_interessenten_open.php")) {
-        return new Response("", { status: 200 });
+      calls.push({ body, method: init?.method ?? "GET", url });
+      if (url.includes("/json/statistik_daten.php")) {
+        return new Response(detailResponse, {
+          // Entspricht dem HAR: JSON-Inhalt trotz text/html-Mime-Type.
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        });
       }
       if (url.endsWith("/index.php") && init?.method === "POST") {
         return new Response(null, {
@@ -563,14 +654,10 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
           status: 302
         });
       }
-      const page = calls.filter((c) => c.url.includes("show=interessenten"))
-        .length > 1
-        ? detailPage
-        : listPage;
-      return new Response(
-        url.includes("show=interessenten") ? page : "<html><body>Angemeldet</body></html>",
-        { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 200 }
-      );
+      return new Response("<html><body>Angemeldet</body></html>", {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: 200
+      });
     }) as typeof fetch;
 
     const client = new MatoolClient(
@@ -582,37 +669,151 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         email: "service-account@example.invalid",
         password: "synthetic-password"
       },
-      5
+      5,
+      ["606578"]
     );
 
     expect(result.records).toHaveLength(1);
+    expect(result.area).toBe("interessenten_details");
     expect(result.records[0]?.sourceId).toBe("606578");
     expect(result.records[0]?.payload).toMatchObject({
-      email: "lilli@example.invalid",
-      handy: "0170 1234567",
-      probetraining: "12.08.2026",
-      probetraining_zeit: "17:30",
+      email: "lead@example.invalid",
+      einfuehrung: "12.08.2026",
+      einfuehrung_klasse_name: "Testklasse A",
+      einfuehrung_zeit: "15:00",
+      probetraining: "19.08.2026",
+      probetraining_klasse_name: "Testklasse B",
+      probetraining_zeit: "16:00",
       status: "Termin",
-      vorname: "Lilli"
+      text: "Zeile 1\nZeile 2",
+      werbung: "0",
+      werbung_bezeichnung: "Ohne"
     });
 
-    // Freitext und Passwortfelder werden nicht uebernommen.
+    // Unbekannte Antwortfelder werden trotz erfolgreichem Abruf verworfen.
     const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain("GEHEIME NOTIZ");
-    expect(serialized).not.toContain("GEHEIM");
-
-    // Der Datensatz wird geoeffnet und wieder geschlossen.
-    const sessionCalls = calls.filter((c) =>
-      c.url.includes("session_interessenten_open.php")
+    expect(serialized).not.toContain("SHOULD_NOT_LEAK");
+    expect(Object.keys(result.records[0]?.payload ?? {}).sort()).toEqual(
+      [...MATOOL_INTERESSENT_DETAIL_FIELDS].sort()
     );
-    expect(sessionCalls.map((c) => c.body)).toEqual([
-      "interessenten_open=606578&todo=open",
-      "interessenten_open=606578&todo=close"
-    ]);
 
-    // Es darf kein Speichern-Formular an MATOOL gehen.
-    const writeCalls = calls.filter((c) => c.body.includes("todo=2"));
-    expect(writeCalls).toEqual([]);
+    // Nach dem Login genau ein read-only-Detail-POST, kein open/close und
+    // kein Listen-GET, wenn der Scheduler die stabile ID bereits liefert.
+    expect(
+      calls.map(({ body, method, url }) => ({
+        body,
+        method,
+        path: `${new URL(url).pathname}${new URL(url).search}`
+      }))
+    ).toEqual([
+      { body: "", method: "GET", path: "/index.php" },
+      {
+        body: "mail=service-account%40example.invalid&pass=synthetic-password",
+        method: "POST",
+        path: "/index.php"
+      },
+      { body: "", method: "GET", path: "/index.php" },
+      {
+        body: "id=606578",
+        method: "POST",
+        path: "/json/statistik_daten.php"
+      }
+    ]);
+    expect(calls.every(({ body }) => !body.includes("todo="))).toBe(true);
+  });
+
+  it("akzeptiert genau einen Detailkandidaten als Array, Objekt oder Objekt-Map", async () => {
+    const complete = Object.fromEntries(
+      MATOOL_INTERESSENT_DETAIL_FIELDS.map((field) => [field, ""])
+    );
+    complete.id = "700001";
+
+    for (const responseShape of [complete, [complete], { lead: complete }]) {
+      const responses = [
+        new Response("<html><body>Session</body></html>", {
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        }),
+        new Response(null, {
+          headers: { Location: "/index.php" },
+          status: 302
+        }),
+        new Response("<html><body>Angemeldet</body></html>", {
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        }),
+        new Response(JSON.stringify(responseShape), {
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        })
+      ];
+      const client = new MatoolClient(
+        "https://core.matool.de",
+        (async () => {
+          const response = responses.shift();
+          if (!response) {
+            throw new Error("unexpected synthetic request");
+          }
+          return response;
+        }) as typeof fetch
+      );
+
+      await expect(
+        client.extractInteressentDetail(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "700001"
+        )
+      ).resolves.toMatchObject({ sourceId: "700001" });
+    }
+  });
+
+  it("verwirft unvollstaendige oder ID-fremde Detailantworten vollstaendig", async () => {
+    const complete = Object.fromEntries(
+      MATOOL_INTERESSENT_DETAIL_FIELDS.map((field) => [field, ""])
+    );
+    complete.id = "700001";
+    const incomplete = { ...complete };
+    delete incomplete.email;
+    const mismatched = { ...complete, id: "700002" };
+    const oversized = { ...complete, text: "x".repeat(2_001) };
+
+    for (const responsePayload of [incomplete, mismatched, oversized]) {
+      const responses = [
+        new Response("<html><body>Session</body></html>", { status: 200 }),
+        new Response(null, {
+          headers: { Location: "/index.php" },
+          status: 302
+        }),
+        new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+        new Response(JSON.stringify([responsePayload]), { status: 200 })
+      ];
+      const client = new MatoolClient(
+        "https://core.matool.de",
+        (async () => {
+          const response = responses.shift();
+          if (!response) {
+            throw new Error("unexpected synthetic request");
+          }
+          return response;
+        }) as typeof fetch
+      );
+
+      await expect(
+        client.extractInteressentDetail(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "700001"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_interessent_detail_schema_mismatch",
+        status: 502
+      });
+    }
   });
 
   it("erkennt MATOOLs Kopfzeile an der Klasse master_tab_tr_head", async () => {

@@ -37,11 +37,21 @@ export const MATOOL_SNAPSHOT_AREAS = [
 ] as const;
 
 /**
- * Interessenten-Details kosten je Datensatz zwei Anfragen und einen
- * vollstaendigen Seitenabruf. Auf dem Free-Tarif passen nur wenige in
- * einen Lauf; ueber die stuendlichen Laeufe waechst der Bestand.
+ * Jeder Interessenten-Detaildatensatz kostet einen externen MATOOL-Abruf.
+ * Auf dem Free-Tarif wird deshalb nur ein kleines, rotierendes Paket pro
+ * Lauf verarbeitet; ueber die stuendlichen Laeufe waechst der Bestand.
  */
 const INTERESSENTEN_DETAILS_PER_RUN = 4;
+
+/**
+ * Mindestabstand zwischen zwei MATOOL-Anfragen. Ohne Pause beantwortet
+ * MATOOL einen Lauf ab etwa dem vierten Bereich mit Verbindungsabbruechen.
+ */
+const MATOOL_REQUEST_INTERVAL_MS = 700;
+
+interface InteressentenDetailCandidateRow {
+  source_id: string;
+}
 
 export interface CollectSnapshotsAreaResult {
   area: string;
@@ -65,10 +75,10 @@ const SNAPSHOT_TECHNICAL_PAYLOAD_FIELDS = ["columnCount", "tableIndex"];
 const SAFE_SNAPSHOT_PAYLOAD_FIELD = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
 /**
- * Erlaubte Feldnamen eines Laufs. Die Basisliste deckt die technischen
- * Felder und die Nummerierung ab; zusaetzlich werden die aus MATOOLs
- * Kopfzeile abgeleiteten Spaltennamen zugelassen. Der Extraktor prueft
- * deren Form bereits, hier begrenzt die Anzahl das Risiko.
+ * Erlaubte Feldnamen eines Laufs. Neben zwei technischen Basisfeldern werden
+ * ausschliesslich die im aktuellen MATOOL-Abruf vorkommenden Feldnamen
+ * zugelassen. Der Extraktor prueft deren Form bereits; hier wird die Auswahl
+ * nochmals validiert und auf das Store-Limit begrenzt.
  */
 export function snapshotPayloadFields(
   records: readonly { payload: Readonly<Record<string, unknown>> }[]
@@ -90,6 +100,39 @@ export function snapshotPayloadFields(
     ...[...observedFields].sort((left, right) => left.localeCompare(right))
   ];
   return [...new Set(orderedFields)].slice(0, MAX_SNAPSHOT_PAYLOAD_FIELDS);
+}
+
+/**
+ * Waehlt pro Lauf ein kleines, stabiles Detailpaket aus. Noch nicht
+ * angereicherte Interessenten kommen zuerst; danach wird der am laengsten
+ * nicht aktualisierte Detaildatensatz erneuert. Dadurch bleibt der Lauf im
+ * Subrequest-Limit, waehrend der Gesamtbestand ueber mehrere Laeufe waechst.
+ */
+export async function selectInteressentenDetailSourceIds(
+  db: D1Database
+): Promise<string[]> {
+  const candidates = await db
+    .prepare(
+      `SELECT interessent.source_id
+       FROM matool_snapshots AS interessent
+       LEFT JOIN matool_snapshots AS details
+         ON details.area = 'interessenten_details'
+        AND details.source_id = interessent.source_id
+       WHERE interessent.area = 'interessenten'
+         AND length(interessent.source_id) BETWEEN 1 AND 32
+         AND interessent.source_id NOT GLOB '*[^0-9]*'
+       ORDER BY
+         CASE WHEN details.source_id IS NULL THEN 0 ELSE 1 END ASC,
+         COALESCE(details.last_seen_at, interessent.first_seen_at) ASC,
+         interessent.source_id ASC
+       LIMIT ?`
+    )
+    .bind(INTERESSENTEN_DETAILS_PER_RUN)
+    .all<InteressentenDetailCandidateRow>();
+
+  return candidates.results
+    .map((row) => row.source_id)
+    .filter((sourceId) => /^\d{1,32}$/u.test(sourceId));
 }
 
 export async function handleScheduledInvocation(
@@ -210,7 +253,12 @@ export async function collectMatoolSnapshots(
   });
 
   // Ein Client für den gesamten Lauf: genau eine Anmeldung, eine Session.
-  const client = new MatoolClient(env.MATOOL_BASE_URL);
+  // Der Mindestabstand zwischen zwei Anfragen ist notwendig, weil MATOOL
+  // schnelle Anfragefolgen ab dem vierten Bereich mit Verbindungsabbruechen
+  // beantwortet. Wartezeit kostet Wall-Time, aber keine CPU-Zeit.
+  const client = new MatoolClient(env.MATOOL_BASE_URL, undefined, {
+    minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
+  });
   try {
     for (const area of areas) {
     const runId = `snapshot_${area}_${crypto.randomUUID()}`;
@@ -229,10 +277,16 @@ export async function collectMatoolSnapshots(
         area === "klassen"
           ? await client.extractKlassen(credentials)
           : area === "interessenten_details"
-            ? await client.extractInteressentenDetails(
-                credentials,
-                INTERESSENTEN_DETAILS_PER_RUN
-              )
+            ? await (async () => {
+                const sourceIds = await selectInteressentenDetailSourceIds(
+                  env.DB
+                );
+                return client.extractInteressentenDetails(
+                  credentials,
+                  INTERESSENTEN_DETAILS_PER_RUN,
+                  sourceIds.length > 0 ? sourceIds : undefined
+                );
+              })()
             : await client.extractSafeArea(credentials, area)
       ).records;
       const finishedAt = new Date().toISOString();

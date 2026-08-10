@@ -1,6 +1,11 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { snapshotPayloadFields } from "../src/worker/schedule";
+import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import {
+  selectInteressentenDetailSourceIds,
+  snapshotPayloadFields
+} from "../src/worker/schedule";
 
 describe("Snapshot-Feldallowlist", () => {
   it("verwendet tatsaechlich vorkommende Felder deterministisch", () => {
@@ -23,6 +28,63 @@ describe("Snapshot-Feldallowlist", () => {
       "vorname"
     ]);
     expect(first).not.toContain("c63");
+  });
+
+  it("priorisiert fehlende Details und rotiert danach den aeltesten Bestand", async () => {
+    const suffix = Array.from(
+      crypto.getRandomValues(new Uint8Array(8)),
+      (value) => String(value % 10)
+    ).join("");
+    const missing = `1${suffix}01`;
+    const oldest = `1${suffix}02`;
+    const newest = `1${suffix}03`;
+    // Layout-/Formularzeilen koennen technische Hash-IDs erzeugen. Vier
+    // davon wuerden ohne SQL-Filter das gesamte LIMIT verbrauchen.
+    const nonNumericLayoutIds = ["a", "b", "c", "d"].map(
+      (ending) => `0000000000000000000000000000000${ending}`
+    );
+    const listRecords = [
+      ...nonNumericLayoutIds,
+      missing,
+      oldest,
+      newest
+    ].map((sourceId) => ({
+      payload: { status: "SYNTHETISCH" },
+      sourceId
+    }));
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area: "interessenten",
+      finishedAt: "2098-01-01T00:00:01.000Z",
+      observedAt: "2098-01-01T00:00:00.000Z",
+      records: listRecords,
+      runId: `selection_list_${suffix}`,
+      startedAt: "2098-01-01T00:00:00.000Z"
+    });
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area: "interessenten_details",
+      finishedAt: "2098-01-02T00:00:01.000Z",
+      observedAt: "2098-01-02T00:00:00.000Z",
+      records: [{ payload: { status: "ALT" }, sourceId: oldest }],
+      runId: `selection_old_${suffix}`,
+      startedAt: "2098-01-02T00:00:00.000Z"
+    });
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area: "interessenten_details",
+      finishedAt: "2098-01-03T00:00:01.000Z",
+      observedAt: "2098-01-03T00:00:00.000Z",
+      records: [{ payload: { status: "NEU" }, sourceId: newest }],
+      runId: `selection_new_${suffix}`,
+      startedAt: "2098-01-03T00:00:00.000Z"
+    });
+
+    const selected = await selectInteressentenDetailSourceIds(env.DB);
+
+    expect(selected.slice(0, 3)).toEqual([missing, oldest, newest]);
+    expect(selected).toHaveLength(3);
   });
 
   it("ueberschreitet auch bei vielen gelieferten Feldern nie das Store-Limit", () => {
