@@ -23,6 +23,7 @@ import {
 export const MATOOL_SNAPSHOT_AREAS = [
   "klassen",
   "interessenten",
+  "interessenten_details",
   "schueler",
   "checkin",
   "pruefungen",
@@ -34,6 +35,13 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "berichte",
   "karte"
 ] as const;
+
+/**
+ * Interessenten-Details kosten je Datensatz zwei Anfragen und einen
+ * vollstaendigen Seitenabruf. Auf dem Free-Tarif passen nur wenige in
+ * einen Lauf; ueber die stuendlichen Laeufe waechst der Bestand.
+ */
+const INTERESSENTEN_DETAILS_PER_RUN = 4;
 
 export interface CollectSnapshotsAreaResult {
   area: string;
@@ -49,18 +57,12 @@ export interface CollectSnapshotsResult {
   succeeded: number;
 }
 
-const SNAPSHOT_PAYLOAD_FIELDS = [
-  "tableIndex",
-  "columnCount",
-  "displayNumber",
-  "createdDate",
-  "firstName",
-  "lastName",
-  "status",
-  ...Array.from({ length: 64 }, (_, index) =>
-    `c${index.toString().padStart(2, "0")}`
-  )
-];
+// persistMatoolSnapshotRun akzeptiert hoechstens 80 Feldnamen. Die fruehere
+// pauschale c00-c63-Liste verbrauchte den Grossteil dieses Budgets bereits,
+// bevor die tatsaechlich von MATOOL gelieferten Spalten hinzukamen.
+const MAX_SNAPSHOT_PAYLOAD_FIELDS = 80;
+const SNAPSHOT_TECHNICAL_PAYLOAD_FIELDS = ["columnCount", "tableIndex"];
+const SAFE_SNAPSHOT_PAYLOAD_FIELD = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
 /**
  * Erlaubte Feldnamen eines Laufs. Die Basisliste deckt die technischen
@@ -68,19 +70,26 @@ const SNAPSHOT_PAYLOAD_FIELDS = [
  * Kopfzeile abgeleiteten Spaltennamen zugelassen. Der Extraktor prueft
  * deren Form bereits, hier begrenzt die Anzahl das Risiko.
  */
-function snapshotPayloadFields(
+export function snapshotPayloadFields(
   records: readonly { payload: Readonly<Record<string, unknown>> }[]
 ): string[] {
-  const fields = new Set(SNAPSHOT_PAYLOAD_FIELDS);
+  const observedFields = new Set<string>();
   for (const record of records) {
     for (const key of Object.keys(record.payload)) {
-      if (fields.size >= 200) {
-        break;
+      if (SAFE_SNAPSHOT_PAYLOAD_FIELD.test(key)) {
+        observedFields.add(key);
       }
-      fields.add(key);
     }
   }
-  return [...fields];
+
+  // Technische Basis zuerst, danach alle real beobachteten Felder in stabiler
+  // Reihenfolge. So ist die Auswahl unabhaengig von Datensatz- und
+  // Objekt-Reihenfolge und bleibt garantiert innerhalb des Store-Limits.
+  const orderedFields = [
+    ...SNAPSHOT_TECHNICAL_PAYLOAD_FIELDS,
+    ...[...observedFields].sort((left, right) => left.localeCompare(right))
+  ];
+  return [...new Set(orderedFields)].slice(0, MAX_SNAPSHOT_PAYLOAD_FIELDS);
 }
 
 export async function handleScheduledInvocation(
@@ -219,7 +228,12 @@ export async function collectMatoolSnapshots(
       const records = (
         area === "klassen"
           ? await client.extractKlassen(credentials)
-          : await client.extractSafeArea(credentials, area)
+          : area === "interessenten_details"
+            ? await client.extractInteressentenDetails(
+                credentials,
+                INTERESSENTEN_DETAILS_PER_RUN
+              )
+            : await client.extractSafeArea(credentials, area)
       ).records;
       const finishedAt = new Date().toISOString();
       const result = await persistMatoolSnapshotRun(env.DB, {

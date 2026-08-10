@@ -168,6 +168,76 @@ describe("Dashboard-Datenschutz", () => {
     expect(JSON.stringify(values)).not.toContain("PII-EMAIL-SENTINEL");
   });
 
+  it("zeigt alle Interessenten-Detailfelder nur im ausdruecklichen Klartext-Testmodus", () => {
+    const payload = {
+      datum: "SYNTHETISCHES-DATUM",
+      anrede: "SYNTHETISCHE-ANREDE",
+      vorname: "PII-VORNAME-SENTINEL",
+      name: "PII-NACHNAME-SENTINEL",
+      strasse: "PII-STRASSE-SENTINEL",
+      plz: "PII-PLZ-SENTINEL",
+      ort: "PII-ORT-SENTINEL",
+      telefon: "PII-TELEFON-SENTINEL",
+      handy: "PII-HANDY-SENTINEL",
+      email: "pii-email-sentinel@example.invalid",
+      quelle: "SYNTHETISCHE-QUELLE",
+      kontakt: "SYNTHETISCHER-KONTAKT",
+      kontaktart: "SYNTHETISCHE-KONTAKTART",
+      schule: "SYNTHETISCHE-SCHULE",
+      leistung: "SYNTHETISCHE-LEISTUNG",
+      einfuehrung: "SYNTHETISCHES-PROBЕTRAINING-1",
+      einfuehrung_zeit: "SYNTHETISCHE-UHRZEIT-1",
+      probetraining: "SYNTHETISCHES-PROBЕTRAINING-2",
+      probetraining_zeit: "SYNTHETISCHE-UHRZEIT-2",
+      status: "Termin",
+      text: "PII-ANMERKUNG-SENTINEL",
+      werbung_formular: "SYNTHETISCHE-WERBEQUELLE"
+    };
+
+    const plaintext = new Map(
+      dashboardFieldValues("interessenten_details", payload, true).map(
+        (field) => [field.key, field]
+      )
+    );
+    expect(plaintext.get("email")).toMatchObject({
+      label: "E-Mail",
+      masked: false,
+      value: payload.email
+    });
+    expect(plaintext.get("text")).toMatchObject({
+      label: "Anmerkung",
+      masked: false,
+      value: payload.text
+    });
+    expect(plaintext.get("einfuehrung")).toMatchObject({
+      label: "Probetraining 1 - Datum",
+      masked: false,
+      value: payload.einfuehrung
+    });
+    expect(plaintext.get("probetraining")).toMatchObject({
+      label: "Probetraining 2 - Datum",
+      masked: false,
+      value: payload.probetraining
+    });
+
+    const protectedFields = new Map(
+      dashboardFieldValues("interessenten_details", payload).map((field) => [
+        field.key,
+        field
+      ])
+    );
+    for (const key of Object.keys(payload).filter((key) => key !== "status")) {
+      expect(protectedFields.get(key)).toMatchObject({
+        masked: true,
+        value: PROTECTED_DASHBOARD_VALUE
+      });
+    }
+    expect(protectedFields.get("status")).toMatchObject({
+      masked: false,
+      value: "Termin"
+    });
+  });
+
   it("stellt nur nicht-sensitive Klassenfelder fuer die serverseitige Suche bereit", () => {
     const searchable = searchableDashboardFields("klassen");
     expect(searchable).toEqual(expect.arrayContaining([
@@ -237,7 +307,7 @@ describe("Dashboard-Datenschutz", () => {
     expect(parseStoredPayload("null")).toEqual({});
   });
 
-  it("ignoriert PUBLIC_DASHBOARD_PLAINTEXT auch am oeffentlichen Snapshot-Endpunkt", async () => {
+  it("zeigt Testdaten bei ausdruecklich aktiviertem Klartext-Testmodus", async () => {
     const suffix = crypto.randomUUID().replaceAll("-", "");
     const piiSentinel = `PII-DASHBOARD-${suffix}`;
     await persistMatoolSnapshotRun(env.DB, {
@@ -278,10 +348,58 @@ describe("Dashboard-Datenschutz", () => {
     const serialized = await response.text();
 
     expect(response.status).toBe(200);
+    expect(serialized).not.toContain(PROTECTED_DASHBOARD_VALUE);
+    expect(serialized).toContain(piiSentinel);
+    expect(serialized).toContain(`${piiSentinel}@example.invalid`);
+    expect(serialized).not.toContain(`9${suffix.slice(0, 20)}`);
+    expect(serialized).toContain(`+49${suffix.slice(0, 12)}`);
+  });
+
+  it("maskiert Interessentenwerte am Snapshot-Endpunkt ohne Klartext-Testmodus", async () => {
+    const suffix = crypto.randomUUID().replaceAll("-", "");
+    const piiSentinel = `PII-MASKED-${suffix}`;
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["email", "firstName", "phone", "status"],
+      area: "interessenten_details",
+      finishedAt: "2099-08-04T10:00:02.000Z",
+      observedAt: "2099-08-04T10:00:01.000Z",
+      records: [
+        {
+          sourceId: `8${suffix.slice(0, 20)}`,
+          payload: {
+            email: `${piiSentinel}@example.invalid`,
+            firstName: piiSentinel,
+            phone: `+49${suffix.slice(0, 12)}`,
+            status: "Neu"
+          }
+        }
+      ],
+      runId: `privacy_masked_${suffix}`,
+      startedAt: "2099-08-04T10:00:00.000Z"
+    });
+
+    const runtimeEnv = {
+      ...env,
+      APP_ENV: "staging",
+      PUBLIC_DASHBOARD_PLAINTEXT: "false",
+      PUBLIC_DASHBOARD_READ_ONLY: "true"
+    } as Env;
+    const context = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/snapshots?area=interessenten_details&limit=500"
+      ),
+      runtimeEnv,
+      context
+    );
+    await waitOnExecutionContext(context);
+    const serialized = await response.text();
+
+    expect(response.status).toBe(200);
     expect(serialized).toContain(PROTECTED_DASHBOARD_VALUE);
     expect(serialized).not.toContain(piiSentinel);
     expect(serialized).not.toContain(`${piiSentinel}@example.invalid`);
-    expect(serialized).not.toContain(`9${suffix.slice(0, 20)}`);
+    expect(serialized).not.toContain(`8${suffix.slice(0, 20)}`);
     expect(serialized).not.toContain(`+49${suffix.slice(0, 12)}`);
   });
 });

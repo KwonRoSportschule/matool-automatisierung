@@ -18,6 +18,7 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   berichte: "Berichte",
   checkin: "Check-ins",
   interessenten: "Interessenten",
+  interessenten_details: "Interessenten-Details",
   karte: "Karte",
   klassen: "Klassen",
   lager: "Lager",
@@ -80,6 +81,40 @@ const CLASS_SAFE_FIELDS = new Set([
   "teilnehmerMax",
   "wochentag"
 ]);
+
+const INTERESSENT_FIELD_LABELS: Readonly<Record<string, string>> = {
+  anrede: "Anrede",
+  datum: "Datum",
+  einfuehrung: "Probetraining 1 - Datum",
+  einfuehrung_anwesend: "Probetraining 1 - Anwesenheit",
+  einfuehrung_benutzer: "Probetraining 1 - Mitarbeiterkennung",
+  einfuehrung_ergebnis_default: "Probetraining 1 - Ergebnis",
+  einfuehrung_klasse: "Probetraining 1 - Klasse",
+  einfuehrung_zeit: "Probetraining 1 - Uhrzeit",
+  email: "E-Mail",
+  handy: "Handy",
+  id: "MATOOL-Interessenten-ID",
+  kontakt: "Kontakt",
+  kontaktart: "Kontaktart",
+  leistung: "Leistung",
+  name: "Nachname",
+  ort: "Ort",
+  plz: "PLZ",
+  probetraining: "Probetraining 2 - Datum",
+  probetraining_anwesend: "Probetraining 2 - Anwesenheit",
+  probetraining_benutzer: "Probetraining 2 - Mitarbeiterkennung",
+  probetraining_ergebnis_default: "Probetraining 2 - Ergebnis",
+  probetraining_klasse: "Probetraining 2 - Klasse",
+  probetraining_zeit: "Probetraining 2 - Uhrzeit",
+  quelle: "Quelle",
+  schule: "Schule",
+  status: "Status",
+  strasse: "Strasse",
+  telefon: "Telefon",
+  text: "Anmerkung",
+  vorname: "Vorname",
+  werbung_formular: "Werbequelle"
+};
 
 const GENERIC_SAFE_FIELDS = new Set(["columnCount", "tableIndex", "status"]);
 
@@ -207,6 +242,12 @@ function fieldLabel(area: string, key: string): string {
   if (area === "klassen" && CLASS_FIELD_LABELS[key]) {
     return CLASS_FIELD_LABELS[key];
   }
+  if (
+    (area === "interessenten" || area === "interessenten_details") &&
+    INTERESSENT_FIELD_LABELS[key]
+  ) {
+    return INTERESSENT_FIELD_LABELS[key];
+  }
   const genericCell = /^c(\d{2})$/u.exec(key);
   if (genericCell?.[1]) {
     return `Feld ${Number.parseInt(genericCell[1], 10) + 1}`;
@@ -225,6 +266,13 @@ function fieldOrder(area: string, key: string): number {
     const keys = Object.keys(CLASS_FIELD_LABELS);
     const index = keys.indexOf(key);
     return index === -1 ? 1_000 : index;
+  }
+  if (area === "interessenten" || area === "interessenten_details") {
+    const keys = Object.keys(INTERESSENT_FIELD_LABELS);
+    const index = keys.indexOf(key);
+    if (index !== -1) {
+      return index;
+    }
   }
   if (key === "tableIndex") {
     return 900;

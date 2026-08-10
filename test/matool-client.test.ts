@@ -519,6 +519,102 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
+  it("liest Interessenten-Details lesend und schreibt nichts zurueck", async () => {
+    const listPage = `
+      <html><body><h1>Interessenten</h1>
+        <table>
+          <tr class="master_tab_tr_head"><td>Nr.</td><td>Vorname</td></tr>
+          <tr onclick="formular_fuellen(606578)"><td>5336</td><td>Lilli</td></tr>
+        </table>
+      </body></html>
+    `;
+    const detailPage = `
+      <html><body><h1>Interessenten</h1>
+        <form>
+          <input type="hidden" name="id" value="606578" />
+          <input type="hidden" name="todo" value="2" />
+          <input name="vorname" value="Lilli" />
+          <input name="email" value="lilli@example.invalid" />
+          <input name="handy" value="0170 1234567" />
+          <input name="probetraining" value="12.08.2026" />
+          <input name="probetraining_zeit" value="17:30" />
+          <input name="text" value="GEHEIME NOTIZ" />
+          <input type="password" name="pass" value="GEHEIM" />
+          <select name="status">
+            <option value="Offen">Offen</option>
+            <option value="Termin" selected>Termin</option>
+          </select>
+        </form>
+      </body></html>
+    `;
+
+    const calls: Array<{ body: string; url: string }> = [];
+    const fetchImplementation = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body =
+        init?.body instanceof URLSearchParams ? init.body.toString() : "";
+      calls.push({ body, url });
+      if (url.includes("session_interessenten_open.php")) {
+        return new Response("", { status: 200 });
+      }
+      if (url.endsWith("/index.php") && init?.method === "POST") {
+        return new Response(null, {
+          headers: { Location: "/index.php" },
+          status: 302
+        });
+      }
+      const page = calls.filter((c) => c.url.includes("show=interessenten"))
+        .length > 1
+        ? detailPage
+        : listPage;
+      return new Response(
+        url.includes("show=interessenten") ? page : "<html><body>Angemeldet</body></html>",
+        { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 200 }
+      );
+    }) as typeof fetch;
+
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      fetchImplementation
+    );
+    const result = await client.extractInteressentenDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      5
+    );
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.sourceId).toBe("606578");
+    expect(result.records[0]?.payload).toMatchObject({
+      email: "lilli@example.invalid",
+      handy: "0170 1234567",
+      probetraining: "12.08.2026",
+      probetraining_zeit: "17:30",
+      status: "Termin",
+      vorname: "Lilli"
+    });
+
+    // Freitext und Passwortfelder werden nicht uebernommen.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("GEHEIME NOTIZ");
+    expect(serialized).not.toContain("GEHEIM");
+
+    // Der Datensatz wird geoeffnet und wieder geschlossen.
+    const sessionCalls = calls.filter((c) =>
+      c.url.includes("session_interessenten_open.php")
+    );
+    expect(sessionCalls.map((c) => c.body)).toEqual([
+      "interessenten_open=606578&todo=open",
+      "interessenten_open=606578&todo=close"
+    ]);
+
+    // Es darf kein Speichern-Formular an MATOOL gehen.
+    const writeCalls = calls.filter((c) => c.body.includes("todo=2"));
+    expect(writeCalls).toEqual([]);
+  });
+
   it("erkennt MATOOLs Kopfzeile an der Klasse master_tab_tr_head", async () => {
     const page = `
       <html><body><h1>Interessenten</h1>

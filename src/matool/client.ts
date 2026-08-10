@@ -16,6 +16,10 @@ const MAX_KLASSEN_RECORDS = 500;
 const MAX_SAFE_AREA_RECORDS = 20_000;
 const MAX_SAFE_AREA_CELLS = 64;
 const MAX_SAFE_AREA_CELL_LENGTH = 500;
+// Detaildaten werden ausschliesslich ueber MATOOLs lesenden JSON-Endpunkt
+// geladen. Die harte Grenze schuetzt das Subrequest-Budget eines Laufs.
+const MAX_INTERESSENTEN_DETAIL_RECORDS = 25;
+const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 const SAFE_MATOOL_AREAS = [
   "archiv",
@@ -375,6 +379,109 @@ export class MatoolClient {
       bodyBytes: body.byteLength,
       records,
       rowCount: records.length
+    };
+  }
+
+  /**
+   * Ermittelt die stabilen IDs der Interessentenliste und liest fuer die
+   * begrenzte Teilmenge die Detaildaten ueber MATOOLs read-only-Endpunkt.
+   * Es wird weder ein Datensatz geoeffnet noch ein Formular gespeichert.
+   */
+  async extractInteressentenDetails(
+    credentials: MatoolCredentials,
+    maxRecords: number
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    const limit = Math.min(
+      MAX_INTERESSENTEN_DETAIL_RECORDS,
+      Math.max(0, Math.trunc(maxRecords))
+    );
+    await this.login(credentials);
+
+    const listBody = await this.fetchInteressentenPage();
+    let bodyBytes = listBody.byteLength;
+    const handles = await extractInteressentenDetailHandles(listBody);
+    const records: MatoolSafeAreaRecord[] = [];
+
+    for (const handle of handles.slice(0, limit)) {
+      const detail = await this.fetchInteressentDetail(handle);
+      bodyBytes += detail.bodyBytes;
+      records.push(detail.record);
+    }
+
+    return {
+      area: "interessenten",
+      bodyBytes,
+      records,
+      rowCount: records.length
+    };
+  }
+
+  /** Liest genau einen Interessenten anhand seiner stabilen MATOOL-ID. */
+  async extractInteressentDetail(
+    credentials: MatoolCredentials,
+    sourceId: string
+  ): Promise<MatoolSafeAreaRecord> {
+    requireCredentials(credentials);
+    requireInteressentId(sourceId);
+    await this.login(credentials);
+    return (await this.fetchInteressentDetail(sourceId)).record;
+  }
+
+  private async fetchInteressentenPage(): Promise<Uint8Array> {
+    const response = await this.request("/index.php?show=interessenten", {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+      method: "GET"
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_status",
+        502,
+        "MATOOL hat für die Interessentenansicht einen unerwarteten Status geliefert."
+      );
+    }
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_unexpected_content_type",
+        502,
+        "MATOOL hat für die Interessentenansicht kein HTML geliefert."
+      );
+    }
+    return readBoundedBody(response);
+  }
+
+  private async fetchInteressentDetail(
+    interessentId: string
+  ): Promise<{ bodyBytes: number; record: MatoolSafeAreaRecord }> {
+    requireInteressentId(interessentId);
+    const response = await this.request(
+      "/json/statistik_daten.php",
+      {
+        body: new URLSearchParams({ id: interessentId }),
+        headers: {
+          Accept: "application/json, text/javascript, */*; q=0.01",
+          "Content-Type":
+            "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        method: "POST"
+      }
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AppError(
+        "matool_interessent_detail_failed",
+        502,
+        "Die MATOOL-Interessentendetails konnten nicht gelesen werden."
+      );
+    }
+    const body = await readBoundedBody(response);
+    return {
+      bodyBytes: body.byteLength,
+      record: parseInteressentDetailResponse(body, interessentId)
     };
   }
 
@@ -853,6 +960,137 @@ function toSafeAreaFieldName(label: string): string | undefined {
   }
   const name = /^[a-z]/u.test(slug) ? slug : `feld_${slug}`;
   return /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(name) ? name : undefined;
+}
+
+/**
+ * Freigegebene Detailfelder eines Interessenten. Freitextnotizen,
+ * Werbe- und Bearbeiterfelder bleiben bewusst aussen vor.
+ */
+export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
+  "id",
+  "anrede",
+  "vorname",
+  "name",
+  "strasse",
+  "plz",
+  "ort",
+  "email",
+  "handy",
+  "telefon",
+  "datum",
+  "status",
+  "quelle",
+  "schule",
+  "kontakt",
+  "kontaktart",
+  "leistung",
+  "probetraining",
+  "probetraining_zeit",
+  "probetraining_klasse",
+  "probetraining_anwesend",
+  "einfuehrung",
+  "einfuehrung_zeit",
+  "einfuehrung_klasse",
+  "einfuehrung_anwesend"
+] as const;
+
+const INTERESSENT_DETAIL_FIELD_SET = new Set<string>(
+  MATOOL_INTERESSENT_DETAIL_FIELDS
+);
+
+/** Liest die internen MATOOL-Kennungen der Listenzeilen. */
+async function extractInteressentenDetailHandles(
+  body: Uint8Array
+): Promise<string[]> {
+  const handles: string[] = [];
+  const seen = new Set<string>();
+  const rewriter = new HTMLRewriter().on("[onclick]", {
+    element(element) {
+      if (handles.length >= MAX_INTERESSENTEN_DETAIL_HANDLES) {
+        return;
+      }
+      const match = /\bformular_fuellen\s*\(\s*['"]?(\d{1,32})/iu.exec(
+        element.getAttribute("onclick") ?? ""
+      );
+      const id = match?.[1];
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        handles.push(id);
+      }
+    }
+  });
+  await drainBody(
+    rewriter.transform(
+      new Response(body, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      })
+    ).body
+  );
+  return handles;
+}
+
+/** Liest das aufgeklappte Detailformular der Interessentenseite. */
+async function extractInteressentDetailPayload(
+  body: Uint8Array
+): Promise<Record<string, string> | undefined> {
+  const payload: Record<string, string> = {};
+  let activeSelect: string | undefined;
+
+  const store = (name: string, value: string): void => {
+    if (!INTERESSENT_DETAIL_FIELD_SET.has(name)) {
+      return;
+    }
+    if (Object.keys(payload).length >= MAX_FIELDS) {
+      return;
+    }
+    payload[name] = value.replace(/\s+/gu, " ").trim().slice(
+      0,
+      MAX_SAFE_AREA_CELL_LENGTH
+    );
+  };
+
+  const rewriter = new HTMLRewriter()
+    .on("input[name]", {
+      element(element) {
+        const name = element.getAttribute("name")?.trim() ?? "";
+        const type = element.getAttribute("type")?.toLowerCase() ?? "text";
+        if (type === "password" || type === "hidden" && name === "todo") {
+          return;
+        }
+        if (
+          (type === "checkbox" || type === "radio") &&
+          element.getAttribute("checked") === null
+        ) {
+          return;
+        }
+        store(name, element.getAttribute("value") ?? "");
+      }
+    })
+    .on("select[name]", {
+      element(element) {
+        activeSelect = element.getAttribute("name")?.trim() ?? undefined;
+        element.onEndTag(() => {
+          activeSelect = undefined;
+        });
+      }
+    })
+    .on("select option[selected]", {
+      element(element) {
+        if (activeSelect) {
+          store(activeSelect, element.getAttribute("value") ?? "");
+        }
+      }
+    });
+
+  await drainBody(
+    rewriter.transform(
+      new Response(body, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      })
+    ).body
+  );
+
+  return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
 async function extractSafeAreaRows(
