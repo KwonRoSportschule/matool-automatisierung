@@ -557,26 +557,32 @@ function zapierConnection(
     unconfirmedClaims: number;
   }
 ): Record<string, unknown> & { state: DashboardState } {
-  const configured = Boolean(
-    env.ZAPIER_SERVICE_TOKEN && env.ZAPIER_WEBHOOK_SIGNING_SECRET
-  );
+  const configured = Boolean(env.ZAPIER_SERVICE_TOKEN);
   const outboundEnabled = env.OUTBOUND_DELIVERY_ENABLED === "true";
   const hasProblem =
     outboundEnabled && (input.pendingOutbox > 0 || input.unconfirmedClaims > 0);
   const state: DashboardState = hasProblem
     ? "warning"
-    : outboundEnabled && configured
+    : configured
       ? "healthy"
       : "inactive";
+  const statusLabel = !configured
+    ? "Nicht eingerichtet"
+    : !outboundEnabled
+      ? "Datenabholung bereit"
+      : hasProblem
+        ? "Pruefung erforderlich"
+        : "Ausgabe aktiv";
+  const description = !configured
+    ? "Der Zapier-Service-Token fuer die Read-only-Datenabholung fehlt."
+    : !outboundEnabled
+      ? "Die Read-only-Datenabholung ist bereit; Kontakt und ausgehende Zustellung bleiben absichtlich ausgeschaltet."
+      : "Zapier-Ereignisse duerfen verarbeitet werden.";
   return {
     key: "zapier",
     label: "Zapier",
     state,
-    statusLabel: outboundEnabled
-      ? hasProblem
-        ? "Pruefung erforderlich"
-        : "Ausgabe aktiv"
-      : "Kontakt-Ausgabe deaktiviert",
+    statusLabel,
     configured,
     checkedAt: new Date().toISOString(),
     lastSuccessAt:
@@ -593,10 +599,12 @@ function zapierConnection(
             httpStatus: input.lastDelivery.http_status
           }
         : null,
-    description: outboundEnabled
-      ? "Zapier-Ereignisse duerfen verarbeitet werden."
-      : "Die Zapier-Anbindung ist sichtbar, aber Kontakt und ausgehende Zustellung bleiben absichtlich ausgeschaltet.",
-    action: hasProblem ? "Offene Zapier-Vorgaenge pruefen." : null,
+    description,
+    action: hasProblem
+      ? "Offene Zapier-Vorgaenge pruefen."
+      : configured
+        ? null
+        : "Zapier-Service-Token einrichten.",
     activeSubscriptions: input.activeSubscriptions,
     pendingOutbox: input.pendingOutbox,
     unconfirmedClaims: input.unconfirmedClaims,
@@ -829,27 +837,27 @@ function buildFunctionCatalogue(
       state: env.ZAPIER_SERVICE_TOKEN ? "enabled" : "unavailable",
       execution: "on_demand",
       lastRunAt: null,
-      dependencies: ["Zapier-Servicezugriff", "Cloudflare Access"]
+      dependencies: ["Zapier-Service-Token", "Cloudflare D1"]
     },
     {
       key: "zapier_subscription_management",
       name: "Zapier-Abonnementverwaltung",
       description: "Registriert und beendet autorisierte Zapier-Abonnements ueber den privaten Servicezugriff.",
       areas: [],
-      state: env.ZAPIER_SERVICE_TOKEN ? "enabled" : "unavailable",
+      state: outbound && env.ZAPIER_WEBHOOK_SIGNING_SECRET ? "enabled" : "disabled",
       execution: "on_demand",
       lastRunAt: null,
-      dependencies: ["Zapier-Servicezugriff", "Cloudflare Access"]
+      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschluessel"]
     },
     {
       key: "zapier_claim_confirm",
       name: "Zapier Claim und Bestaetigung",
       description: "Reserviert freigegebene Ereignisse einmalig und bestaetigt deren Ergebnis idempotent.",
       areas: ["interessenten"],
-      state: env.ZAPIER_SERVICE_TOKEN ? "enabled" : "unavailable",
+      state: outbound && env.ZAPIER_WEBHOOK_SIGNING_SECRET ? "enabled" : "disabled",
       execution: "on_demand",
       lastRunAt: null,
-      dependencies: ["Zapier-Servicezugriff", "Cloudflare Access", "Cloudflare D1"]
+      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschluessel", "Cloudflare D1"]
     },
     {
       key: "first_trial_contact",

@@ -164,11 +164,7 @@ export async function getAdminStatus(env: Env): Promise<unknown> {
         zapier: {
           activeSubscriptions: activeSubscriptions?.count ?? 0,
           claimGuardImplemented: true,
-          configured: Boolean(
-            env.ZAPIER_SERVICE_TOKEN &&
-              env.ZAPIER_WEBHOOK_SIGNING_SECRET &&
-              (activeSubscriptions?.count ?? 0) === 1
-          ),
+          configured: Boolean(env.ZAPIER_SERVICE_TOKEN),
           outboundEnabled: env.OUTBOUND_DELIVERY_ENABLED === "true",
           plan: "Professional",
           targetDedupeVerified: false,

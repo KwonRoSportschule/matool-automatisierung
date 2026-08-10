@@ -17,10 +17,7 @@ export const addMiddlewareCredentials: BeforeRequestMiddleware = (
 
   request.headers = {
     ...request.headers,
-    Authorization: `Bearer ${bundle.authData.service_token ?? ""}`,
-    "CF-Access-Client-Id": bundle.authData.access_client_id ?? "",
-    "CF-Access-Client-Secret":
-      bundle.authData.access_client_secret ?? ""
+    Authorization: `Bearer ${bundle.authData.service_token ?? ""}`
   };
   request.redirect = "manual";
   request.follow = 0;

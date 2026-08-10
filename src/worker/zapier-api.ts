@@ -36,15 +36,9 @@ export async function handleZapierApiRequest(
       schema_version: 1,
       id: "kwonro-matool-middleware",
       environment: env.APP_ENV,
-      event_types: [FIRST_TRIAL_EVENT_TYPE],
+      event_types: [],
       snapshot_areas: MATOOL_SNAPSHOT_AREAS,
-      subscription_limit_per_event_type: 1,
-      token_scopes: [
-        "subscriptions:write",
-        "events:claim",
-        "events:confirm",
-        "events:sample"
-      ]
+      token_scopes: ["snapshots:read"]
     });
   }
 
@@ -176,6 +170,7 @@ export async function handleZapierApiRequest(
 interface SnapshotRow {
   content_hash: string;
   first_seen_at: string;
+  last_changed_at: string;
   last_seen_at: string;
   payload_json: string;
   source_id: string;
@@ -208,10 +203,12 @@ async function listSnapshotsForZapier(
   let rows: { results: SnapshotRow[] };
   try {
     rows = await env.DB.prepare(
-      `SELECT source_id, content_hash, payload_json, first_seen_at, last_seen_at
+      `SELECT source_id, content_hash, payload_json, first_seen_at,
+              last_seen_at,
+              COALESCE(last_changed_at, first_seen_at) AS last_changed_at
        FROM matool_snapshots
        WHERE area = ?
-       ORDER BY last_seen_at DESC, source_id
+       ORDER BY last_changed_at DESC, source_id
        LIMIT ?`
     )
       .bind(area, limit)
@@ -225,7 +222,9 @@ async function listSnapshotsForZapier(
   }
 
   const records = rows.results
-    .filter((row) => !onlyChanged || row.first_seen_at !== row.last_seen_at)
+    .filter(
+      (row) => !onlyChanged || row.first_seen_at !== row.last_changed_at
+    )
     .map((row) => {
       let payload: Record<string, unknown> = {};
       try {
@@ -238,6 +237,9 @@ async function listSnapshotsForZapier(
       }
 
       return {
+        // MATOOL payloads may use generic names such as `id`. Put the payload
+        // first so the stable Zapier integration contract below always wins.
+        ...payload,
         // Zapier dedupliziert über `id`. Der Inhaltshash sorgt dafür, dass
         // eine echte Änderung als neuer Vorgang erkannt wird, ein
         // unveränderter Datensatz dagegen nicht erneut auslöst.
@@ -247,9 +249,9 @@ async function listSnapshotsForZapier(
         matool_id: /^\d+$/u.test(row.source_id) ? row.source_id : null,
         content_hash: row.content_hash,
         first_seen_at: row.first_seen_at,
+        last_changed_at: row.last_changed_at,
         last_seen_at: row.last_seen_at,
-        is_new: row.first_seen_at === row.last_seen_at,
-        ...payload
+        is_new: row.first_seen_at === row.last_changed_at
       };
     });
 

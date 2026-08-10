@@ -1,16 +1,6 @@
-export const FIRST_TRIAL_EVENT_TYPE =
-  "prospect.first_trial_contact_due" as const;
-export const SYNTHETIC_EVENT_ID = "0".repeat(64);
-export const SYNTHETIC_CLAIM_ID =
-  "zclaim_00000000-0000-4000-8000-000000000000";
-
 export const API_PATHS = {
   account: "/api/zapier/v1/account",
-  claim: "/api/zapier/v1/events/claim",
-  confirm: "/api/zapier/v1/events/confirm",
-  sample: "/api/zapier/v1/events/sample",
-  snapshots: "/api/zapier/v1/snapshots",
-  subscriptions: "/api/zapier/v1/subscriptions"
+  snapshots: "/api/zapier/v1/snapshots"
 } as const;
 
 export function configuredMiddlewareOrigin(): string {

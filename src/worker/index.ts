@@ -61,13 +61,14 @@ const worker = {
           : response;
       }
 
-      const identity = await requireAccessIdentity(
-        request,
-        env,
-        url.pathname.startsWith("/api/zapier/v1/")
-          ? "zapier-service"
-          : "employee"
-      );
+      // Zapier is authenticated by the dedicated middleware bearer token in
+      // handleZapierApiRequest. Admin routes retain their separate access
+      // policy below.
+      if (url.pathname.startsWith("/api/zapier/v1/")) {
+        return await handleZapierApiRequest(request, url, env);
+      }
+
+      const identity = await requireAccessIdentity(request, env, "employee");
 
       if (url.pathname.startsWith("/api/")) {
         return await handleApiRequest(request, url, identity, env);
@@ -98,10 +99,6 @@ async function handleApiRequest(
   identity: Awaited<ReturnType<typeof requireAccessIdentity>>,
   env: Env
 ): Promise<Response> {
-  if (url.pathname.startsWith("/api/zapier/v1/")) {
-    return handleZapierApiRequest(request, url, env);
-  }
-
   if (url.pathname === "/api/admin/v1/dashboard/overview") {
     if (request.method !== "GET") {
       methodNotAllowed(["GET"]);

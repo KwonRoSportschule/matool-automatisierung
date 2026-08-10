@@ -22,33 +22,15 @@ const testAuthentication = async (z: ZObject, _bundle: Bundle) => {
 
 const connectionLabel = async (z: ZObject, bundle: Bundle) => {
   const account = await testAuthentication(z, bundle);
-  return `MATOOL Middleware · ${account.environment}`;
+  return `MATOOL Middleware - ${account.environment}`;
 };
 
 export default {
   type: "custom",
   fields: [
     {
-      key: "access_client_id",
-      label: "Cloudflare Access Client-ID",
-      type: "password",
-      required: true
-    },
-    {
-      key: "access_client_secret",
-      label: "Cloudflare Access Client-Secret",
-      type: "password",
-      required: true
-    },
-    {
       key: "service_token",
       label: "Middleware Service-Token",
-      type: "password",
-      required: true
-    },
-    {
-      key: "webhook_signing_secret",
-      label: "Webhook-Signierschlüssel",
       type: "password",
       required: true
     }

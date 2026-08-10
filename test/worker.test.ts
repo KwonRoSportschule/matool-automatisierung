@@ -103,6 +103,62 @@ describe("Worker-Grenzen", () => {
     expect(JSON.stringify(payload)).not.toContain("example.invalid");
   });
 
+  it("meldet die Read-only-Zapier-Abholung allein mit Service-Token als bereit", async () => {
+    const readOnlyZapierEnv = {
+      ...env,
+      OUTBOUND_DELIVERY_ENABLED: "false",
+      ZAPIER_WEBHOOK_SIGNING_SECRET: undefined
+    } as unknown as Env;
+    const status = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/status"),
+      readOnlyZapierEnv
+    );
+    await expect(status.json()).resolves.toMatchObject({
+      connections: {
+        zapier: {
+          configured: true,
+          outboundEnabled: false
+        }
+      }
+    });
+
+    const overview = await dispatch(
+      new Request(
+        "http://127.0.0.1/api/admin/v1/dashboard/overview?range=7"
+      ),
+      readOnlyZapierEnv
+    );
+    const overviewPayload = (await overview.json()) as {
+      connections: {
+        zapier: {
+          configured: boolean;
+          outboundEnabled: boolean;
+          state: string;
+          statusLabel: string;
+        };
+      };
+      functions: Array<{
+        dependencies: string[];
+        key: string;
+        state: string;
+      }>;
+    };
+    expect(overviewPayload.connections.zapier).toMatchObject({
+      configured: true,
+      outboundEnabled: false,
+      state: "healthy",
+      statusLabel: "Datenabholung bereit"
+    });
+    expect(
+      overviewPayload.functions.find(
+        (feature) => feature.key === "zapier_snapshot_polling"
+      )
+    ).toMatchObject({
+      state: "enabled",
+      dependencies: ["Zapier-Service-Token", "Cloudflare D1"]
+    });
+  });
+
   it("bindet CSRF-Tokens an Ursprung und Mitarbeiteridentität", async () => {
     const tokenResponse = await dispatch(
       new Request("http://127.0.0.1/api/admin/v1/csrf")

@@ -9,8 +9,6 @@ import { addMiddlewareCredentials } from "../src/middleware.js";
 
 const bundle = {
   authData: {
-    access_client_id: "synthetic-client-id",
-    access_client_secret: "synthetic-client-secret",
     service_token: "synthetic-service-token"
   }
 } as unknown as Bundle;
@@ -27,10 +25,10 @@ describe("Zapier-Request-Middleware", () => {
     ) as HttpRequestOptionsWithUrl;
 
     expect(request.headers).toMatchObject({
-      Authorization: "Bearer synthetic-service-token",
-      "CF-Access-Client-Id": "synthetic-client-id",
-      "CF-Access-Client-Secret": "synthetic-client-secret"
+      Authorization: "Bearer synthetic-service-token"
     });
+    expect(request.headers).not.toHaveProperty("CF-Access-Client-Id");
+    expect(request.headers).not.toHaveProperty("CF-Access-Client-Secret");
     expect(request.redirect).toBe("manual");
     expect(request.follow).toBe(0);
   });
