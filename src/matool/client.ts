@@ -151,6 +151,16 @@ export class MatoolClient {
   readonly #fetch: typeof fetch;
   readonly #minRequestIntervalMs: number;
   #lastRequestFinishedAt = 0;
+  #requestCount = 0;
+
+  /**
+   * Anzahl der bisher an MATOOL gesendeten Anfragen. Cloudflare begrenzt
+   * die externen Anfragen je Aufruf; der Aufrufer kann damit rechtzeitig
+   * abbrechen, statt in den harten Fehler zu laufen.
+   */
+  get requestCount(): number {
+    return this.#requestCount;
+  }
   #authenticated = false;
 
   /**
@@ -677,11 +687,31 @@ export class MatoolClient {
       }
 
       try {
+        this.#requestCount += 1;
         const response = await this.#fetch(url, init);
         this.#lastRequestFinishedAt = Date.now();
         return response;
       } catch (error) {
         this.#lastRequestFinishedAt = Date.now();
+        // Cloudflare begrenzt die externen Anfragen je Aufruf. Der Fehler
+        // sieht wie ein Netzwerkfehler aus, ist aber keiner: Ein
+        // Wiederholungsversuch kann ihn nicht beheben.
+        if (
+          error instanceof Error &&
+          /subrequest/iu.test(error.message)
+        ) {
+          console.error(
+            JSON.stringify({
+              event: "matool_subrequest_limit_reached",
+              requestCount: this.#requestCount
+            })
+          );
+          throw new AppError(
+            "matool_subrequest_limit",
+            503,
+            "Das Anfragekontingent dieses Laufs ist aufgebraucht."
+          );
+        }
         const category =
           error instanceof DOMException && error.name === "TimeoutError"
             ? "timeout"
