@@ -18,12 +18,13 @@ import {
   type MatoolSyncTrigger
 } from "./sync-store";
 
-// Reihenfolge nach fachlichem Wert: Bricht ein Lauf an einer CPU- oder
-// Subrequest-Grenze ab, sind die wichtigsten Bereiche bereits gespeichert.
+// Interessenten und ihre Details haben fachlich Vorrang. Der Klassenabruf
+// benoetigt viele Einzelanfragen und kann das externe Subrequest-Budget fast
+// vollstaendig verbrauchen; deshalb folgt er erst nach dem Detailpaket.
 export const MATOOL_SNAPSHOT_AREAS = [
-  "klassen",
   "interessenten",
   "interessenten_details",
+  "klassen",
   "schueler",
   "checkin",
   "pruefungen",
@@ -48,6 +49,31 @@ const INTERESSENTEN_DETAILS_PER_RUN = 4;
  * MATOOL einen Lauf ab etwa dem vierten Bereich mit Verbindungsabbruechen.
  */
 const MATOOL_REQUEST_INTERVAL_MS = 700;
+
+/**
+ * Anfragebudget je Lauf. Cloudflare erlaubt im Free-Tarif 50 externe
+ * Anfragen pro Aufruf; der Rest ist Reserve fuer Anmeldung und Redirects.
+ * Wird das Budget erreicht, bleiben die restlichen Bereiche fuer den
+ * naechsten Lauf liegen.
+ */
+const MATOOL_REQUEST_BUDGET = 42;
+
+/**
+ * Verschiebt die Bereichsreihenfolge je Lauf. Ein teurer Bereich wie
+ * `klassen` verbraucht das Budget fast allein; ohne Rotation kaemen die
+ * hinteren Bereiche nie an die Reihe.
+ */
+export function rotateAreas(
+  areas: readonly string[],
+  scheduledTime: number
+): string[] {
+  if (areas.length === 0) {
+    return [];
+  }
+  const hour = Math.floor(scheduledTime / 3_600_000);
+  const offset = ((hour % areas.length) + areas.length) % areas.length;
+  return [...areas.slice(offset), ...areas.slice(0, offset)];
+}
 
 interface InteressentenDetailCandidateRow {
   source_id: string;
@@ -260,7 +286,22 @@ export async function collectMatoolSnapshots(
     minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
   });
   try {
-    for (const area of areas) {
+    for (const area of rotateAreas(areas, scheduledTime)) {
+    // Cloudflare erlaubt je Aufruf nur eine begrenzte Zahl externer
+    // Anfragen. Ist das Budget aufgebraucht, wird der Rest uebersprungen
+    // statt reihenweise als Fehler protokolliert; die Rotation sorgt
+    // dafuer, dass jeder Bereich ueber die stuendlichen Laeufe drankommt.
+    if (client.requestCount >= MATOOL_REQUEST_BUDGET) {
+      console.info(
+        JSON.stringify({
+          area,
+          event: "matool_area_skipped",
+          reason: "request_budget_exhausted",
+          requestCount: client.requestCount
+        })
+      );
+      continue;
+    }
     const runId = `snapshot_${area}_${crypto.randomUUID()}`;
     const startedAt = new Date().toISOString();
     try {

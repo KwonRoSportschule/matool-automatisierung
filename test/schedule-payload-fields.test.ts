@@ -3,11 +3,20 @@ import { describe, expect, it } from "vitest";
 
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
 import {
+  MATOOL_SNAPSHOT_AREAS,
   selectInteressentenDetailSourceIds,
   snapshotPayloadFields
 } from "../src/worker/schedule";
 
 describe("Snapshot-Feldallowlist", () => {
+  it("ruft Interessenten und ihre Details vor dem anfragestarken Klassenbereich ab", () => {
+    expect(MATOOL_SNAPSHOT_AREAS.slice(0, 3)).toEqual([
+      "interessenten",
+      "interessenten_details",
+      "klassen"
+    ]);
+  });
+
   it("verwendet tatsaechlich vorkommende Felder deterministisch", () => {
     const first = snapshotPayloadFields([
       { payload: { email: "test@example.invalid", vorname: "Test" } },
