@@ -565,8 +565,7 @@ function functionCard(
 function configureAdminTools(overview: DashboardOverview): void {
   const matool = overview.connections.matool;
   const hasEmployeeAccess = overview.access.canManage;
-  const matoolAvailable =
-    matool?.configured === true && matool.state !== "critical";
+  const matoolAvailable = matool?.configured === true;
   adminAvailable = hasEmployeeAccess && matoolAvailable;
   elements.adminSync.disabled = !adminAvailable;
   elements.discoveryRun.disabled = !adminAvailable;
@@ -584,6 +583,11 @@ function configureAdminTools(overview: DashboardOverview): void {
   if (!hasEmployeeAccess) {
     elements.adminSyncMessage.textContent = overview.access.notice;
     elements.discoveryMessage.textContent = overview.access.notice;
+  } else if (matool?.state === "critical") {
+    elements.adminSyncMessage.textContent =
+      "MATOOL meldet aktuell einen Fehler; ein manueller Abruf kann trotzdem gestartet werden.";
+    elements.discoveryMessage.textContent =
+      "MATOOL meldet aktuell einen Fehler; die Strukturprüfung bleibt verfügbar.";
   }
   replaceSelectOptions(
     elements.discoveryArea,

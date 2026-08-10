@@ -13,6 +13,7 @@ export interface AccessIdentity {
   authentication:
     | "cloudflare-access"
     | "local-development"
+    | "public-full-access"
     | "public-read-only";
 }
 
@@ -32,7 +33,9 @@ export function dashboardAccessSummary(
   return {
     authentication: identity.authentication,
     canManage,
-    notice: canManage
+    notice: identity.authentication === "public-full-access"
+      ? "Oeffentlicher Vollzugriff ist aktiviert; eine Anmeldung ist nicht erforderlich."
+      : canManage
       ? "Geschuetzte Mitarbeiteraktionen sind verfuegbar."
       : "Oeffentliche Nur-Lese-Ansicht: Mitarbeiteraktionen erfordern eine Cloudflare-Access-Anmeldung."
   };
@@ -48,6 +51,11 @@ export async function requireAccessIdentity(
   env: Env,
   scope: AccessScope = "employee"
 ): Promise<AccessIdentity> {
+  const publicFullAccessIdentity = getPublicFullAccessIdentity(env, scope);
+  if (publicFullAccessIdentity) {
+    return publicFullAccessIdentity;
+  }
+
   const publicIdentity = getPublicReadOnlyIdentity(request, env, scope);
   if (publicIdentity) {
     return publicIdentity;
@@ -107,6 +115,24 @@ export async function requireAccessIdentity(
       "Der Mitarbeiterzugriff konnte nicht bestätigt werden."
     );
   }
+}
+
+function getPublicFullAccessIdentity(
+  env: Env,
+  scope: AccessScope
+): AccessIdentity | null {
+  if (
+    scope !== "employee" ||
+    env.APP_ENV !== "staging" ||
+    env.PUBLIC_DASHBOARD_FULL_ACCESS !== "true"
+  ) {
+    return null;
+  }
+
+  return {
+    subject: "public-dashboard-full-access",
+    authentication: "public-full-access"
+  };
 }
 
 export function accessIdentityFromPayload(

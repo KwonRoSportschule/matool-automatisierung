@@ -45,11 +45,12 @@ describe("Worker-Grenzen", () => {
     });
   });
 
-  it("gibt im öffentlichen Staging nur Dashboard-Lesezugriffe frei", async () => {
+  it("gibt im öffentlichen Staging Vollzugriff ohne Anmeldung frei", async () => {
     const context = createExecutionContext();
     const publicEnv = {
       ...env,
       APP_ENV: "staging",
+      PUBLIC_DASHBOARD_FULL_ACCESS: "true",
       PUBLIC_DASHBOARD_READ_ONLY: "true"
     } as Env;
     const status = await worker.fetch(
@@ -71,8 +72,8 @@ describe("Worker-Grenzen", () => {
     expect(overview.status).toBe(200);
     await expect(overview.json()).resolves.toMatchObject({
       access: {
-        authentication: "public-read-only",
-        canManage: false
+        authentication: "public-full-access",
+        canManage: true
       }
     });
 
@@ -83,7 +84,7 @@ describe("Worker-Grenzen", () => {
       publicEnv,
       context
     );
-    expect(csrf.status).toBe(403);
+    expect(csrf.status).toBe(200);
     await waitOnExecutionContext(context);
   });
 

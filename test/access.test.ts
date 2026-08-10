@@ -21,7 +21,11 @@ describe("Cloudflare-Access-Konfiguration", () => {
     });
   });
 
-  it.each(["cloudflare-access", "local-development"] as const)(
+  it.each([
+    "cloudflare-access",
+    "local-development",
+    "public-full-access"
+  ] as const)(
     "gibt geschuetzte Aktionen fuer %s frei",
     (authentication) => {
       expect(
@@ -32,6 +36,40 @@ describe("Cloudflare-Access-Konfiguration", () => {
       ).toMatchObject({ authentication, canManage: true });
     }
   );
+
+  it.each([
+    ["GET", "/"],
+    ["GET", "/api/admin/v1/csrf"],
+    ["POST", "/api/admin/v1/matool/sync"]
+  ])("erlaubt mit Vollzugriff %s %s ohne Anmeldung", async (method, path) => {
+    const identity = await requireAccessIdentity(
+      new Request(`https://middleware.example.invalid${path}`, { method }),
+      {
+        APP_ENV: "staging",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+      } as Env
+    );
+    expect(identity).toEqual({
+      authentication: "public-full-access",
+      subject: "public-dashboard-full-access"
+    });
+  });
+
+  it("lässt die Zapier-Service-API trotz öffentlichem Dashboard geschützt", async () => {
+    await expect(
+      requireAccessIdentity(
+        new Request("https://middleware.example.invalid/api/zapier/v1/account"),
+        {
+          ACCESS_AUD: "configure-with-cloudflare-access",
+          ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
+          ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access",
+          APP_ENV: "staging",
+          PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+        } as Env,
+        "zapier-service"
+      )
+    ).rejects.toMatchObject({ code: "access_not_configured" });
+  });
 
   it.each([
     "/",
