@@ -114,7 +114,17 @@ export interface ScheduleSummary {
   timeZone?: string;
 }
 
+export interface DashboardAccessSummary {
+  authentication:
+    | "cloudflare-access"
+    | "local-development"
+    | "public-read-only";
+  canManage: boolean;
+  notice: string;
+}
+
 export interface DashboardOverview {
+  access: DashboardAccessSummary;
   areas: AreaSummary[];
   charts: { points: ChartPoint[] };
   connections: Record<string, ConnectionSummary>;

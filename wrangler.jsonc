@@ -40,9 +40,9 @@
       "preview_urls": false,
       "vars": {
         "APP_ENV": "staging",
-        "ACCESS_AUD": "configure-with-cloudflare-access",
+        "ACCESS_AUD": "da7897b053c6af64c05371801a7f7081bf394937a0c657c1d5fd88260bba46ca",
         "ACCESS_SERVICE_AUD": "configure-with-cloudflare-access-service-app",
-        "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
+        "ACCESS_TEAM_DOMAIN": "soft-hill-4630.cloudflareaccess.com",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "true",

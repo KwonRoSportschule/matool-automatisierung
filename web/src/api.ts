@@ -136,7 +136,10 @@ async function getMaskedJson<T extends { privacy: PrivacySummary }>(
     path,
     signal ? { signal } : undefined
   );
-  if (payload.privacy.masked !== true || payload.privacy.mode !== "server-side") {
+  // Entscheidend ist, dass der Server über die Sichtbarkeit entscheidet.
+  // Ob er dabei maskiert oder — wie in der Testphase — Klartext liefert,
+  // steuert der Schalter PUBLIC_DASHBOARD_PLAINTEXT im Worker.
+  if (payload.privacy.mode !== "server-side") {
     throw new ApiError(
       "Die Datenschutzprüfung ist fehlgeschlagen. Es werden vorsorglich keine Datensätze angezeigt.",
       503,

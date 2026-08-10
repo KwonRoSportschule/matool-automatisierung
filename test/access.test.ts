@@ -2,12 +2,37 @@ import { describe, expect, it } from "vitest";
 
 import {
   accessIdentityFromPayload,
+  dashboardAccessSummary,
   normalizeAccessTeamDomain,
   requireAccessIdentity
 } from "../src/worker/access";
 import type { Env } from "../src/worker/env";
 
 describe("Cloudflare-Access-Konfiguration", () => {
+  it("kennzeichnet die oeffentliche Ansicht als nicht verwaltbar", () => {
+    expect(
+      dashboardAccessSummary({
+        authentication: "public-read-only",
+        subject: "public-dashboard-read-only"
+      })
+    ).toMatchObject({
+      authentication: "public-read-only",
+      canManage: false
+    });
+  });
+
+  it.each(["cloudflare-access", "local-development"] as const)(
+    "gibt geschuetzte Aktionen fuer %s frei",
+    (authentication) => {
+      expect(
+        dashboardAccessSummary({
+          authentication,
+          subject: "synthetic-employee"
+        })
+      ).toMatchObject({ authentication, canManage: true });
+    }
+  );
+
   it.each([
     "/",
     "/api/admin/v1/dashboard/overview?range=7",

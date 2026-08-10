@@ -6,7 +6,10 @@ import {
   methodNotAllowed
 } from "../core/http";
 import { MatoolClient } from "../matool/client";
-import { requireAccessIdentity } from "./access";
+import {
+  dashboardAccessSummary,
+  requireAccessIdentity
+} from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import { requireDashboardPublicId } from "./dashboard-privacy";
 import {
@@ -103,9 +106,13 @@ async function handleApiRequest(
     if (request.method !== "GET") {
       methodNotAllowed(["GET"]);
     }
-    return jsonResponse(
-      await getDashboardOverview(env, parseDashboardOverviewQuery(url))
-    );
+    return jsonResponse({
+      ...(await getDashboardOverview(
+        env,
+        parseDashboardOverviewQuery(url)
+      )),
+      access: dashboardAccessSummary(identity)
+    });
   }
 
   if (url.pathname === "/api/admin/v1/dashboard/activity") {

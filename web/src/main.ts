@@ -157,7 +157,7 @@ function renderOverview(overview: DashboardOverview): void {
     `${formatEnvironment(overview.environment)} · Nur Lesen`;
   elements.privacyShort.textContent = overview.privacy.masked
     ? "Serverseitig maskiert"
-    : "Anzeige gesperrt";
+    : "Klartext · Testphase";
   elements.privacyNotice.textContent = overview.privacy.notice;
 
   renderOverall(overview);
@@ -564,15 +564,27 @@ function functionCard(
 
 function configureAdminTools(overview: DashboardOverview): void {
   const matool = overview.connections.matool;
-  adminAvailable = matool?.configured === true && matool.state !== "critical";
+  const hasEmployeeAccess = overview.access.canManage;
+  const matoolAvailable =
+    matool?.configured === true && matool.state !== "critical";
+  adminAvailable = hasEmployeeAccess && matoolAvailable;
   elements.adminSync.disabled = !adminAvailable;
   elements.discoveryRun.disabled = !adminAvailable;
-  elements.adminSync.textContent = adminAvailable
-    ? "Manuellen Abruf starten"
-    : "MATOOL-Verbindung nicht verfügbar";
-  elements.discoveryRun.textContent = adminAvailable
-    ? "Struktur erkennen"
-    : "Strukturprüfung nicht verfügbar";
+  elements.adminSync.textContent = hasEmployeeAccess
+    ? adminAvailable
+      ? "Manuellen Abruf starten"
+      : "MATOOL-Verbindung nicht verfügbar"
+    : "Cloudflare-Access-Anmeldung erforderlich";
+  elements.discoveryRun.textContent = hasEmployeeAccess
+    ? adminAvailable
+      ? "Struktur erkennen"
+      : "Strukturprüfung nicht verfügbar"
+    : "Cloudflare-Access-Anmeldung erforderlich";
+
+  if (!hasEmployeeAccess) {
+    elements.adminSyncMessage.textContent = overview.access.notice;
+    elements.discoveryMessage.textContent = overview.access.notice;
+  }
   replaceSelectOptions(
     elements.discoveryArea,
     overview.areas.map((area) => ({ label: area.label, value: area.key }))

@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "staging",
+      "url": "https://matool-middleware-staging.soft-hill-4630.workers.dev"
+    },
+    {
+      "name": "dev",
+      "runtimeExecutable": "C:\\Users\\CorinKeil\\AppData\\Local\\OpenAI\\Codex\\runtimes\\cua_node\\f8d2abcb7481383b\\bin\\node_modules\\corepack\\shims\\pnpm.cmd",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 8787
+    }
+  ]
+}

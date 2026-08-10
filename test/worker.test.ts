@@ -61,6 +61,21 @@ describe("Worker-Grenzen", () => {
     );
     expect(status.status).toBe(200);
 
+    const overview = await worker.fetch(
+      new Request(
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/overview?range=7"
+      ),
+      publicEnv,
+      context
+    );
+    expect(overview.status).toBe(200);
+    await expect(overview.json()).resolves.toMatchObject({
+      access: {
+        authentication: "public-read-only",
+        canManage: false
+      }
+    });
+
     const csrf = await worker.fetch(
       new Request(
         "https://matool-middleware-staging.example.invalid/api/admin/v1/csrf"

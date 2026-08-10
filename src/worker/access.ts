@@ -16,7 +16,27 @@ export interface AccessIdentity {
     | "public-read-only";
 }
 
+export interface DashboardAccessSummary {
+  authentication: AccessIdentity["authentication"];
+  canManage: boolean;
+  notice: string;
+}
+
 export type AccessScope = "employee" | "zapier-service";
+
+export function dashboardAccessSummary(
+  identity: AccessIdentity
+): DashboardAccessSummary {
+  const canManage = identity.authentication !== "public-read-only";
+
+  return {
+    authentication: identity.authentication,
+    canManage,
+    notice: canManage
+      ? "Geschuetzte Mitarbeiteraktionen sind verfuegbar."
+      : "Oeffentliche Nur-Lese-Ansicht: Mitarbeiteraktionen erfordern eine Cloudflare-Access-Anmeldung."
+  };
+}
 
 const jwksByIssuer = new Map<
   string,

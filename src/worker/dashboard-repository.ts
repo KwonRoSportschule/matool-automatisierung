@@ -133,7 +133,7 @@ export async function getDashboardOverview(
   env: Env,
   rangeDays: 1 | 7 | 30 | 90,
   now = new Date()
-): Promise<unknown> {
+): Promise<Record<string, unknown>> {
   const generatedAt = now.toISOString();
   const from = new Date(now.getTime() - rangeDays * 86_400_000).toISOString();
   const schedule = getBerlinScheduleSummary(now);
@@ -343,12 +343,7 @@ export async function getDashboardOverview(
       schemaVersion: 2,
       generatedAt,
       environment: env.APP_ENV,
-      privacy: {
-        masked: true,
-        mode: "server-side",
-        notice:
-          "Personenbezogene Werte und interne MATOOL-Kennungen werden vor der Uebermittlung maskiert."
-      },
+      privacy: dashboardPrivacyNotice(env),
       range: { days: rangeDays, from, to: generatedAt },
       overall,
       connections: { matool, database, schedule: scheduleCard, zapier },
