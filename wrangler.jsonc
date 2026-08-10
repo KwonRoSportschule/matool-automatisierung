@@ -60,7 +60,7 @@
       // Auf dem Free-Tarif bricht ein Lauf nach etwa fuenf Bereichen mit
       // "exceededCpu" ab.
       "triggers": {
-        "crons": ["0 7-18 * * mon-fri"]
+        "crons": ["15 11 10 8 *"]
       }
     },
     "production": {
