@@ -48,7 +48,7 @@ zapier-platform login
 zapier-platform register "KwonRo MATOOL Middleware"
 pnpm run zapier:build
 zapier-platform push
-zapier-platform env:set 0.1.0 MATOOL_MIDDLEWARE_ORIGIN=https://<staging-hostname>
+zapier-platform env:set 0.0.0 MATOOL_MIDDLEWARE_ORIGIN=https://<staging-hostname>
 ```
 
 Produktive Tokens gehören ausschließlich in die Zapier-Verbindung und in
