@@ -519,6 +519,94 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
+  it("erkennt MATOOLs Kopfzeile an der Klasse master_tab_tr_head", async () => {
+    const page = `
+      <html><body><h1>Interessenten</h1>
+        <table>
+          <tr class="master_tab_tr_head"><td>Nr.</td><td>Datum</td><td>Vorname</td><td>Name</td><td>Status</td></tr>
+        </table>
+        <table>
+          <tr onclick="formular_fuellen(5304)">
+            <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
+          </tr>
+        </table>
+      </body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    // Die Kopfzeile selbst wird nicht als Datensatz gespeichert.
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.payload).toEqual({
+      nr: "5304",
+      datum: "11.07.2026",
+      vorname: "Laura",
+      name: "Beispiel",
+      status: "Termin",
+      columnCount: 5,
+      tableIndex: 1
+    });
+  });
+
+  it("benennt Spalten nach der Kopfzeile, auch wenn sie in einer eigenen Tabelle steht", async () => {
+    const page = `
+      <html><body><h1>Interessenten</h1>
+        <table><tr><th>Nr.</th><th>Datum</th><th>Vorname</th><th>Name</th><th>Status</th></tr></table>
+        <table>
+          <tr onclick="formular_fuellen(5304)">
+            <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
+          </tr>
+        </table>
+      </body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    expect(result.records[0]?.payload).toEqual({
+      nr: "5304",
+      datum: "11.07.2026",
+      vorname: "Laura",
+      name: "Beispiel",
+      status: "Termin",
+      columnCount: 5,
+      tableIndex: 1
+    });
+  });
+
+  it("behaelt die Nummerierung, wenn zwei Kopfzeilen derselben Breite widersprechen", async () => {
+    const page = `
+      <html><body><h1>Interessenten</h1>
+        <table><tr><th>Nr.</th><th>Datum</th></tr></table>
+        <table><tr><th>Kurs</th><th>Raum</th></tr></table>
+        <table>
+          <tr onclick="formular_fuellen(4711)"><td>4711</td><td>01.01.2026</td></tr>
+        </table>
+      </body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    expect(result.records[0]?.payload).toMatchObject({
+      c00: "4711",
+      c01: "01.01.2026"
+    });
+  });
+
   it("extrahiert allowlist-basierte Tabellenzeilen mit stabilen IDs und Redaction", async () => {
     const longCell = "x".repeat(700);
     const page = `
@@ -553,16 +641,19 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       bodyBytes: new TextEncoder().encode(page).byteLength,
       rowCount: 2
     });
+    // Die Spaltennamen stammen aus der Kopfzeile der Tabelle.
     expect(result.records[0]).toEqual({
       sourceId: "900001",
       payload: {
-        c00: "Alice",
-        c01: "Öffnen",
-        c02: "",
+        name: "Alice",
+        details: "Öffnen",
+        zahlung: "",
         columnCount: 3,
         tableIndex: 0
       }
     });
+    // Fuer zwei Spalten gibt es keine passende Kopfzeile; dann bleibt die
+    // Nummerierung erhalten.
     expect(result.records[1]?.sourceId).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.records[1]?.payload.c00).toHaveLength(500);
     const serialized = JSON.stringify(result);

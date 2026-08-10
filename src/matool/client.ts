@@ -760,12 +760,99 @@ function klassenSchemaError(): AppError {
 
 interface SafeAreaRowCapture {
   cells: string[];
+  header: boolean;
   hrefIds: Array<{ id: string; key: string }>;
   linkCount: number;
   onclickIds: string[];
   tableIndex: number;
   tdCount: number;
   thCount: number;
+}
+
+/**
+ * Ordnet Kopfzeilen ihrer Spaltenzahl zu und bildet daraus stabile
+ * Feldschluessel. Mehrdeutige Spaltenzahlen bleiben unbenannt, damit kein
+ * falscher Name entsteht: dann greift wieder die Nummerierung.
+ */
+function collectSafeAreaHeaderNames(
+  rows: readonly SafeAreaRowCapture[]
+): Map<number, string[]> {
+  const candidates = new Map<number, string[][]>();
+  for (const row of rows) {
+    const isHeaderRow =
+      row.header || (row.thCount > 0 && row.tdCount === 0);
+    if (!isHeaderRow) {
+      continue;
+    }
+    const labels = row.cells.map(normalizeSafeAreaCell);
+    if (
+      labels.length === 0 ||
+      labels.length > MAX_SAFE_AREA_CELLS ||
+      labels.some((label) => label.length === 0)
+    ) {
+      continue;
+    }
+    const names = toSafeAreaFieldNames(labels);
+    if (!names) {
+      continue;
+    }
+    const bucket = candidates.get(labels.length) ?? [];
+    bucket.push(names);
+    candidates.set(labels.length, bucket);
+  }
+
+  const resolved = new Map<number, string[]>();
+  for (const [columnCount, variants] of candidates) {
+    const first = variants[0];
+    if (!first) {
+      continue;
+    }
+    const consistent = variants.every(
+      (variant) => variant.join(" ") === first.join(" ")
+    );
+    if (consistent) {
+      resolved.set(columnCount, first);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Wandelt Spaltenueberschriften in Schluessel um, die sowohl der
+ * Snapshot-Speicher als auch die Dashboard-Anzeige akzeptieren.
+ * Gibt `undefined` zurueck, sobald ein Name unbrauchbar oder doppelt ist.
+ */
+function toSafeAreaFieldNames(
+  labels: readonly string[]
+): string[] | undefined {
+  const reserved = new Set(["columnCount", "tableIndex"]);
+  const names: string[] = [];
+  const used = new Set<string>();
+  for (const label of labels) {
+    const name = toSafeAreaFieldName(label);
+    if (!name || reserved.has(name) || used.has(name)) {
+      return undefined;
+    }
+    used.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
+function toSafeAreaFieldName(label: string): string | undefined {
+  const slug = label
+    .toLowerCase()
+    .replaceAll("ä", "ae")
+    .replaceAll("ö", "oe")
+    .replaceAll("ü", "ue")
+    .replaceAll("ß", "ss")
+    .replace(/[^a-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+  if (slug.length === 0 || slug.length > 48) {
+    return undefined;
+  }
+  const name = /^[a-z]/u.test(slug) ? slug : `feld_${slug}`;
+  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(name) ? name : undefined;
 }
 
 async function extractSafeAreaRows(
@@ -826,6 +913,7 @@ async function extractSafeAreaRows(
       element(element) {
         const row: SafeAreaRowCapture = {
           cells: [],
+          header: false,
           hrefIds: [],
           linkCount: 0,
           onclickIds: [],
@@ -840,6 +928,15 @@ async function extractSafeAreaRows(
             activeRow = undefined;
           }
         });
+      }
+    })
+    // MATOOL kennzeichnet Kopfzeilen ueber diese Klasse und verwendet darin
+    // gewoehnliche td-Zellen statt th.
+    .on("tr.master_tab_tr_head", {
+      element() {
+        if (activeRow) {
+          activeRow.header = true;
+        }
       }
     })
     .on("table td", {
@@ -952,13 +1049,19 @@ async function extractSafeAreaRows(
     );
   }
 
+  // Spaltennamen aus der Kopfzeile ableiten, statt die Zellen nur
+  // durchzunummerieren. MATOOL fuehrt die Kopfzeile teils in einer eigenen
+  // Tabelle, deshalb wird sie ueber die Spaltenzahl zugeordnet.
+  const headerNamesByColumnCount = collectSafeAreaHeaderNames(rows);
+
   const prepared: Array<{
     explicitId?: string;
     payload: Record<string, string | number>;
   }> = [];
   const seen = new Set<string>();
   for (const row of rows) {
-    if (row.cells.length === 0 || row.tdCount === 0) {
+    // Kopfzeilen sind keine Datensaetze.
+    if (row.header || row.cells.length === 0 || row.tdCount === 0) {
       continue;
     }
     const cells = row.cells.map(normalizeSafeAreaCell);
@@ -975,8 +1078,10 @@ async function extractSafeAreaRows(
       columnCount: cells.length,
       tableIndex: row.tableIndex
     };
+    const headerNames = headerNamesByColumnCount.get(cells.length);
     cells.forEach((cell, index) => {
-      payload[`c${index.toString().padStart(2, "0")}`] = cell;
+      const fallback = `c${index.toString().padStart(2, "0")}`;
+      payload[headerNames?.[index] ?? fallback] = cell;
     });
     const explicitId = selectSafeAreaSourceId(row, area);
     const rowKey = explicitId

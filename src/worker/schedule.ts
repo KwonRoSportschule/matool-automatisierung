@@ -62,6 +62,27 @@ const SNAPSHOT_PAYLOAD_FIELDS = [
   )
 ];
 
+/**
+ * Erlaubte Feldnamen eines Laufs. Die Basisliste deckt die technischen
+ * Felder und die Nummerierung ab; zusaetzlich werden die aus MATOOLs
+ * Kopfzeile abgeleiteten Spaltennamen zugelassen. Der Extraktor prueft
+ * deren Form bereits, hier begrenzt die Anzahl das Risiko.
+ */
+function snapshotPayloadFields(
+  records: readonly { payload: Readonly<Record<string, unknown>> }[]
+): string[] {
+  const fields = new Set(SNAPSHOT_PAYLOAD_FIELDS);
+  for (const record of records) {
+    for (const key of Object.keys(record.payload)) {
+      if (fields.size >= 200) {
+        break;
+      }
+      fields.add(key);
+    }
+  }
+  return [...fields];
+}
+
 export async function handleScheduledInvocation(
   controller: ScheduledController,
   env: Env
@@ -205,7 +226,7 @@ export async function collectMatoolSnapshots(
         allowedPayloadFields:
           area === "klassen"
             ? MATOOL_KLASSEN_PAYLOAD_FIELDS
-            : SNAPSHOT_PAYLOAD_FIELDS,
+            : snapshotPayloadFields(records),
         area,
         finishedAt,
         observedAt: finishedAt,
