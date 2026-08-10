@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateBerlinScheduleWindow } from "../src/worker/schedule-window";
+import {
+  evaluateBerlinScheduleWindow,
+  getBerlinScheduleSummary
+} from "../src/worker/schedule-window";
 
 describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
   it.each([
@@ -100,6 +103,24 @@ describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
       localDate: "2026-01-02",
       localHour: 12,
       reason: "within_window"
+    });
+  });
+  it("liefert letzten und naechsten Stundenlauf in Berliner Sommerzeit", () => {
+    expect(
+      getBerlinScheduleSummary(new Date("2026-07-08T10:34:00.000Z"))
+    ).toMatchObject({
+      previousScheduledAt: "2026-07-08T10:00:00.000Z",
+      nextScheduledAt: "2026-07-08T11:00:00.000Z",
+      timeZone: "Europe/Berlin"
+    });
+  });
+
+  it("ueberspringt Wochenenden und Feiertage im Zeitplan", () => {
+    expect(
+      getBerlinScheduleSummary(new Date("2026-04-02T18:30:00.000Z"))
+    ).toMatchObject({
+      previousScheduledAt: "2026-04-02T17:00:00.000Z",
+      nextScheduledAt: "2026-04-07T07:00:00.000Z"
     });
   });
 });

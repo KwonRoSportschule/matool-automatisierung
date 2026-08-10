@@ -552,17 +552,18 @@ export class MatoolClient {
           signal: init.signal ?? AbortSignal.timeout(15_000)
         });
       } catch (error) {
-        // Technische Ursache protokollieren: Ein Verbindungsfehler enthält
-        // weder Zugangsdaten noch Personendaten, ist zur Abgrenzung von
-        // Sperre, Zeitüberschreitung und TLS-Problem aber notwendig.
-        const cause = error as Error;
+        const category =
+          error instanceof DOMException && error.name === "TimeoutError"
+            ? "timeout"
+            : error instanceof TypeError
+              ? "network"
+              : "other";
         console.error(
           JSON.stringify({
+            category,
             event: "matool_fetch_failed",
             host: url.hostname,
-            method,
-            name: cause?.name ?? "unknown",
-            reason: cause?.message ?? "unknown"
+            method
           })
         );
         throw new AppError(

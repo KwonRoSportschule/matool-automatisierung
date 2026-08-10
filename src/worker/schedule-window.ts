@@ -48,6 +48,13 @@ interface BerlinDateTime extends CalendarDate {
   hour: number;
 }
 
+export interface BerlinScheduleSummary {
+  description: string;
+  nextScheduledAt: string;
+  previousScheduledAt: string;
+  timeZone: typeof BERLIN_TIME_ZONE;
+}
+
 export function evaluateBerlinScheduleWindow(
   scheduledTime: number | Date
 ): ScheduleWindowDecision {
@@ -102,6 +109,59 @@ export function evaluateBerlinScheduleWindow(
     localHour: local.hour,
     reason: "within_window"
   };
+}
+
+export function getBerlinScheduleSummary(
+  now: number | Date = Date.now()
+): BerlinScheduleSummary {
+  const instant =
+    now instanceof Date ? new Date(now.getTime()) : new Date(now);
+  if (!Number.isFinite(instant.getTime())) {
+    throw new RangeError("now must be a valid instant");
+  }
+
+  const hour = new Date(instant.getTime());
+  hour.setUTCMinutes(0, 0, 0);
+  const previousScheduledAt = findScheduledHour(hour, -1, instant.getTime());
+
+  const nextStart = new Date(hour.getTime());
+  if (nextStart.getTime() <= instant.getTime()) {
+    nextStart.setUTCHours(nextStart.getUTCHours() + 1);
+  }
+  const nextScheduledAt = findScheduledHour(
+    nextStart,
+    1,
+    instant.getTime()
+  );
+
+  return {
+    description:
+      "Montag bis Freitag, jede volle Stunde von 09:00 bis 19:00 Uhr, ausgenommen Feiertage in Schleswig-Holstein.",
+    nextScheduledAt: nextScheduledAt.toISOString(),
+    previousScheduledAt: previousScheduledAt.toISOString(),
+    timeZone: BERLIN_TIME_ZONE
+  };
+}
+
+function findScheduledHour(
+  start: Date,
+  direction: -1 | 1,
+  now: number
+): Date {
+  const candidate = new Date(start.getTime());
+  for (let offset = 0; offset < 24 * 21; offset += 1) {
+    const decision = evaluateBerlinScheduleWindow(candidate);
+    if (
+      decision.allowed &&
+      (direction === -1
+        ? candidate.getTime() <= now
+        : candidate.getTime() > now)
+    ) {
+      return candidate;
+    }
+    candidate.setUTCHours(candidate.getUTCHours() + direction);
+  }
+  throw new RangeError("scheduled hour could not be resolved");
 }
 
 function getBerlinDateTime(instant: Date): BerlinDateTime {

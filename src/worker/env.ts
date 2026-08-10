@@ -9,6 +9,12 @@ export interface Env {
   MATOOL_BASE_URL: string;
   OUTBOUND_DELIVERY_ENABLED: string;
   PUBLIC_DASHBOARD_READ_ONLY?: string;
+  /**
+   * "true" zeigt Datensatzwerte auch ohne Access-Anmeldung im Klartext.
+   * Ausdrücklich für die Testphase mit MATOOL-Testdaten gesetzt. Vor dem
+   * ersten Echtdatenlauf auf "false" stellen.
+   */
+  PUBLIC_DASHBOARD_PLAINTEXT?: string;
 
   ADMIN_ORIGIN?: string;
   CSRF_SECRET?: string;

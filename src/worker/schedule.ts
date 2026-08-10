@@ -11,6 +11,12 @@ import {
 import { processZapierOutbox } from "./outbox";
 import { getProcessMode } from "./repository";
 import { evaluateBerlinScheduleWindow } from "./schedule-window";
+import {
+  beginMatoolSyncRun,
+  finishMatoolSyncRun,
+  recordSkippedMatoolSync,
+  type MatoolSyncTrigger
+} from "./sync-store";
 
 // Reihenfolge nach fachlichem Wert: Bricht ein Lauf an einer CPU- oder
 // Subrequest-Grenze ab, sind die wichtigsten Bereiche bereits gespeichert.
@@ -74,6 +80,10 @@ export async function handleScheduledInvocation(
         scheduledTime: new Date(controller.scheduledTime).toISOString()
       })
     );
+    await recordSkippedMatoolSync(env.DB, {
+      reason: "outside_schedule_window",
+      scheduledFor: new Date(controller.scheduledTime).toISOString()
+    });
     return;
   }
 
@@ -85,6 +95,10 @@ export async function handleScheduledInvocation(
         scheduledTime: new Date(controller.scheduledTime).toISOString()
       })
     );
+    await recordSkippedMatoolSync(env.DB, {
+      reason: "matool_not_configured",
+      scheduledFor: new Date(controller.scheduledTime).toISOString()
+    });
     return;
   }
 
@@ -96,10 +110,19 @@ export async function handleScheduledInvocation(
         scheduledTime: new Date(controller.scheduledTime).toISOString()
       })
     );
+    await recordSkippedMatoolSync(env.DB, {
+      reason: "real_runs_not_confirmed",
+      scheduledFor: new Date(controller.scheduledTime).toISOString()
+    });
     return;
   }
 
-  await collectMatoolSnapshots(env, controller.scheduledTime);
+  await collectMatoolSnapshots(
+    env,
+    controller.scheduledTime,
+    MATOOL_SNAPSHOT_AREAS,
+    "scheduled"
+  );
 
   const mode = await getProcessMode(env);
   if (
@@ -134,7 +157,8 @@ export async function handleScheduledInvocation(
 export async function collectMatoolSnapshots(
   env: Env,
   scheduledTime: number,
-  areas: readonly string[] = MATOOL_SNAPSHOT_AREAS
+  areas: readonly string[] = MATOOL_SNAPSHOT_AREAS,
+  trigger: MatoolSyncTrigger = "manual"
 ): Promise<CollectSnapshotsResult> {
   const summary: CollectSnapshotsResult = {
     areas: [],
@@ -145,6 +169,15 @@ export async function collectMatoolSnapshots(
   if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
     return summary;
   }
+
+  const startedAt = new Date().toISOString();
+  const syncId = await beginMatoolSyncRun(env.DB, {
+    ...(trigger === "scheduled"
+      ? { scheduledFor: new Date(scheduledTime).toISOString() }
+      : {}),
+    startedAt,
+    trigger
+  });
 
   // Ein Client für den gesamten Lauf: genau eine Anmeldung, eine Session.
   const client = new MatoolClient(env.MATOOL_BASE_URL);
@@ -178,6 +211,7 @@ export async function collectMatoolSnapshots(
         observedAt: finishedAt,
         records,
         runId,
+        syncId,
         startedAt
       });
       summary.succeeded += 1;
@@ -206,6 +240,7 @@ export async function collectMatoolSnapshots(
           errorCode,
           finishedAt,
           runId,
+          syncId,
           startedAt
         });
       } catch {
@@ -232,6 +267,13 @@ export async function collectMatoolSnapshots(
   } finally {
     client.clearSession();
   }
+
+  await finishMatoolSyncRun(env.DB, syncId, new Date().toISOString(), {
+    failed: summary.failed,
+    storedTotal: summary.storedTotal,
+    succeeded: summary.succeeded,
+    totalAreas: areas.length
+  });
 
   return summary;
 }

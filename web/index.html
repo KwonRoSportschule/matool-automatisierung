@@ -5,385 +5,371 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Interner Status der MATOOL-Zapier-Middleware"
+      content="Betriebsübersicht des internen MATOOL-Middleware-Hubs"
     />
-    <title>MATOOL Middleware Hub</title>
+    <title>MATOOL Hub · Betriebsübersicht</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <a class="skip-link" href="#main">Zum Inhalt</a>
+    <a class="skip-link" href="#main">Zum Hauptinhalt</a>
 
-    <div class="app-shell">
-      <header class="topbar">
-        <a class="brand" href="/" aria-label="MATOOL Middleware Hub">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#overview" aria-label="MATOOL Hub, zur Übersicht">
           <span class="brand-mark" aria-hidden="true">
-            <span></span>
-            <span></span>
-            <span></span>
+            <span></span><span></span><span></span>
           </span>
-          <span>
-            <strong>MATOOL</strong>
-            <small>Middleware Hub</small>
+          <span class="brand-copy">
+            <strong>MATOOL Hub</strong>
+            <small>Betriebsübersicht</small>
           </span>
         </a>
 
+        <nav class="main-nav" aria-label="Bereiche der Betriebsübersicht">
+          <a href="#overview">Übersicht</a>
+          <a href="#data-areas">Daten</a>
+          <a href="#activity">Verlauf</a>
+          <a href="#database">Datenbank</a>
+        </nav>
+
         <div class="topbar-actions">
-          <span class="environment-pill" id="environment">Lokal</span>
-          <button
-            class="button button-secondary"
-            id="refresh"
-            type="button"
-            aria-label="Status aktualisieren"
-          >
+          <span class="environment-pill" id="environment">Wird geladen</span>
+          <button class="button button-secondary refresh-button" id="refresh" type="button">
             <span class="button-icon" aria-hidden="true">↻</span>
-            <span class="button-label">Status aktualisieren</span>
+            <span>Status aktualisieren</span>
           </button>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <main id="main">
-        <section class="hero" aria-labelledby="hero-title">
-          <div class="eyebrow">Interner Mitarbeiterbereich</div>
-          <div class="hero-grid">
+    <main id="main" class="app-shell">
+      <section class="hero" id="overview" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <div class="eyebrow">Internes Kontrollzentrum</div>
+          <h1 id="page-title">Der gesamte Hub auf einen Blick</h1>
+          <p>
+            Aktueller Betrieb, Datenabrufe und gespeicherte MATOOL-Daten –
+            verständlich zusammengefasst und vollständig im Nur-Lese-Modus.
+          </p>
+          <div class="privacy-banner" role="note">
+            <span class="privacy-lock" aria-hidden="true">●</span>
             <div>
-              <h1 id="hero-title">
-                Interessenten rechtzeitig vor dem ersten Probetraining erreichen.
-              </h1>
-              <p>
-                Diese Middleware liest freigegebene Daten aus MATOOL, prüft den
-                Kontaktzeitpunkt und übergibt genau definierte Ereignisse an
-                Zapier. Der Echtdatenmodus bleibt bis zur Abnahme gesperrt.
-              </p>
-            </div>
-            <div class="hero-status" role="status" aria-live="polite">
-              <span class="status-dot status-dot-warning" id="overall-dot"></span>
-              <div>
-                <small>Aktueller Betriebszustand</small>
-                <strong id="overall-status">Einrichtung läuft</strong>
-                <span id="last-updated">Status wird geladen …</span>
-              </div>
+              <strong id="privacy-short">Serverseitig maskiert</strong>
+              <span id="privacy-notice">
+                Personenbezogene Werte werden vor der Übermittlung geschützt.
+              </span>
             </div>
           </div>
+        </div>
+
+        <article class="overall-card" id="overall-panel" aria-live="polite" aria-atomic="true">
+          <div class="overall-heading">
+            <span class="overall-symbol" id="overall-symbol" data-state="unknown" aria-hidden="true">?</span>
+            <div>
+              <span>Gesamtstatus</span>
+              <h2 id="overall-label">Status wird geprüft</h2>
+            </div>
+          </div>
+          <p id="overall-summary">Die aktuellen Betriebsdaten werden geladen.</p>
+          <p class="overall-action" id="overall-action">Bitte einen Moment warten.</p>
+          <div class="overall-footer">
+            <span id="overall-reasons">Noch keine Bewertung</span>
+            <time id="last-updated">Datenstand wird geladen</time>
+          </div>
+        </article>
+      </section>
+
+      <section class="warning-section panel" id="warnings-section" aria-labelledby="warnings-title">
+        <div class="section-heading compact-heading">
+          <div>
+            <div class="eyebrow">Hinweise</div>
+            <h2 id="warnings-title">Warnungen und Handlungsbedarf</h2>
+          </div>
+          <span class="count-badge" id="warning-count">Wird geprüft</span>
+        </div>
+        <div class="warning-list" id="warnings-list" aria-live="polite">
+          <div class="empty-state">Warnungen werden geladen …</div>
+        </div>
+      </section>
+
+      <section class="section" id="connections" aria-labelledby="connections-title">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Verbindungen</div>
+            <h2 id="connections-title">Die vier Grundlagen des Hubs</h2>
+            <p>Jeder Zustand wird aus echten Prüfungen und Aktivitäten abgeleitet.</p>
+          </div>
+        </div>
+        <div class="connection-grid" id="connections-grid" aria-live="polite">
+          <article class="connection-card loading-card">Verbindungen werden geladen …</article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="metrics-title">
+        <div class="section-heading with-controls">
+          <div>
+            <div class="eyebrow">Kennzahlen</div>
+            <h2 id="metrics-title">Was im gewählten Zeitraum passiert ist</h2>
+          </div>
+          <label class="control-field range-field" for="overview-range">
+            Zeitraum
+            <select id="overview-range">
+              <option value="1">Letzte 24 Stunden</option>
+              <option value="7" selected>Letzte 7 Tage</option>
+              <option value="30">Letzte 30 Tage</option>
+              <option value="90">Letzte 90 Tage</option>
+            </select>
+          </label>
+        </div>
+        <div class="metric-grid" id="metrics-grid" aria-live="polite">
+          <article class="metric-card loading-card">Kennzahlen werden geladen …</article>
+        </div>
+      </section>
+
+      <section class="chart-grid" aria-label="Zeitlicher Verlauf">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">Automatische Läufe</div>
+              <h2>Erfolg und Fehler im Verlauf</h2>
+            </div>
+          </div>
+          <div id="runs-chart" class="chart-region" aria-busy="true">
+            <div class="empty-state">Diagramm wird geladen …</div>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">Datenbewegung</div>
+              <h2>Neue und geänderte Datensätze</h2>
+            </div>
+          </div>
+          <div id="changes-chart" class="chart-region" aria-busy="true">
+            <div class="empty-state">Diagramm wird geladen …</div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel section" id="data-areas" aria-labelledby="areas-title">
+        <div class="section-heading compact-heading">
+          <div>
+            <div class="eyebrow">MATOOL-Datenbereiche</div>
+            <h2 id="areas-title">Gespeicherte Daten nach Bereich</h2>
+          </div>
+          <span class="count-badge" id="area-summary">Wird geladen</span>
+        </div>
+        <div class="table-wrap desktop-area-table">
+          <table>
+            <caption>Bestand und letzter Abruf aller MATOOL-Datenbereiche</caption>
+            <thead>
+              <tr>
+                <th scope="col">Bereich</th>
+                <th scope="col">Zustand</th>
+                <th scope="col">Gespeichert</th>
+                <th scope="col">Neu</th>
+                <th scope="col">Geändert</th>
+                <th scope="col">Letzte Aktualisierung</th>
+                <th scope="col">Letzter Abruf</th>
+              </tr>
+            </thead>
+            <tbody id="areas-body">
+              <tr><td colspan="7" class="empty-state">Bereiche werden geladen …</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="area-cards" id="areas-cards" aria-label="Datenbereiche"></div>
+      </section>
+
+      <div class="operations-grid">
+        <section class="panel schedule-panel" aria-labelledby="schedule-title">
+          <div class="panel-heading">
+            <div>
+              <div class="eyebrow">Automatischer Zeitplan</div>
+              <h2 id="schedule-title">Stündlicher MATOOL-Abruf</h2>
+            </div>
+            <span class="status-badge" id="schedule-state" data-state="unknown">
+              <span class="status-indicator" aria-hidden="true"></span>Wird geprüft
+            </span>
+          </div>
+          <p id="schedule-description">Zeitplandaten werden geladen.</p>
+          <dl class="schedule-grid">
+            <div><dt>Letzter Soll-Lauf</dt><dd><time id="schedule-previous">–</time></dd></div>
+            <div><dt>Tatsächlich gestartet</dt><dd><time id="schedule-actual">–</time></dd></div>
+            <div><dt>Zuletzt abgeschlossen</dt><dd><time id="schedule-completed">–</time></dd></div>
+            <div class="schedule-next"><dt>Nächster Abruf</dt><dd><time id="schedule-next">–</time></dd></div>
+            <div><dt>Abweichung</dt><dd id="schedule-delay">–</dd></div>
+            <div><dt>Zeitzone</dt><dd id="schedule-timezone">Europe/Berlin</dd></div>
+          </dl>
+          <p class="schedule-areas" id="schedule-areas">Datenbereiche werden geladen.</p>
         </section>
 
-        <section class="metric-grid" aria-label="Systemübersicht">
-          <article class="metric-card">
-            <div class="metric-icon matool-icon" aria-hidden="true">M</div>
+        <section class="panel functions-panel" aria-labelledby="functions-title">
+          <div class="section-heading compact-heading">
             <div>
-              <span>MATOOL</span>
-              <strong id="matool-status">Prüfung ausstehend</strong>
-              <small id="matool-detail">Keine Zugangsdaten im Browser</small>
+              <div class="eyebrow">Funktionsübersicht</div>
+              <h2 id="functions-title">Was der Hub kann</h2>
             </div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-icon process-icon" aria-hidden="true">01</div>
-            <div>
-              <span>Pilotprozess</span>
-              <strong id="process-status">Deaktiviert</strong>
-              <small>Vor dem ersten Probetraining</small>
-            </div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-icon zapier-icon" aria-hidden="true">Z</div>
-            <div>
-              <span>Zapier Professional</span>
-              <strong id="zapier-status">Trigger ausstehend</strong>
-              <small id="zapier-detail">Private App noch nicht verbunden</small>
-            </div>
-          </article>
-
-          <article class="metric-card">
-            <div class="metric-icon runs-icon" aria-hidden="true">↗</div>
-            <div>
-              <span>Letzter Lauf</span>
-              <strong id="run-status">Noch keiner</strong>
-              <small id="run-detail">Keine Echtdaten verarbeitet</small>
-            </div>
-          </article>
+            <span class="count-badge" id="function-count">Wird geladen</span>
+          </div>
+          <div class="function-list" id="functions-list">
+            <div class="empty-state">Funktionen werden geladen …</div>
+          </div>
         </section>
+      </div>
 
-        <div class="content-grid">
-          <section class="panel process-panel" aria-labelledby="process-title">
-            <div class="panel-heading">
-              <div>
-                <div class="eyebrow">Pilot 01</div>
-                <h2 id="process-title">
-                  Interessenten · erstes Probetraining
-                </h2>
-              </div>
-              <span class="mode-badge" id="mode-badge">Deaktiviert</span>
-            </div>
-
-            <div class="flow" aria-label="Datenfluss">
-              <div class="flow-step">
-                <span class="flow-number">1</span>
-                <div>
-                  <strong>MATOOL lesen</strong>
-                  <small>Interessent und erster Termin</small>
-                </div>
-              </div>
-              <span class="flow-arrow" aria-hidden="true">→</span>
-              <div class="flow-step">
-                <span class="flow-number">2</span>
-                <div>
-                  <strong>Regeln prüfen</strong>
-                  <small>Vorlauf, Ausschlüsse, Deduplizierung</small>
-                </div>
-              </div>
-              <span class="flow-arrow" aria-hidden="true">→</span>
-              <div class="flow-step">
-                <span class="flow-number">3</span>
-                <div>
-                  <strong>Zapier auslösen</strong>
-                  <small>Nur nach Freigabe</small>
-                </div>
-              </div>
-            </div>
-
-            <dl class="policy-grid">
-              <div>
-                <dt>Kontaktvorlauf</dt>
-                <dd id="policy-lead">Noch festzulegen</dd>
-              </div>
-              <div>
-                <dt>Kontaktweg</dt>
-                <dd id="policy-channel">Noch festzulegen</dd>
-              </div>
-              <div>
-                <dt>Nachholfenster</dt>
-                <dd id="policy-lookback">Noch festzulegen</dd>
-              </div>
-              <div>
-                <dt>Ereignistyp</dt>
-                <dd><code>prospect.first_trial_contact_due</code></dd>
-              </div>
-            </dl>
-          </section>
-
-          <aside class="panel gates-panel" aria-labelledby="gates-title">
-            <div class="panel-heading">
-              <div>
-                <div class="eyebrow">Sicherheits-Gates</div>
-                <h2 id="gates-title">Vor dem ersten Echtdatenlauf</h2>
-              </div>
-              <span class="gate-count" id="gate-count">4 offen</span>
-            </div>
-            <ol class="gate-list" id="gate-list">
-              <li>
-                <span class="gate-state gate-open" aria-hidden="true"></span>
-                <div>
-                  <strong>MATOOL-Passwort rotieren</strong>
-                  <small>HAR-Sitzungen ebenfalls beenden</small>
-                </div>
-              </li>
-              <li>
-                <span class="gate-state gate-open" aria-hidden="true"></span>
-                <div>
-                  <strong>Termin-Felder verifizieren</strong>
-                  <small>Stabile Interessenten- und Termin-ID</small>
-                </div>
-              </li>
-              <li>
-                <span class="gate-state gate-open" aria-hidden="true"></span>
-                <div>
-                  <strong>Kontaktregel festlegen</strong>
-                  <small>Vorlauf, Kanal und Ausschlüsse</small>
-                </div>
-              </li>
-              <li>
-                <span class="gate-state gate-open" aria-hidden="true"></span>
-                <div>
-                  <strong>Zapier-Deduplizierung nachweisen</strong>
-                  <small>Keine doppelte Kundenaktion bei Retry</small>
-                </div>
-              </li>
-            </ol>
-          </aside>
-
-          <section class="panel runs-panel" aria-labelledby="runs-title">
-            <div class="panel-heading">
-              <div>
-                <div class="eyebrow">Technisches Protokoll</div>
-                <h2 id="runs-title">Letzte Läufe</h2>
-              </div>
-              <span class="privacy-note">Ohne Personendaten</span>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Zeitpunkt</th>
-                    <th scope="col">Modus</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">Gelesen</th>
-                    <th scope="col">Kandidaten</th>
-                    <th scope="col">Ereignisse</th>
-                  </tr>
-                </thead>
-                <tbody id="runs-body">
-                  <tr>
-                    <td class="empty-state" colspan="6">
-                      Noch keine Läufe vorhanden.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <aside class="panel next-panel" aria-labelledby="discovery-title">
-            <div class="eyebrow">Einrichtung</div>
-            <h2 id="discovery-title">Struktur erkennen</h2>
-            <p>
-              Der geschützte Abruf zeigt ausschließlich Tabellenüberschriften,
-              Mengen und technische ID-Muster. Zellinhalte und Personendaten
-              werden weder gespeichert noch angezeigt.
-            </p>
-            <label class="discovery-field" for="discovery-area">
-              Datenbereich
-              <select id="discovery-area">
-                <option value="interessenten">Interessenten</option>
-              </select>
+      <section class="panel section" id="activity" aria-labelledby="activity-title">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Chronologischer Verlauf</div>
+            <h2 id="activity-title">Alles, was zuletzt passiert ist</h2>
+            <p>Abrufe, Änderungen, Warnungen und Zapier-relevante Ereignisse.</p>
+          </div>
+        </div>
+        <form class="filter-grid activity-filters" id="activity-filters">
+          <label class="control-field">Status
+            <select id="activity-status">
+              <option value="">Alle Status</option>
+              <option value="succeeded">Erfolgreich</option>
+              <option value="failed">Fehlgeschlagen</option>
+              <option value="warning">Warnung</option>
+              <option value="running">Läuft</option>
+              <option value="skipped">Ausgelassen</option>
+              <option value="info">Information</option>
+            </select>
+          </label>
+          <label class="control-field">Bereich
+            <select id="activity-area"><option value="">Alle Bereiche</option></select>
+          </label>
+          <label class="control-field">Art
+            <select id="activity-kind">
+              <option value="">Alle Arten</option>
+              <option value="sync">MATOOL-Abruf</option>
+              <option value="data">Datenänderung</option>
+              <option value="automation">Automatisierung</option>
+              <option value="zapier">Zapier</option>
+            </select>
+          </label>
+          <label class="control-field">Von<input id="activity-from" type="date" /></label>
+          <label class="control-field">Bis<input id="activity-to" type="date" /></label>
+          <div class="filter-actions">
+            <button class="button button-primary" type="submit">Filter anwenden</button>
+            <button class="button button-ghost" id="activity-reset" type="button">Zurücksetzen</button>
+          </div>
+        </form>
+        <div id="activity-region" class="async-region" aria-busy="false">
+          <p class="result-message" id="activity-message" aria-live="polite">Aktivitäten werden geladen …</p>
+          <ol class="activity-list" id="activity-list">
+            <li class="empty-state">Aktivitäten werden geladen …</li>
+          </ol>
+          <div class="pagination" aria-label="Seiten des Aktivitätsverlaufs">
+            <label class="control-field inline-field">Pro Seite
+              <select id="activity-page-size"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
             </label>
-            <button
-              class="button button-primary"
-              id="discover-structure"
-              type="button"
-              disabled
-            >
-              Strukturprobe noch gesperrt
-            </button>
-            <p class="action-message" id="action-message" aria-live="polite"></p>
-            <div class="discovery-result" id="discovery-result" hidden>
-              <p id="discovery-summary"></p>
-              <section aria-labelledby="discovery-tables-title">
-                <h3 id="discovery-tables-title">Tabellen</h3>
-                <ul id="discovery-tables"></ul>
-              </section>
-              <section aria-labelledby="discovery-fields-title">
-                <h3 id="discovery-fields-title">Formularfelder</h3>
-                <ul id="discovery-fields"></ul>
-              </section>
-              <section aria-labelledby="discovery-patterns-title">
-                <h3 id="discovery-patterns-title">ID-Muster</h3>
-                <ul id="discovery-patterns"></ul>
-              </section>
+            <div class="pagination-controls">
+              <button class="button button-secondary" id="activity-previous" type="button" disabled>Zurück</button>
+              <span id="activity-page-label">Keine Seiten</span>
+              <button class="button button-secondary" id="activity-next" type="button" disabled>Weiter</button>
             </div>
-          </aside>
+          </div>
+        </div>
+      </section>
 
-          <section class="panel runs-panel" aria-labelledby="snapshot-title">
-            <div class="panel-heading">
-              <div>
-                <div class="eyebrow">Datenbestand</div>
-                <h2 id="snapshot-title">MATOOL-Daten in der Datenbank</h2>
-              </div>
-              <span class="privacy-note" id="snapshot-total">Noch keine Daten</span>
+      <section class="panel section database-panel" id="database" aria-labelledby="database-title">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Cloudflare D1 · Nur-Lese-Modus</div>
+            <h2 id="database-title">Vollständige gespeicherte Datenbank</h2>
+            <p>Alle Ergebnisse werden serverseitig gesucht, sortiert und maskiert.</p>
+          </div>
+          <span class="privacy-chip">● Personenwerte geschützt</span>
+        </div>
+        <form class="filter-grid database-filters" id="database-filters">
+          <label class="control-field search-field">Suche
+            <input id="database-query" type="search" placeholder="In freigegebenen Feldern suchen" autocomplete="off" />
+          </label>
+          <label class="control-field">Bereich
+            <select id="database-area"><option value="">Wird geladen</option></select>
+          </label>
+          <label class="control-field">Änderung
+            <select id="database-change"><option value="all">Alle</option><option value="created">Neu</option><option value="updated">Geändert</option></select>
+          </label>
+          <label class="control-field">Sortieren nach
+            <select id="database-sort"><option value="lastChangedAt">Letzte Änderung</option><option value="lastSeenAt">Zuletzt gesehen</option><option value="firstSeenAt">Erstellt</option><option value="recordRef">Referenz</option></select>
+          </label>
+          <label class="control-field">Reihenfolge
+            <select id="database-direction"><option value="desc">Neueste zuerst</option><option value="asc">Älteste zuerst</option></select>
+          </label>
+          <div class="filter-actions">
+            <button class="button button-primary" type="submit">Daten anzeigen</button>
+            <button class="button button-ghost" id="database-reset" type="button">Zurücksetzen</button>
+          </div>
+        </form>
+        <div id="database-region" class="async-region" aria-busy="false">
+          <p class="result-message" id="database-message" aria-live="polite">Datensätze werden geladen …</p>
+          <div class="table-wrap database-table-wrap">
+            <table>
+              <caption>Gespeicherte, serverseitig maskierte MATOOL-Datensätze</caption>
+              <thead id="database-head"><tr><th scope="col">Datensätze werden geladen</th></tr></thead>
+              <tbody id="database-body"><tr><td class="empty-state">Bitte warten …</td></tr></tbody>
+            </table>
+          </div>
+          <div class="database-cards" id="database-cards" aria-label="Gespeicherte Datensätze"></div>
+          <div class="pagination" aria-label="Seiten der Datenbankansicht">
+            <label class="control-field inline-field">Pro Seite
+              <select id="database-page-size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select>
+            </label>
+            <div class="pagination-controls">
+              <button class="button button-secondary" id="database-previous" type="button" disabled>Zurück</button>
+              <span id="database-page-label">Keine Seiten</span>
+              <button class="button button-secondary" id="database-next" type="button" disabled>Weiter</button>
             </div>
+          </div>
+        </div>
+      </section>
 
-            <p>
-              Holt alle freigegebenen MATOOL-Bereiche ab und speichert sie
-              versioniert in der Datenbank. Unveränderte Datensätze erzeugen
-              keine neue Version.
-            </p>
-
-            <button
-              class="button button-primary"
-              id="sync-all"
-              type="button"
-              disabled
-            >
-              Datenabruf noch gesperrt
-            </button>
-            <p class="action-message" id="sync-message" aria-live="polite"></p>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Bereich</th>
-                    <th scope="col">Datensätze</th>
-                  </tr>
-                </thead>
-                <tbody id="snapshot-body">
-                  <tr>
-                    <td class="empty-state" colspan="2">
-                      Noch keine Daten abgerufen.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+      <details class="panel admin-panel" id="admin-tools">
+        <summary>
+          <span><span class="eyebrow">Geschützter Mitarbeiterbereich</span><strong>Administrative Nur-Lese-Werkzeuge</strong></span>
+          <span class="summary-hint">Öffnen</span>
+        </summary>
+        <div class="admin-grid">
+          <section aria-labelledby="sync-title">
+            <h2 id="sync-title">MATOOL-Daten jetzt abrufen</h2>
+            <p>Liest alle freigegebenen Bereiche und speichert neue Snapshots in D1. MATOOL selbst wird nicht verändert.</p>
+            <button class="button button-primary" id="admin-sync" type="button" disabled>Manuellen Abruf starten</button>
+            <p class="result-message" id="admin-sync-message" aria-live="polite"></p>
           </section>
-
-          <section class="panel browser-panel" aria-labelledby="browser-title">
-            <div class="panel-heading">
-              <div>
-                <div class="eyebrow">Datensätze ansehen</div>
-                <h2 id="browser-title">Gespeicherte Daten</h2>
-              </div>
-              <span class="privacy-note" id="browser-mode">Werte maskiert</span>
-            </div>
-
-            <div class="browser-controls">
-              <label for="browser-area">Bereich</label>
-              <select id="browser-area" class="eingabe-select">
-                <option value="interessenten">Interessenten</option>
-                <option value="schueler">Schüler / Mitglieder</option>
-                <option value="pruefungen">Prüfungen</option>
-                <option value="checkin">Check-ins</option>
-                <option value="newsletter">Newsletter</option>
-                <option value="klassen">Klassen</option>
-                <option value="artikel">Artikel</option>
-                <option value="lager">Lager</option>
-                <option value="archiv">Archiv</option>
-                <option value="telemetrie">Telemetrie</option>
-                <option value="berichte">Berichte</option>
-                <option value="karte">Karte</option>
-              </select>
-
-              <label for="browser-limit">Zeilen</label>
-              <select id="browser-limit" class="eingabe-select">
-                <option value="25">25</option>
-                <option value="100" selected>100</option>
-                <option value="500">500</option>
-              </select>
-
-              <button class="button button-secondary" id="browser-load" type="button">
-                Anzeigen
-              </button>
-            </div>
-
-            <p class="action-message" id="browser-message" aria-live="polite"></p>
-
-            <div class="table-wrap">
-              <table id="browser-table">
-                <thead id="browser-head">
-                  <tr>
-                    <th scope="col">MATOOL-ID</th>
-                    <th scope="col">Zuletzt gesehen</th>
-                  </tr>
-                </thead>
-                <tbody id="browser-body">
-                  <tr>
-                    <td class="empty-state" colspan="2">
-                      Bereich wählen und „Anzeigen“ drücken.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <section aria-labelledby="discovery-title">
+            <h2 id="discovery-title">MATOOL-Struktur prüfen</h2>
+            <p>Zeigt nur technische Tabellen-, Feld- und ID-Strukturen, keine Zellinhalte.</p>
+            <label class="control-field">Datenbereich<select id="discovery-area"><option value="">Wird geladen</option></select></label>
+            <button class="button button-secondary" id="discovery-run" type="button" disabled>Struktur erkennen</button>
+            <p class="result-message" id="discovery-message" aria-live="polite"></p>
+            <div class="discovery-result" id="discovery-result" hidden></div>
           </section>
         </div>
-      </main>
+      </details>
+    </main>
 
-      <footer>
-        <span>KwonRo Sportschule · interne Middleware</span>
-        <span>Keine MATOOL-Profile werden im Dashboard angezeigt.</span>
-      </footer>
-    </div>
+    <footer class="footer">
+      <span>KwonRo Sportschule · interne Middleware</span>
+      <span>Nur-Lese-Betriebsübersicht · Zeitzone Europe/Berlin</span>
+    </footer>
+
+    <dialog class="record-dialog" id="record-dialog" aria-labelledby="record-dialog-title">
+      <div class="dialog-shell">
+        <header class="dialog-header">
+          <div>
+            <div class="eyebrow">Datenbankdetail</div>
+            <h2 id="record-dialog-title">Datensatzdetails</h2>
+            <p id="record-dialog-subtitle">Nur-Lese-Ansicht · serverseitig maskiert</p>
+          </div>
+          <button class="dialog-close" id="record-dialog-close" type="button" aria-label="Detailansicht schließen">×</button>
+        </header>
+        <div class="dialog-content" id="record-dialog-content"></div>
+      </div>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

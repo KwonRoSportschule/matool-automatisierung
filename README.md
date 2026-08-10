@@ -105,6 +105,7 @@ sowie die Team-Domain werden in `env.staging` eingetragen und nochmals mit
 
 ## Planungsdokumente
 
+- [Einfache Anforderungen und aktueller Todo-Plan](docs/anforderungen-und-todo.md)
 - [Zielarchitektur](docs/architecture.md)
 - [Umsetzungs- und Abnahmeplan](docs/implementation-plan.md)
 - [Inbetriebnahme-Runbook](docs/deployment-runbook.md)

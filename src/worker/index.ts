@@ -8,6 +8,19 @@ import {
 import { MatoolClient } from "../matool/client";
 import { requireAccessIdentity } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
+import { requireDashboardPublicId } from "./dashboard-privacy";
+import {
+  parseDashboardActivityQuery,
+  parseDashboardOverviewQuery,
+  parseDashboardRecordDetailQuery,
+  parseDashboardRecordQuery
+} from "./dashboard-query";
+import {
+  getDashboardOverview,
+  getDashboardRecord,
+  listDashboardActivities,
+  listDashboardRecords
+} from "./dashboard-repository";
 import type { Env } from "./env";
 import {
   getAdminStatus,
@@ -86,6 +99,50 @@ async function handleApiRequest(
     return handleZapierApiRequest(request, url, env);
   }
 
+  if (url.pathname === "/api/admin/v1/dashboard/overview") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(
+      await getDashboardOverview(env, parseDashboardOverviewQuery(url))
+    );
+  }
+
+  if (url.pathname === "/api/admin/v1/dashboard/activity") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(
+      await listDashboardActivities(env, parseDashboardActivityQuery(url))
+    );
+  }
+
+  if (url.pathname === "/api/admin/v1/dashboard/records") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(
+      await listDashboardRecords(env, parseDashboardRecordQuery(url))
+    );
+  }
+
+  const dashboardRecordMatch =
+    /^\/api\/admin\/v1\/dashboard\/records\/([0-9a-f]{32})$/u.exec(
+      url.pathname
+    );
+  if (dashboardRecordMatch?.[1]) {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(
+      await getDashboardRecord(
+        env,
+        parseDashboardRecordDetailQuery(url),
+        requireDashboardPublicId(dashboardRecordMatch[1])
+      )
+    );
+  }
+
   if (url.pathname === "/api/admin/v1/status") {
     if (request.method !== "GET") {
       methodNotAllowed(["GET"]);
@@ -127,10 +184,9 @@ async function handleApiRequest(
       ? Math.min(500, Math.max(1, rawLimit))
       : 100;
 
-    // Klartext nur für bestätigte Mitarbeiterzugriffe. Der öffentliche
-    // Staging-Lesezugriff sieht ausschliesslich maskierte Werte.
-    const masked = identity.authentication === "public-read-only";
-    return jsonResponse(await listAreaSnapshots(env, area, limit, masked));
+    // Bis zur spaeteren Rollen- und Feldfreigabe liefert dieser Alt-Endpunkt
+    // fuer jede Identitaet ausschliesslich serverseitig maskierte Werte.
+    return jsonResponse(await listAreaSnapshots(env, area, limit));
   }
 
   if (url.pathname === "/api/admin/v1/csrf") {

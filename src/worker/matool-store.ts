@@ -20,6 +20,7 @@ export interface PersistMatoolSnapshotRunInput {
   observedAt: string;
   records: readonly MatoolSnapshotRecord[];
   runId: string;
+  syncId?: string;
   startedAt: string;
 }
 
@@ -30,6 +31,7 @@ export interface RecordMatoolSnapshotFailureInput {
   fetchedCount?: number;
   finishedAt: string;
   runId: string;
+  syncId?: string;
   startedAt: string;
 }
 
@@ -38,6 +40,9 @@ export async function persistMatoolSnapshotRun(
   input: PersistMatoolSnapshotRunInput
 ): Promise<{ storedCount: number }> {
   validateRunIdentity(input);
+  if (input.syncId) {
+    validateIdentifier(input.syncId, 128);
+  }
   validateTimestamp(input.observedAt);
   if (input.records.length > MAX_RECORDS_PER_RUN) {
     throw invalidSnapshotInput();
@@ -71,8 +76,8 @@ export async function persistMatoolSnapshotRun(
     .prepare(
       `INSERT INTO matool_snapshot_runs (
          run_id, area, status, started_at, finished_at,
-         fetched_count, success_count, failure_count, error_code
-       ) VALUES (?, ?, 'succeeded', ?, ?, ?, ?, 0, NULL)`
+         fetched_count, success_count, failure_count, error_code, sync_id
+       ) VALUES (?, ?, 'succeeded', ?, ?, ?, ?, 0, NULL, ?)`
     )
     .bind(
       input.runId,
@@ -80,7 +85,8 @@ export async function persistMatoolSnapshotRun(
       input.startedAt,
       input.finishedAt,
       snapshots.length,
-      snapshots.length
+      snapshots.length,
+      input.syncId ?? null
     );
 
   // Große Bereiche wie schueler überschreiten eine einzelne D1-Anweisung.
@@ -88,15 +94,18 @@ export async function persistMatoolSnapshotRun(
   const chunks = chunkSnapshots(snapshots);
 
   try {
-    const firstChunk = chunks[0];
-    await db.batch(
-      firstChunk
-        ? [runStatement, buildSnapshotStatement(db, input, firstChunk)]
-        : [runStatement]
-    );
-    for (const chunk of chunks.slice(1)) {
-      await db.batch([buildSnapshotStatement(db, input, chunk)]);
+    // D1 fuehrt ein batch atomar und in Reihenfolge aus. Jeder Change-SELECT
+    // muss dabei den vorherigen Snapshot sehen; erst danach folgt der Upsert.
+    // Ein einziger Batch verhindert zudem Teilstaende, falls ein spaeterer
+    // Datenblock scheitert.
+    const statements: D1PreparedStatement[] = [runStatement];
+    for (const chunk of chunks) {
+      statements.push(
+        buildSnapshotChangeStatement(db, input, chunk),
+        buildSnapshotStatement(db, input, chunk)
+      );
     }
+    await db.batch(statements);
   } catch {
     throw snapshotPersistenceError();
   }
@@ -142,16 +151,21 @@ function buildSnapshotStatement(
     .prepare(
       `INSERT INTO matool_snapshots (
          area, source_id, first_seen_at, last_seen_at,
-         content_hash, payload_json, last_run_id
+         content_hash, payload_json, last_run_id, public_id, last_changed_at
        )
        SELECT
          ?, json_extract(value, '$.sourceId'), ?, ?,
          json_extract(value, '$.contentHash'),
-         json_extract(value, '$.payloadJson'), ?
+         json_extract(value, '$.payloadJson'), ?, lower(hex(randomblob(16))), ?
        FROM json_each(?)
        WHERE json_type(value) = 'object'
        ON CONFLICT (area, source_id) DO UPDATE SET
          last_seen_at = excluded.last_seen_at,
+         last_changed_at = CASE
+           WHEN matool_snapshots.content_hash <> excluded.content_hash
+             THEN excluded.last_changed_at
+           ELSE matool_snapshots.last_changed_at
+         END,
          content_hash = excluded.content_hash,
          payload_json = excluded.payload_json,
          last_run_id = excluded.last_run_id`
@@ -161,7 +175,48 @@ function buildSnapshotStatement(
       input.observedAt,
       input.observedAt,
       input.runId,
+      input.observedAt,
       JSON.stringify(chunk)
+    );
+}
+
+function buildSnapshotChangeStatement(
+  db: D1Database,
+  input: PersistMatoolSnapshotRunInput,
+  chunk: readonly PreparedSnapshot[]
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO matool_snapshot_changes (
+         area, source_id, run_id, change_kind, observed_at, content_hash
+       )
+       SELECT
+         ?,
+         json_extract(incoming.value, '$.sourceId'),
+         ?,
+         CASE
+           WHEN existing.source_id IS NULL THEN 'created'
+           ELSE 'updated'
+         END,
+         ?,
+         json_extract(incoming.value, '$.contentHash')
+       FROM json_each(?) AS incoming
+       LEFT JOIN matool_snapshots AS existing
+         ON existing.area = ?
+        AND existing.source_id = json_extract(incoming.value, '$.sourceId')
+       WHERE json_type(incoming.value) = 'object'
+         AND (
+           existing.source_id IS NULL
+           OR existing.content_hash <> json_extract(incoming.value, '$.contentHash')
+         )
+       ON CONFLICT (area, source_id, run_id) DO NOTHING`
+    )
+    .bind(
+      input.area,
+      input.runId,
+      input.observedAt,
+      JSON.stringify(chunk),
+      input.area
     );
 }
 
@@ -170,6 +225,9 @@ export async function recordMatoolSnapshotFailure(
   input: RecordMatoolSnapshotFailureInput
 ): Promise<void> {
   validateRunIdentity(input);
+  if (input.syncId) {
+    validateIdentifier(input.syncId, 128);
+  }
   validateCode(input.errorCode);
   const fetchedCount = input.fetchedCount ?? 0;
   const failureCount = input.failureCount ?? 1;
@@ -187,8 +245,8 @@ export async function recordMatoolSnapshotFailure(
       .prepare(
         `INSERT INTO matool_snapshot_runs (
            run_id, area, status, started_at, finished_at,
-           fetched_count, success_count, failure_count, error_code
-         ) VALUES (?, ?, 'failed', ?, ?, ?, 0, ?, ?)`
+           fetched_count, success_count, failure_count, error_code, sync_id
+         ) VALUES (?, ?, 'failed', ?, ?, ?, 0, ?, ?, ?)`
       )
       .bind(
         input.runId,
@@ -197,7 +255,8 @@ export async function recordMatoolSnapshotFailure(
         input.finishedAt,
         fetchedCount,
         failureCount,
-        input.errorCode
+        input.errorCode,
+        input.syncId ?? null
       )
       .run();
   } catch {

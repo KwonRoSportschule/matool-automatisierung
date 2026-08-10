@@ -269,6 +269,7 @@ interface SnapshotDetailRow {
   first_seen_at: string;
   last_seen_at: string;
   payload_json: string;
+  public_id: string;
   source_id: string;
 }
 
@@ -283,13 +284,12 @@ interface SnapshotDetailRow {
 export async function listAreaSnapshots(
   env: Env,
   area: string,
-  limit: number,
-  masked: boolean
+  limit: number
 ): Promise<unknown> {
   let rows: { results: SnapshotDetailRow[] };
   try {
     rows = await env.DB.prepare(
-      `SELECT source_id, content_hash, payload_json, first_seen_at, last_seen_at
+      `SELECT source_id, public_id, content_hash, payload_json, first_seen_at, last_seen_at
        FROM matool_snapshots
        WHERE area = ?
        ORDER BY last_seen_at DESC, source_id
@@ -321,12 +321,13 @@ export async function listAreaSnapshots(
     for (const [key, value] of Object.entries(payload)) {
       columns.add(key);
       const text = value === null || value === undefined ? "" : String(value);
-      values[key] = masked ? maskValue(text) : text;
+      values[key] = maskValue(text);
     }
 
     return {
-      sourceId: row.source_id,
-      hasMatoolId: /^\d+$/u.test(row.source_id),
+      recordRef: row.public_id,
+      sourceId: "Geschuetzt",
+      hasMatoolId: false,
       firstSeenAt: row.first_seen_at,
       lastSeenAt: row.last_seen_at,
       isNew: row.first_seen_at === row.last_seen_at,
@@ -337,7 +338,7 @@ export async function listAreaSnapshots(
   return {
     schemaVersion: 1,
     area,
-    masked,
+    masked: true,
     count: records.length,
     columns: [...columns].sort(),
     records
@@ -348,8 +349,7 @@ function maskValue(value: string): string {
   if (value.length === 0) {
     return "";
   }
-  // Nur Länge und Zeichenart erkennbar lassen, keinen Inhalt.
-  return "•".repeat(Math.min(8, Math.max(1, value.length)));
+  return "Geschuetzt";
 }
 
 export async function getProcessMode(

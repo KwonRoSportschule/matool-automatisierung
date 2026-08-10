@@ -22,7 +22,8 @@
     "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
     "MATOOL_BASE_URL": "https://core.matool.de",
     "OUTBOUND_DELIVERY_ENABLED": "false",
-    "PUBLIC_DASHBOARD_READ_ONLY": "false"
+    "PUBLIC_DASHBOARD_READ_ONLY": "false",
+    "PUBLIC_DASHBOARD_PLAINTEXT": "false"
   },
   "d1_databases": [
     {
@@ -44,7 +45,8 @@
         "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
-        "PUBLIC_DASHBOARD_READ_ONLY": "true"
+        "PUBLIC_DASHBOARD_READ_ONLY": "true",
+        "PUBLIC_DASHBOARD_PLAINTEXT": "true"
       },
       "d1_databases": [
         {
@@ -72,7 +74,8 @@
         "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
-        "PUBLIC_DASHBOARD_READ_ONLY": "false"
+        "PUBLIC_DASHBOARD_READ_ONLY": "false",
+        "PUBLIC_DASHBOARD_PLAINTEXT": "false"
       },
       "d1_databases": [
         {

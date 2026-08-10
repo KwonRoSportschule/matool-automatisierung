@@ -174,13 +174,19 @@ function getPublicReadOnlyIdentity(
   }
 
   const pathname = new URL(request.url).pathname;
+  const isDashboardRecordDetail =
+    /^\/api\/admin\/v1\/dashboard\/records\/[0-9a-f]{32}$/u.test(pathname);
   const isReadOnlyApi =
     request.method === "GET" &&
     (
       pathname === "/api/admin/v1/status" ||
       pathname === "/api/admin/v1/runs" ||
       // Liefert ohne Access-Anmeldung ausschliesslich maskierte Werte.
-      pathname === "/api/admin/v1/snapshots"
+      pathname === "/api/admin/v1/snapshots" ||
+      pathname === "/api/admin/v1/dashboard/overview" ||
+      pathname === "/api/admin/v1/dashboard/activity" ||
+      pathname === "/api/admin/v1/dashboard/records" ||
+      isDashboardRecordDetail
     );
   const isStaticAsset = !pathname.startsWith("/api/");
   if (!isReadOnlyApi && !isStaticAsset) {

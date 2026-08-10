@@ -8,6 +8,44 @@ import {
 import type { Env } from "../src/worker/env";
 
 describe("Cloudflare-Access-Konfiguration", () => {
+  it.each([
+    "/",
+    "/api/admin/v1/dashboard/overview?range=7",
+    "/api/admin/v1/dashboard/activity?page=1",
+    "/api/admin/v1/dashboard/records?area=klassen",
+    "/api/admin/v1/dashboard/records/0123456789abcdef0123456789abcdef?area=klassen"
+  ])("erlaubt auf Staging den maskierten Nur-Lese-Zugriff auf %s", async (path) => {
+    const identity = await requireAccessIdentity(
+      new Request(`https://middleware.example.invalid${path}`),
+      {
+        APP_ENV: "staging",
+        PUBLIC_DASHBOARD_READ_ONLY: "true"
+      } as Env
+    );
+    expect(identity.authentication).toBe("public-read-only");
+  });
+
+  it.each([
+    "/api/admin/v1/csrf",
+    "/api/admin/v1/matool/sync",
+    "/api/admin/v1/dashboard/records/not-a-public-id?area=klassen",
+    "/api/zapier/v1/account"
+  ])("gibt auf Staging keine schreibende oder ungueltige Route frei: %s", async (path) => {
+    await expect(
+      requireAccessIdentity(
+        new Request(`https://middleware.example.invalid${path}`),
+        {
+          ACCESS_AUD: "configure-with-cloudflare-access",
+          ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
+          ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access",
+          APP_ENV: "staging",
+          PUBLIC_DASHBOARD_READ_ONLY: "true"
+        } as Env,
+        path.startsWith("/api/zapier/") ? "zapier-service" : "employee"
+      )
+    ).rejects.toMatchObject({ code: "access_not_configured" });
+  });
+
   it("normalisiert eine echte Team-Domain auf ihren HTTPS-Issuer", () => {
     expect(
       normalizeAccessTeamDomain("synthetic-team.cloudflareaccess.com")
