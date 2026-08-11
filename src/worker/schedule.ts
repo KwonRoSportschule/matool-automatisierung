@@ -45,6 +45,19 @@ export const MATOOL_SNAPSHOT_AREAS = [
 const INTERESSENTEN_DETAILS_PER_RUN = 4;
 
 /**
+ * Klassen liefern ihre Detaildaten ueber einen Einzelabruf pro Klasse.
+ * Ein rotierendes Paket haelt den gesamten Stundenlauf unter Cloudflares
+ * Free-Tarif-Limit, ohne einen Klassenbestand dauerhaft auszulassen.
+ */
+export const MATOOL_KLASSEN_RECORDS_PER_RUN = 20;
+
+/**
+ * Harte interne Obergrenze mit Reserve vor dem Cloudflare-Limit von 50
+ * externen Anfragen pro Worker-Aufruf.
+ */
+const MATOOL_MAX_REQUESTS_PER_RUN = 45;
+
+/**
  * Mindestabstand zwischen zwei MATOOL-Anfragen. Ohne Pause beantwortet
  * MATOOL einen Lauf ab etwa dem vierten Bereich mit Verbindungsabbruechen.
  */
@@ -258,6 +271,7 @@ export async function collectMatoolSnapshots(
   // schnelle Anfragefolgen ab dem vierten Bereich mit Verbindungsabbruechen
   // beantwortet. Wartezeit kostet Wall-Time, aber keine CPU-Zeit.
   const client = new MatoolClient(env.MATOOL_BASE_URL, undefined, {
+    maxRequestCount: MATOOL_MAX_REQUESTS_PER_RUN,
     minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
   });
   try {
@@ -276,7 +290,12 @@ export async function collectMatoolSnapshots(
       // und leitet die stabile ID aus dem Interessenten-Link ab.
       const records = (
         area === "klassen"
-          ? await client.extractKlassen(credentials)
+          ? await client.extractKlassen(credentials, {
+              maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN,
+              offset:
+                Math.floor(scheduledTime / 3_600_000) *
+                MATOOL_KLASSEN_RECORDS_PER_RUN
+            })
           : area === "interessenten_details"
             ? await (async () => {
                 const sourceIds = await selectInteressentenDetailSourceIds(

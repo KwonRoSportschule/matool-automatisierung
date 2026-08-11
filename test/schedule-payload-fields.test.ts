@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
 import {
+  MATOOL_KLASSEN_RECORDS_PER_RUN,
   MATOOL_SNAPSHOT_AREAS,
   selectInteressentenDetailSourceIds,
   snapshotPayloadFields
@@ -15,6 +16,7 @@ describe("Snapshot-Feldallowlist", () => {
       "interessenten_details",
       "klassen"
     ]);
+    expect(MATOOL_KLASSEN_RECORDS_PER_RUN).toBe(20);
   });
 
   it("verwendet tatsaechlich vorkommende Felder deterministisch", () => {

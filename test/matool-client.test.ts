@@ -590,6 +590,100 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       })
     ).rejects.toThrow(AppError);
     expect(versuche).toBe(2);
+    expect(client.requestCount).toBe(2);
+  });
+
+  it("verwendet fuer den Retry ein frisches Timeout-Signal", async () => {
+    const signals: AbortSignal[] = [];
+    let requestCount = 0;
+    const responses = [
+      new Response("<html><body>Session</body></html>", { status: 200 }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+      new Response("<html><body>Interessenten</body></html>", {
+        headers: { "Content-Type": "text/html" },
+        status: 200
+      })
+    ];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requestCount += 1;
+        if (init?.signal) {
+          signals.push(init.signal);
+        }
+        if (requestCount === 1) {
+          throw new DOMException("Synthetic timeout", "TimeoutError");
+        }
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.probeInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).resolves.toMatchObject({ status: 200 });
+
+    expect(signals).toHaveLength(5);
+    expect(signals[0]).not.toBe(signals[1]);
+  });
+
+  it("klassifiziert das Runtime-Subrequest-Limit ohne Retry", async () => {
+    let requests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        requests += 1;
+        throw new Error("Too many subrequests.");
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.probeInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).rejects.toMatchObject({
+      code: "matool_subrequest_limit",
+      status: 503
+    });
+    expect(requests).toBe(1);
+    expect(client.requestCount).toBe(1);
+  });
+
+  it("stoppt vor dem konfigurierten Subrequest-Budget", async () => {
+    let requests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        requests += 1;
+        return new Response("<html><body>Session</body></html>", {
+          status: 200
+        });
+      }) as typeof fetch,
+      { maxRequestCount: 1 }
+    );
+
+    await expect(
+      client.probeInteressenten({
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      })
+    ).rejects.toMatchObject({
+      code: "matool_subrequest_limit",
+      status: 503
+    });
+    expect(requests).toBe(1);
+    expect(client.requestCount).toBe(1);
   });
 
   it("liest Interessenten-Details lesend und schreibt nichts zurueck", async () => {
@@ -1053,6 +1147,59 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
           "XMLHttpRequest"
       )
     ).toBe(true);
+  });
+
+  it("waehlt ein Klassenpaket mit Offset deterministisch und zyklisch", async () => {
+    const detailBodies: string[] = [];
+    const page = `<html><body>${Array.from(
+      { length: 5 },
+      (_, index) =>
+        `<div onclick="formular_fuellen('9000000000${index + 1}')"></div>`
+    ).join("")}</body></html>`;
+    const responses = [
+      new Response("<html><body>Session</body></html>", { status: 200 }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+      new Response(page, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: 200
+      }),
+      klassenDetailResponse("70000000005"),
+      klassenDetailResponse("70000000001")
+    ];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.body instanceof URLSearchParams) {
+          detailBodies.push(init.body.toString());
+        }
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    const result = await client.extractKlassen(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      { maxRecords: 2, offset: 4 }
+    );
+
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "70000000005",
+      "70000000001"
+    ]);
+    expect(detailBodies.slice(-2)).toEqual([
+      "id=90000000005",
+      "id=90000000001"
+    ]);
   });
 
   it("bricht den Klassenabruf bei einer inkonsistenten Detailantwort ohne Teilresultat ab", async () => {

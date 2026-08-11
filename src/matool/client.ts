@@ -87,6 +87,11 @@ export interface MatoolCredentials {
   password: string;
 }
 
+export interface MatoolKlassenBatchOptions {
+  maxRecords?: number;
+  offset?: number;
+}
+
 export interface InteressentenProbeResult {
   bodyBytes: number;
   contentType: string;
@@ -149,9 +154,16 @@ export class MatoolClient {
   readonly #baseUrl: URL;
   readonly #cookies = new RunCookieJar();
   readonly #fetch: typeof fetch;
+  readonly #maxRequestCount: number;
   readonly #minRequestIntervalMs: number;
   #lastRequestFinishedAt = 0;
+  #requestCount = 0;
   #authenticated = false;
+
+  /** Anzahl der in diesem Client-Lauf versuchten MATOOL-Anfragen. */
+  get requestCount(): number {
+    return this.#requestCount;
+  }
 
   /**
    * `minRequestIntervalMs` haelt einen Mindestabstand zwischen zwei
@@ -163,7 +175,10 @@ export class MatoolClient {
   constructor(
     baseUrl: string,
     fetchImplementation: typeof fetch = fetch,
-    options: { minRequestIntervalMs?: number } = {}
+    options: {
+      maxRequestCount?: number;
+      minRequestIntervalMs?: number;
+    } = {}
   ) {
     this.#baseUrl = validateMatoolBaseUrl(baseUrl);
     // Ohne Bindung an globalThis wirft der echte Worker-fetch
@@ -173,6 +188,9 @@ export class MatoolClient {
     this.#minRequestIntervalMs = Math.min(
       5_000,
       Math.max(0, Math.trunc(options.minRequestIntervalMs ?? 0))
+    );
+    this.#maxRequestCount = normalizeMaxRequestCount(
+      options.maxRequestCount
     );
   }
 
@@ -516,9 +534,11 @@ export class MatoolClient {
   }
 
   async extractKlassen(
-    credentials: MatoolCredentials
+    credentials: MatoolCredentials,
+    batch: MatoolKlassenBatchOptions = {}
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
+    validateKlassenBatchOptions(batch);
     await this.login(credentials);
 
     const listResponse = await this.request("/index.php?show=klassen", {
@@ -544,7 +564,10 @@ export class MatoolClient {
     }
 
     const listBody = await readBoundedBody(listResponse);
-    const handles = await extractKlassenHandles(listBody, listContentType);
+    const handles = selectKlassenHandleBatch(
+      await extractKlassenHandles(listBody, listContentType),
+      batch
+    );
     const records: MatoolSafeAreaRecord[] = [];
     const sourceIds = new Set<string>();
     let bodyBytes = listBody.byteLength;
@@ -676,12 +699,42 @@ export class MatoolClient {
         await new Promise((resolve) => setTimeout(resolve, minimumWait));
       }
 
+      if (this.#requestCount >= this.#maxRequestCount) {
+        console.error(
+          JSON.stringify({
+            event: "matool_subrequest_limit_reached",
+            requestCount: this.#requestCount
+          })
+        );
+        throw matoolSubrequestLimitError();
+      }
+
       try {
-        const response = await this.#fetch(url, init);
+        this.#requestCount += 1;
+        // Ein Timeout-Signal ist nach dem ersten Timeout dauerhaft
+        // abgebrochen. Deshalb braucht jeder Wiederholungsversuch ein
+        // frisches Signal. Ein explizit uebergebenes Signal bleibt dagegen
+        // unter der Kontrolle des Aufrufers.
+        const response = await this.#fetch(url, {
+          ...init,
+          signal: init.signal ?? AbortSignal.timeout(15_000)
+        });
         this.#lastRequestFinishedAt = Date.now();
         return response;
       } catch (error) {
         this.#lastRequestFinishedAt = Date.now();
+        // Das Cloudflare-Subrequest-Limit ist innerhalb derselben Invocation
+        // nicht durch einen Retry behebbar. Es wird deshalb separat und ohne
+        // Ausgabe der Runtime-Fehlermeldung klassifiziert.
+        if (error instanceof Error && /subrequest/iu.test(error.message)) {
+          console.error(
+            JSON.stringify({
+              event: "matool_subrequest_limit_reached",
+              requestCount: this.#requestCount
+            })
+          );
+          throw matoolSubrequestLimitError();
+        }
         const category =
           error instanceof DOMException && error.name === "TimeoutError"
             ? "timeout"
@@ -741,8 +794,7 @@ export class MatoolClient {
         body,
         headers,
         method,
-        redirect: "manual",
-        signal: init.signal ?? AbortSignal.timeout(15_000)
+        redirect: "manual"
       });
       this.#cookies.absorb(response.headers);
 
@@ -791,6 +843,71 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+}
+
+function normalizeMaxRequestCount(value: number | undefined): number {
+  if (value === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError("maxRequestCount must be a positive safe integer");
+  }
+  return value;
+}
+
+function matoolSubrequestLimitError(): AppError {
+  return new AppError(
+    "matool_subrequest_limit",
+    503,
+    "Das Anfragekontingent dieses MATOOL-Laufs ist aufgebraucht."
+  );
+}
+
+function validateKlassenBatchOptions(
+  batch: MatoolKlassenBatchOptions
+): void {
+  if (
+    batch.maxRecords !== undefined &&
+    (!Number.isSafeInteger(batch.maxRecords) ||
+      batch.maxRecords < 1 ||
+      batch.maxRecords > MAX_KLASSEN_RECORDS)
+  ) {
+    throw invalidKlassenBatchOptions();
+  }
+  if (
+    batch.offset !== undefined &&
+    (!Number.isSafeInteger(batch.offset) || batch.offset < 0)
+  ) {
+    throw invalidKlassenBatchOptions();
+  }
+}
+
+function selectKlassenHandleBatch(
+  handles: readonly string[],
+  batch: MatoolKlassenBatchOptions
+): string[] {
+  const batchSize = Math.min(
+    batch.maxRecords ?? handles.length,
+    handles.length
+  );
+  const start = handles.length === 0 ? 0 : (batch.offset ?? 0) % handles.length;
+  const selected: string[] = [];
+  for (let index = 0; index < batchSize; index += 1) {
+    const handle = handles[(start + index) % handles.length];
+    if (handle === undefined) {
+      throw klassenSchemaError();
+    }
+    selected.push(handle);
+  }
+  return selected;
+}
+
+function invalidKlassenBatchOptions(): AppError {
+  return new AppError(
+    "matool_invalid_klassen_batch",
+    400,
+    "Das angeforderte MATOOL-Klassenpaket ist ungueltig."
+  );
 }
 
 async function extractKlassenHandles(
