@@ -1,7 +1,10 @@
 import {
   defineInputFields,
   defineTrigger,
-  type PollingTriggerPerform,
+  type WebhookTriggerPerform,
+  type WebhookTriggerPerformList,
+  type WebhookTriggerPerformSubscribe,
+  type WebhookTriggerPerformUnsubscribe,
   type ZObject
 } from "zapier-platform-core";
 
@@ -46,6 +49,7 @@ export const inputFields = defineInputFields([
 ]);
 
 interface SnapshotRecord {
+  area?: unknown;
   content_hash?: unknown;
   id?: unknown;
   source_id?: unknown;
@@ -58,6 +62,20 @@ interface SnapshotResponse {
   records?: unknown;
 }
 
+interface SubscriptionResponse {
+  id?: unknown;
+}
+
+interface ZapierRecord {
+  id: string;
+  [field: string]: unknown;
+}
+
+const SAMPLE_LIMIT = 3;
+const MAX_TECHNICAL_ID_LENGTH = 300;
+const SNAPSHOT_SUBSCRIPTIONS_PATH =
+  "/api/zapier/v1/snapshot-subscriptions";
+
 function invalidSnapshotResponse(z: ZObject): never {
   throw new z.errors.Error(
     "Die Middleware hat keine gültige Datensatzliste geliefert.",
@@ -65,49 +83,76 @@ function invalidSnapshotResponse(z: ZObject): never {
   );
 }
 
+function invalidSubscriptionResponse(z: ZObject): never {
+  throw new z.errors.Error(
+    "Die Middleware hat keine gültige Subscription-ID geliefert.",
+    "invalid_snapshot_subscription_response"
+  );
+}
+
 function isEnabled(value: unknown): boolean {
   return value === true || value === "true";
 }
 
-export const perform = (async (z, bundle) => {
-  const area = String(
-    bundle.inputData.area ?? "interessenten_details"
-  );
+function selectedArea(z: ZObject, value: unknown): string {
+  const area = String(value ?? "interessenten_details");
   if (!Object.hasOwn(SNAPSHOT_AREA_CHOICES, area)) {
     throw new z.errors.Error(
       "Der ausgewählte MATOOL-Bereich ist ungültig.",
       "invalid_snapshot_area"
     );
   }
+  return area;
+}
 
-  const onlyChanged = isEnabled(bundle.inputData.only_changed);
-  const query = new URLSearchParams({
-    area,
-    limit: "100",
-    ...(onlyChanged ? { only_changed: "true" } : {})
-  });
-
-  const response = await z.request<SnapshotResponse>({
-    method: "GET",
-    url: `${middlewareApiUrl(API_PATHS.snapshots)}?${query.toString()}`
-  });
-  response.throwForStatus();
-
+function subscriptionId(z: ZObject, value: unknown): string {
   if (
-    response.data.area !== area ||
-    !Array.isArray(response.data.records)
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_TECHNICAL_ID_LENGTH
   ) {
+    invalidSubscriptionResponse(z);
+  }
+  return value;
+}
+
+function normalizedRecords(
+  z: ZObject,
+  value: unknown,
+  area: string
+): ZapierRecord[] {
+  const candidates = Array.isArray(value) ? value : [value];
+  if (candidates.length === 0) {
     invalidSnapshotResponse(z);
   }
 
-  return response.data.records.map((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+  const records: ZapierRecord[] = [];
+  const seenRecordIds = new Set<string>();
+  for (const candidate of candidates) {
+    if (
+      !candidate ||
+      typeof candidate !== "object" ||
+      Array.isArray(candidate)
+    ) {
       invalidSnapshotResponse(z);
     }
     const record = candidate as SnapshotRecord;
+    const backendId = record.id;
     const sourceId = record.source_id;
     const contentHash = record.content_hash;
     if (
+      typeof backendId !== "string" ||
+      backendId.length === 0 ||
+      backendId.length > MAX_TECHNICAL_ID_LENGTH ||
+      !(
+        /^[a-f0-9]{64}$/u.test(backendId) ||
+        new RegExp(
+          `^${area}:[A-Za-z0-9_-]{1,128}:[a-f0-9]{16}$`,
+          "u"
+        ).test(backendId)
+      ) ||
+      seenRecordIds.has(backendId) ||
+      record.area !== area ||
       typeof sourceId !== "string" ||
       sourceId.length === 0 ||
       sourceId.length > 240 ||
@@ -116,23 +161,93 @@ export const perform = (async (z, bundle) => {
     ) {
       invalidSnapshotResponse(z);
     }
+    seenRecordIds.add(backendId);
 
-    return {
+    records.push({
       ...record,
-      // Zapier dedupliziert Polling-Ergebnisse über `id`. Technische Felder
-      // werden deshalb nach dem MATOOL-Payload gesetzt und können von diesem
-      // nicht überschrieben werden.
-      id: `${area}:${sourceId}:${contentHash.slice(0, 16)}`,
+      // Die technische ID kommt aus der Middleware und bleibt unverändert.
+      id: backendId,
       area,
       source_id: sourceId,
       matool_id: /^\d+$/u.test(sourceId) ? sourceId : null,
       content_hash: contentHash
-    };
+    });
+  }
+  return records;
+}
+
+export const performSubscribe = (async (z, bundle) => {
+  const area = selectedArea(z, bundle.inputData.area);
+  const targetUrl = bundle.targetUrl;
+  if (typeof targetUrl !== "string" || targetUrl.length === 0) {
+    throw new z.errors.Error(
+      "Zapier hat keine gültige Webhook-Adresse geliefert.",
+      "invalid_hook_target"
+    );
+  }
+
+  const response = await z.request<SubscriptionResponse>({
+    method: "POST",
+    url: middlewareApiUrl(SNAPSHOT_SUBSCRIPTIONS_PATH),
+    body: {
+      target_url: targetUrl,
+      area,
+      only_changed: isEnabled(bundle.inputData.only_changed)
+    }
   });
-}) satisfies PollingTriggerPerform<typeof inputFields>;
+  response.throwForStatus();
+
+  if (!response.data || typeof response.data !== "object") {
+    invalidSubscriptionResponse(z);
+  }
+  return { id: subscriptionId(z, response.data.id) };
+}) satisfies WebhookTriggerPerformSubscribe<typeof inputFields>;
+
+export const performUnsubscribe = (async (z, bundle) => {
+  const id = subscriptionId(z, bundle.subscribeData?.id);
+  const response = await z.request({
+    method: "DELETE",
+    url: middlewareApiUrl(
+      `${SNAPSHOT_SUBSCRIPTIONS_PATH}/${encodeURIComponent(id)}`
+    )
+  });
+  response.throwForStatus();
+  return { id };
+}) satisfies WebhookTriggerPerformUnsubscribe<typeof inputFields>;
+
+export const perform = (async (z, bundle) => {
+  const area = selectedArea(z, bundle.inputData.area);
+  return normalizedRecords(z, bundle.cleanedRequest, area);
+}) satisfies WebhookTriggerPerform<typeof inputFields, ZapierRecord>;
+
+export const performList = (async (z, bundle) => {
+  const area = selectedArea(z, bundle.inputData.area);
+  const query = new URLSearchParams({
+    area,
+    limit: String(SAMPLE_LIMIT),
+    ...(isEnabled(bundle.inputData.only_changed)
+      ? { only_changed: "true" }
+      : {})
+  });
+  const response = await z.request<SnapshotResponse>({
+    method: "GET",
+    url: `${middlewareApiUrl(API_PATHS.snapshots)}?${query.toString()}`
+  });
+  response.throwForStatus();
+
+  if (
+    !response.data ||
+    typeof response.data !== "object" ||
+    response.data.area !== area ||
+    !Array.isArray(response.data.records)
+  ) {
+    invalidSnapshotResponse(z);
+  }
+  return normalizedRecords(z, response.data.records, area);
+}) satisfies WebhookTriggerPerformList<typeof inputFields, ZapierRecord>;
 
 export const sample = {
-  id: "interessenten_details:12345:0123456789abcdef",
+  id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   area: "interessenten_details",
   source_id: "12345",
   matool_id: "12345",
@@ -177,7 +292,7 @@ export const sample = {
 };
 
 export default defineTrigger({
-  key: "matool_record",
+  key: "matool_record_v2",
   noun: "MATOOL-Datensatz",
   display: {
     label: "Neuer Oder Geänderter MATOOL-Datensatz",
@@ -185,9 +300,12 @@ export default defineTrigger({
       "Triggers when a stored MATOOL record in the selected area is new or changes. It never sends messages or changes MATOOL data."
   },
   operation: {
-    type: "polling",
+    type: "hook",
     inputFields,
     perform,
+    performList,
+    performSubscribe,
+    performUnsubscribe,
     sample
   }
 });

@@ -17,8 +17,8 @@ const MAX_SAFE_AREA_RECORDS = 20_000;
 const MAX_SAFE_AREA_CELLS = 64;
 const MAX_SAFE_AREA_CELL_LENGTH = 500;
 // Detaildaten werden ausschliesslich ueber MATOOLs lesenden JSON-Endpunkt
-// geladen. Die harte Grenze schuetzt das Subrequest-Budget eines Laufs.
-const MAX_INTERESSENTEN_DETAIL_RECORDS = 25;
+// geladen. Die Grenze entspricht der maximal verarbeiteten Listenmenge.
+const MAX_INTERESSENTEN_DETAIL_RECORDS = 500;
 const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);

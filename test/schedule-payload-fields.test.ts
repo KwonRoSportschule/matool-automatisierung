@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
 import {
+  MATOOL_INTERESSENTEN_DETAILS_PER_RUN,
   MATOOL_KLASSEN_RECORDS_PER_RUN,
+  MATOOL_MAX_REQUESTS_PER_RUN,
   MATOOL_SNAPSHOT_AREAS,
   selectInteressentenDetailSourceIds,
   snapshotPayloadFields
@@ -16,7 +18,9 @@ describe("Snapshot-Feldallowlist", () => {
       "interessenten_details",
       "klassen"
     ]);
-    expect(MATOOL_KLASSEN_RECORDS_PER_RUN).toBe(20);
+    expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
+    expect(MATOOL_KLASSEN_RECORDS_PER_RUN).toBe(500);
+    expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);
   });
 
   it("verwendet tatsaechlich vorkommende Felder deterministisch", () => {
@@ -49,6 +53,9 @@ describe("Snapshot-Feldallowlist", () => {
     const missing = `1${suffix}01`;
     const oldest = `1${suffix}02`;
     const newest = `1${suffix}03`;
+    const additionalMissing = ["04", "05", "06", "07"].map(
+      (ending) => `1${suffix}${ending}`
+    );
     // Layout-/Formularzeilen koennen technische Hash-IDs erzeugen. Vier
     // davon wuerden ohne SQL-Filter das gesamte LIMIT verbrauchen.
     const nonNumericLayoutIds = ["a", "b", "c", "d"].map(
@@ -57,6 +64,7 @@ describe("Snapshot-Feldallowlist", () => {
     const listRecords = [
       ...nonNumericLayoutIds,
       missing,
+      ...additionalMissing,
       oldest,
       newest
     ].map((sourceId) => ({
@@ -94,8 +102,12 @@ describe("Snapshot-Feldallowlist", () => {
 
     const selected = await selectInteressentenDetailSourceIds(env.DB);
 
-    expect(selected.slice(0, 3)).toEqual([missing, oldest, newest]);
-    expect(selected).toHaveLength(3);
+    expect(selected).toEqual([
+      missing,
+      ...additionalMissing,
+      oldest,
+      newest
+    ]);
   });
 
   it("ueberschreitet auch bei vielen gelieferten Feldern nie das Store-Limit", () => {

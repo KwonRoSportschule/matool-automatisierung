@@ -7,6 +7,7 @@ import packageJson from "../package.json" with { type: "json" };
 import authentication from "./authentication.js";
 import { addMiddlewareCredentials } from "./middleware.js";
 import matoolRecord from "./triggers/matool-record.js";
+import matoolRecordLegacy from "./triggers/matool-record-legacy.js";
 
 export default defineApp({
   version: packageJson.version,
@@ -17,6 +18,7 @@ export default defineApp({
   authentication,
   beforeRequest: [addMiddlewareCredentials],
   triggers: {
+    [matoolRecordLegacy.key]: matoolRecordLegacy,
     [matoolRecord.key]: matoolRecord
   }
 });

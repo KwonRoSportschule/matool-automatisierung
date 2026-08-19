@@ -17,10 +17,11 @@ import {
   recordSkippedMatoolSync,
   type MatoolSyncTrigger
 } from "./sync-store";
+import { processSnapshotZapierDeliveries } from "./snapshot-delivery";
 
 // Interessenten und ihre Details haben fachlich Vorrang. Der Klassenabruf
-// benoetigt viele Einzelanfragen und kann das externe Subrequest-Budget fast
-// vollstaendig verbrauchen; deshalb folgt er erst nach dem Detailpaket.
+// folgt danach, damit beide anfragestarken Bereiche in stabiler Reihenfolge
+// vollstaendig verarbeitet werden.
 export const MATOOL_SNAPSHOT_AREAS = [
   "interessenten",
   "interessenten_details",
@@ -38,24 +39,24 @@ export const MATOOL_SNAPSHOT_AREAS = [
 ] as const;
 
 /**
- * Jeder Interessenten-Detaildatensatz kostet einen externen MATOOL-Abruf.
- * Auf dem Free-Tarif wird deshalb nur ein kleines, rotierendes Paket pro
- * Lauf verarbeitet; ueber die stuendlichen Laeufe waechst der Bestand.
+ * Entspricht der maximalen Zahl von Interessenten, die der Extraktor aus
+ * einer MATOOL-Liste annimmt. Im Paid-Betrieb wird damit der gesamte
+ * erkannte Bestand in jedem Lauf aktualisiert.
  */
-const INTERESSENTEN_DETAILS_PER_RUN = 4;
+export const MATOOL_INTERESSENTEN_DETAILS_PER_RUN = 500;
 
 /**
- * Klassen liefern ihre Detaildaten ueber einen Einzelabruf pro Klasse.
- * Ein rotierendes Paket haelt den gesamten Stundenlauf unter Cloudflares
- * Free-Tarif-Limit, ohne einen Klassenbestand dauerhaft auszulassen.
+ * Entspricht der maximalen Zahl von Klassen, die der Extraktor aus der
+ * MATOOL-Klassenliste annimmt. Der Paid-Lauf liest sie ohne Rotation.
  */
-export const MATOOL_KLASSEN_RECORDS_PER_RUN = 20;
+export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
 
 /**
- * Harte interne Obergrenze mit Reserve vor dem Cloudflare-Limit von 50
- * externen Anfragen pro Worker-Aufruf.
+ * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
+ * 500 Interessenten- und Klassendetails samt Login, Listen und Retry-Reserve
+ * ab und bleibt deutlich unter Cloudflares Paid-Limit.
  */
-const MATOOL_MAX_REQUESTS_PER_RUN = 45;
+export const MATOOL_MAX_REQUESTS_PER_RUN = 2_500;
 
 /**
  * Mindestabstand zwischen zwei MATOOL-Anfragen. Ohne Pause beantwortet
@@ -117,10 +118,9 @@ export function snapshotPayloadFields(
 }
 
 /**
- * Waehlt pro Lauf ein kleines, stabiles Detailpaket aus. Noch nicht
- * angereicherte Interessenten kommen zuerst; danach wird der am laengsten
- * nicht aktualisierte Detaildatensatz erneuert. Dadurch bleibt der Lauf im
- * Subrequest-Limit, waehrend der Gesamtbestand ueber mehrere Laeufe waechst.
+ * Waehlt den vollstaendigen erkannten Interessentenbestand in stabiler
+ * Reihenfolge aus. Noch nicht angereicherte Interessenten kommen zuerst;
+ * danach folgt der am laengsten nicht aktualisierte Detaildatensatz.
  */
 export async function selectInteressentenDetailSourceIds(
   db: D1Database
@@ -141,7 +141,7 @@ export async function selectInteressentenDetailSourceIds(
          interessent.source_id ASC
        LIMIT ?`
     )
-    .bind(INTERESSENTEN_DETAILS_PER_RUN)
+    .bind(MATOOL_INTERESSENTEN_DETAILS_PER_RUN)
     .all<InteressentenDetailCandidateRow>();
 
   return candidates.results
@@ -291,10 +291,7 @@ export async function collectMatoolSnapshots(
       const records = (
         area === "klassen"
           ? await client.extractKlassen(credentials, {
-              maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN,
-              offset:
-                Math.floor(scheduledTime / 3_600_000) *
-                MATOOL_KLASSEN_RECORDS_PER_RUN
+              maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN
             })
           : area === "interessenten_details"
             ? await (async () => {
@@ -303,7 +300,7 @@ export async function collectMatoolSnapshots(
                 );
                 return client.extractInteressentenDetails(
                   credentials,
-                  INTERESSENTEN_DETAILS_PER_RUN,
+                  MATOOL_INTERESSENTEN_DETAILS_PER_RUN,
                   sourceIds.length > 0 ? sourceIds : undefined
                 );
               })()
@@ -383,6 +380,27 @@ export async function collectMatoolSnapshots(
     succeeded: summary.succeeded,
     totalAreas: areas.length
   });
+
+  if (env.OUTBOUND_DELIVERY_ENABLED === "true") {
+    try {
+      const delivery = await processSnapshotZapierDeliveries(env);
+      console.info(
+        JSON.stringify({
+          event: "snapshot_zapier_delivery_processed",
+          ...delivery,
+          syncId
+        })
+      );
+    } catch {
+      console.error(
+        JSON.stringify({
+          errorCode: "snapshot_zapier_delivery_failed",
+          event: "snapshot_zapier_delivery_failed",
+          syncId
+        })
+      );
+    }
+  }
 
   return summary;
 }

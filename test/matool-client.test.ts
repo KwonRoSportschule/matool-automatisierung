@@ -816,6 +816,56 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(calls.every(({ body }) => !body.includes("todo="))).toBe(true);
   });
 
+  it("liest im Paid-Lauf mehr als das fruehere Paket von 25 Details", async () => {
+    const sourceIds = Array.from({ length: 26 }, (_, index) =>
+      String(610_000 + index)
+    );
+    let detailRequests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/json/statistik_daten.php")) {
+          detailRequests += 1;
+          const id =
+            init?.body instanceof URLSearchParams
+              ? init.body.get("id") ?? ""
+              : "";
+          const detail = Object.fromEntries(
+            MATOOL_INTERESSENT_DETAIL_FIELDS.map((field) => [field, ""])
+          );
+          detail.id = id;
+          return new Response(JSON.stringify([detail]), {
+            headers: { "Content-Type": "text/html" },
+            status: 200
+          });
+        }
+        if (url.endsWith("/index.php") && init?.method === "POST") {
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    const result = await client.extractInteressentenDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      sourceIds.length,
+      sourceIds
+    );
+
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(sourceIds);
+    expect(detailRequests).toBe(26);
+  });
+
   it("akzeptiert genau einen Detailkandidaten als Array, Objekt oder Objekt-Map", async () => {
     const complete = Object.fromEntries(
       MATOOL_INTERESSENT_DETAIL_FIELDS.map((field) => [field, ""])

@@ -5,7 +5,7 @@ import {
   getBerlinScheduleSummary
 } from "../src/worker/schedule-window";
 
-describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
+describe("Berlin-Zeitfenster für Bayern am Standort Rosenheim", () => {
   it.each([
     ["2026-01-07T07:00:00.000Z", 8, false],
     ["2026-01-07T08:00:00.000Z", 9, true],
@@ -68,17 +68,20 @@ describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
 
   it.each([
     ["2026-01-01", "new_years_day"],
+    ["2026-01-06", "epiphany"],
     ["2026-04-03", "good_friday"],
     ["2026-04-06", "easter_monday"],
     ["2026-05-01", "labour_day"],
     ["2026-05-14", "ascension_day"],
     ["2026-05-25", "whit_monday"],
+    ["2026-06-04", "corpus_christi"],
+    ["2025-08-15", "assumption_day"],
     ["2026-10-03", "german_unity_day"],
-    ["2026-10-31", "reformation_day"],
+    ["2024-11-01", "all_saints_day"],
     ["2026-12-25", "christmas_day"],
     ["2026-12-26", "second_christmas_day"]
   ])(
-    "weist den SH-Feiertag %s als %s ab",
+    "weist den Feiertag in Rosenheim %s als %s ab",
     (localDate, holiday) => {
       expect(
         evaluateBerlinScheduleWindow(
@@ -89,6 +92,24 @@ describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
         holiday,
         localDate,
         reason: "public_holiday"
+      });
+    }
+  );
+
+  it.each([
+    ["2025-08-08", "Augsburger Friedensfest"],
+    ["2025-10-31", "Reformationstag"]
+  ])(
+    "behandelt %s (%s) in Rosenheim als gewöhnlichen Werktag",
+    (localDate) => {
+      expect(
+        evaluateBerlinScheduleWindow(
+          new Date(`${localDate}T12:00:00.000Z`)
+        )
+      ).toMatchObject({
+        allowed: true,
+        localDate,
+        reason: "within_window"
       });
     }
   );
@@ -109,6 +130,8 @@ describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
     expect(
       getBerlinScheduleSummary(new Date("2026-07-08T10:34:00.000Z"))
     ).toMatchObject({
+      description:
+        "Montag bis Freitag, jede volle Stunde von 09:00 bis 19:00 Uhr, ausgenommen Feiertage in Bayern am Standort Rosenheim.",
       previousScheduledAt: "2026-07-08T10:00:00.000Z",
       nextScheduledAt: "2026-07-08T11:00:00.000Z",
       timeZone: "Europe/Berlin"
@@ -121,6 +144,15 @@ describe("Berlin-Zeitfenster für Schleswig-Holstein", () => {
     ).toMatchObject({
       previousScheduledAt: "2026-04-02T17:00:00.000Z",
       nextScheduledAt: "2026-04-07T07:00:00.000Z"
+    });
+  });
+
+  it("überspringt Fronleichnam im bayerischen Stundenplan", () => {
+    expect(
+      getBerlinScheduleSummary(new Date("2026-06-03T17:30:00.000Z"))
+    ).toMatchObject({
+      previousScheduledAt: "2026-06-03T17:00:00.000Z",
+      nextScheduledAt: "2026-06-05T07:00:00.000Z"
     });
   });
 });

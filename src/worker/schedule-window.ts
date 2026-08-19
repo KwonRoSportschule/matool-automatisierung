@@ -11,15 +11,18 @@ const berlinDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
   year: "numeric"
 });
 
-export type SchleswigHolsteinHoliday =
+export type BavariaRosenheimHoliday =
   | "ascension_day"
+  | "all_saints_day"
+  | "assumption_day"
   | "christmas_day"
+  | "corpus_christi"
   | "easter_monday"
+  | "epiphany"
   | "german_unity_day"
   | "good_friday"
   | "labour_day"
   | "new_years_day"
-  | "reformation_day"
   | "second_christmas_day"
   | "whit_monday";
 
@@ -32,7 +35,7 @@ export type ScheduleWindowDecision =
     }
   | {
       allowed: false;
-      holiday?: SchleswigHolsteinHoliday;
+      holiday?: BavariaRosenheimHoliday;
       localDate: string;
       localHour: number;
       reason: "outside_hours" | "public_holiday" | "weekend";
@@ -68,7 +71,7 @@ export function evaluateBerlinScheduleWindow(
 
   const local = getBerlinDateTime(instant);
   const localDate = toDateKey(local);
-  const holiday = getSchleswigHolsteinHoliday(local);
+  const holiday = getBavariaRosenheimHoliday(local);
   if (holiday) {
     return {
       allowed: false,
@@ -136,7 +139,7 @@ export function getBerlinScheduleSummary(
 
   return {
     description:
-      "Montag bis Freitag, jede volle Stunde von 09:00 bis 19:00 Uhr, ausgenommen Feiertage in Schleswig-Holstein.",
+      "Montag bis Freitag, jede volle Stunde von 09:00 bis 19:00 Uhr, ausgenommen Feiertage in Bayern am Standort Rosenheim.",
     nextScheduledAt: nextScheduledAt.toISOString(),
     previousScheduledAt: previousScheduledAt.toISOString(),
     timeZone: BERLIN_TIME_ZONE
@@ -185,14 +188,16 @@ function getNumericPart(
   return Number.parseInt(value, 10);
 }
 
-function getSchleswigHolsteinHoliday(
+function getBavariaRosenheimHoliday(
   date: CalendarDate
-): SchleswigHolsteinHoliday | undefined {
-  const holidays = new Map<string, SchleswigHolsteinHoliday>([
+): BavariaRosenheimHoliday | undefined {
+  const holidays = new Map<string, BavariaRosenheimHoliday>([
     [`${date.year}-01-01`, "new_years_day"],
+    [`${date.year}-01-06`, "epiphany"],
     [`${date.year}-05-01`, "labour_day"],
+    [`${date.year}-08-15`, "assumption_day"],
     [`${date.year}-10-03`, "german_unity_day"],
-    [`${date.year}-10-31`, "reformation_day"],
+    [`${date.year}-11-01`, "all_saints_day"],
     [`${date.year}-12-25`, "christmas_day"],
     [`${date.year}-12-26`, "second_christmas_day"]
   ]);
@@ -204,6 +209,10 @@ function getSchleswigHolsteinHoliday(
     "ascension_day"
   );
   holidays.set(toDateKey(addCalendarDays(easterSunday, 50)), "whit_monday");
+  holidays.set(
+    toDateKey(addCalendarDays(easterSunday, 60)),
+    "corpus_christi"
+  );
 
   return holidays.get(toDateKey(date));
 }

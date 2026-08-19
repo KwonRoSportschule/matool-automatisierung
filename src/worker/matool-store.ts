@@ -54,6 +54,7 @@ export async function persistMatoolSnapshotRun(
     contentHash: string;
     payloadJson: string;
     sourceId: string;
+    zapierEventId: string;
   }> = [];
   for (const record of input.records) {
     validateIdentifier(record.sourceId, 128);
@@ -68,7 +69,10 @@ export async function persistMatoolSnapshotRun(
     snapshots.push({
       contentHash: await sha256Hex(payloadJson),
       payloadJson,
-      sourceId: record.sourceId
+      sourceId: record.sourceId,
+      zapierEventId: await sha256Hex(
+        JSON.stringify([input.area, record.sourceId, input.runId])
+      )
     });
   }
 
@@ -116,6 +120,7 @@ interface PreparedSnapshot {
   contentHash: string;
   payloadJson: string;
   sourceId: string;
+  zapierEventId: string;
 }
 
 function chunkSnapshots(
@@ -188,7 +193,8 @@ function buildSnapshotChangeStatement(
   return db
     .prepare(
       `INSERT INTO matool_snapshot_changes (
-         area, source_id, run_id, change_kind, observed_at, content_hash
+         area, source_id, run_id, change_kind, observed_at, content_hash,
+         payload_json, zapier_event_id
        )
        SELECT
          ?,
@@ -199,7 +205,9 @@ function buildSnapshotChangeStatement(
            ELSE 'updated'
          END,
          ?,
-         json_extract(incoming.value, '$.contentHash')
+         json_extract(incoming.value, '$.contentHash'),
+         json_extract(incoming.value, '$.payloadJson'),
+         json_extract(incoming.value, '$.zapierEventId')
        FROM json_each(?) AS incoming
        LEFT JOIN matool_snapshots AS existing
          ON existing.area = ?

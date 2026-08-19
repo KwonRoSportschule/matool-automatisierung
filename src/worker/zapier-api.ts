@@ -15,6 +15,7 @@ import {
 import type { Env } from "./env";
 import { requireZapierServiceRequest } from "./integration-auth";
 import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
+import { handleSnapshotSubscriptionApiRequest } from "./snapshot-delivery";
 
 const MAX_JSON_BODY_BYTES = 8_192;
 const SYNTHETIC_EVENT_ID = "0".repeat(64);
@@ -27,6 +28,15 @@ export async function handleZapierApiRequest(
   env: Env
 ): Promise<Response> {
   requireZapierServiceRequest(request, env);
+
+  if (url.pathname.startsWith("/api/zapier/v1/snapshot-subscriptions")) {
+    return handleSnapshotSubscriptionApiRequest(
+      request,
+      url,
+      env,
+      MATOOL_SNAPSHOT_AREAS
+    );
+  }
 
   if (url.pathname === "/api/zapier/v1/account") {
     if (request.method !== "GET") {
@@ -167,22 +177,24 @@ export async function handleZapierApiRequest(
   );
 }
 
-interface SnapshotRow {
+interface SnapshotChangeRow {
+  change_id: number;
+  change_kind: "created" | "updated";
   content_hash: string;
   first_seen_at: string;
-  last_changed_at: string;
   last_seen_at: string;
+  observed_at: string;
   payload_json: string;
   source_id: string;
+  zapier_event_id: string;
 }
 
 /**
- * Polling-Quelle für Zapier: liefert die zuletzt gesehenen MATOOL-Datensätze
- * eines Bereichs. Zapier dedupliziert selbst über das Feld `id`; deshalb
- * bleibt `id` stabil, solange sich der Datensatz nicht ändert.
+ * Polling-Quelle für Zapier: liefert unveränderliche Änderungsereignisse
+ * eines MATOOL-Bereichs in umgekehrt chronologischer Reihenfolge.
  */
 async function listSnapshotsForZapier(
-  request: Request,
+  _request: Request,
   url: URL,
   env: Env
 ): Promise<unknown> {
@@ -200,19 +212,55 @@ async function listSnapshotsForZapier(
     : 100;
   const onlyChanged = url.searchParams.get("only_changed") === "true";
 
-  let rows: { results: SnapshotRow[] };
+  const rawCursor = url.searchParams.get("cursor");
+  let cursor: number | null = null;
+  if (rawCursor !== null) {
+    if (!/^[1-9]\d*$/u.test(rawCursor)) {
+      invalidPayload();
+    }
+    cursor = Number(rawCursor);
+    if (!Number.isSafeInteger(cursor)) {
+      invalidPayload();
+    }
+  }
+
+  const conditions = [
+    "changes.area = ?",
+    "changes.payload_json IS NOT NULL",
+    "changes.zapier_event_id IS NOT NULL"
+  ];
+  const bindings: Array<number | string> = [area];
+  if (onlyChanged) {
+    conditions.push("changes.change_kind = 'updated'");
+  }
+  if (cursor !== null) {
+    conditions.push("changes.change_id < ?");
+    bindings.push(cursor);
+  }
+  bindings.push(limit + 1);
+
+  let rows: { results: SnapshotChangeRow[] };
   try {
     rows = await env.DB.prepare(
-      `SELECT source_id, content_hash, payload_json, first_seen_at,
-              last_seen_at,
-              COALESCE(last_changed_at, first_seen_at) AS last_changed_at
-       FROM matool_snapshots
-       WHERE area = ?
-       ORDER BY last_changed_at DESC, source_id
+      `SELECT changes.change_id,
+              changes.change_kind,
+              changes.content_hash,
+              changes.observed_at,
+              changes.payload_json,
+              changes.source_id,
+              changes.zapier_event_id,
+              snapshots.first_seen_at,
+              snapshots.last_seen_at
+       FROM matool_snapshot_changes AS changes
+       INNER JOIN matool_snapshots AS snapshots
+         ON snapshots.area = changes.area
+        AND snapshots.source_id = changes.source_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY changes.change_id DESC
        LIMIT ?`
     )
-      .bind(area, limit)
-      .all<SnapshotRow>();
+      .bind(...bindings)
+      .all<SnapshotChangeRow>();
   } catch {
     throw new AppError(
       "snapshot_store_unavailable",
@@ -221,44 +269,49 @@ async function listSnapshotsForZapier(
     );
   }
 
-  const records = rows.results
-    .filter(
-      (row) => !onlyChanged || row.first_seen_at !== row.last_changed_at
-    )
-    .map((row) => {
-      let payload: Record<string, unknown> = {};
-      try {
-        const parsed: unknown = JSON.parse(row.payload_json);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          payload = parsed as Record<string, unknown>;
-        }
-      } catch {
-        payload = {};
+  const hasMore = rows.results.length > limit;
+  const page = rows.results.slice(0, limit);
+  const records = page.map((row) => {
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(row.payload_json);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        payload = parsed as Record<string, unknown>;
       }
+    } catch {
+      payload = {};
+    }
 
-      return {
-        // MATOOL payloads may use generic names such as `id`. Put the payload
-        // first so the stable Zapier integration contract below always wins.
-        ...payload,
-        // Zapier dedupliziert über `id`. Der Inhaltshash sorgt dafür, dass
-        // eine echte Änderung als neuer Vorgang erkannt wird, ein
-        // unveränderter Datensatz dagegen nicht erneut auslöst.
-        id: `${area}:${row.source_id}:${row.content_hash.slice(0, 16)}`,
-        area,
-        source_id: row.source_id,
-        matool_id: /^\d+$/u.test(row.source_id) ? row.source_id : null,
-        content_hash: row.content_hash,
-        first_seen_at: row.first_seen_at,
-        last_changed_at: row.last_changed_at,
-        last_seen_at: row.last_seen_at,
-        is_new: row.first_seen_at === row.last_changed_at
-      };
-    });
+    return {
+      // MATOOL payloads may use generic names such as `id`. Put the payload
+      // first so the stable Zapier integration contract below always wins.
+      ...payload,
+      id: row.zapier_event_id,
+      area,
+      change_id: row.change_id,
+      change_kind: row.change_kind,
+      source_id: row.source_id,
+      matool_id: /^\d+$/u.test(row.source_id) ? row.source_id : null,
+      content_hash: row.content_hash,
+      first_seen_at: row.first_seen_at,
+      last_changed_at: row.observed_at,
+      last_seen_at: row.last_seen_at,
+      observed_at: row.observed_at,
+      zapier_event_id: row.zapier_event_id,
+      is_new: row.change_kind === "created"
+    };
+  });
+
+  const nextCursor = hasMore
+    ? String(page.at(-1)?.change_id ?? "")
+    : null;
 
   return {
     schema_version: 1,
     area,
     count: records.length,
+    has_more: hasMore,
+    next_cursor: nextCursor,
     records
   };
 }

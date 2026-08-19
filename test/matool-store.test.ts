@@ -23,6 +23,14 @@ interface SnapshotRunRow {
   success_count: number;
 }
 
+interface SnapshotChangeRow {
+  change_kind: "created" | "updated";
+  content_hash: string;
+  payload_json: string;
+  run_id: string;
+  zapier_event_id: string;
+}
+
 describe("generische MATOOL-Snapshots", () => {
   it("upsertet nach Bereich und Quell-ID und loescht fehlende Datensaetze nie", async () => {
     const suffix = crypto.randomUUID();
@@ -179,6 +187,66 @@ describe("generische MATOOL-Snapshots", () => {
       .first();
     expect(run).toBeNull();
     expect(snapshot).toBeNull();
+  });
+
+  it("speichert A-B-A als drei eigenstaendige Zapier-Ereignisse", async () => {
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `interessenten_${suffix}`;
+    const sourceId = "900003";
+    const statuses = ["A", "B", "A", "A"] as const;
+
+    for (const [index, status] of statuses.entries()) {
+      const hour = 8 + index;
+      const timestamp = `2026-07-30T${hour.toString().padStart(2, "0")}:00:00.000Z`;
+      await persistMatoolSnapshotRun(env.DB, {
+        allowedPayloadFields: ["status"],
+        area,
+        finishedAt: timestamp,
+        observedAt: timestamp,
+        records: [{ sourceId, payload: { status } }],
+        runId: `run_${suffix}_${index + 1}`,
+        startedAt: timestamp
+      });
+    }
+
+    const changes = await env.DB
+      .prepare(
+        `SELECT run_id, change_kind, content_hash, payload_json,
+                zapier_event_id
+         FROM matool_snapshot_changes
+         WHERE area = ? AND source_id = ?
+         ORDER BY change_id`
+      )
+      .bind(area, sourceId)
+      .all<SnapshotChangeRow>();
+
+    expect(changes.results).toHaveLength(3);
+    expect(changes.results.map((change) => change.change_kind)).toEqual([
+      "created",
+      "updated",
+      "updated"
+    ]);
+    expect(changes.results.map((change) => change.payload_json)).toEqual([
+      '{"status":"A"}',
+      '{"status":"B"}',
+      '{"status":"A"}'
+    ]);
+    expect(changes.results[0]?.content_hash).toBe(
+      changes.results[2]?.content_hash
+    );
+    expect(
+      changes.results.every((change) =>
+        /^[a-f0-9]{64}$/u.test(change.zapier_event_id)
+      )
+    ).toBe(true);
+    expect(
+      new Set(changes.results.map((change) => change.zapier_event_id)).size
+    ).toBe(3);
+    expect(changes.results.map((change) => change.run_id)).toEqual([
+      `run_${suffix}_1`,
+      `run_${suffix}_2`,
+      `run_${suffix}_3`
+    ]);
   });
 
   it("speichert einen fehlgeschlagenen Lauf mit atomaren Fehlerzaehlern", async () => {
