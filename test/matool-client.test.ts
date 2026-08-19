@@ -181,6 +181,29 @@ function schuelerRow(sourceId: string, number: number): string {
   `;
 }
 
+function nestedStrictListRow(
+  area: PaginatedListArea,
+  sourceId: string,
+  label: string
+): string {
+  const onclick =
+    area === "schueler"
+      ? `formular_fuellen(${sourceId},'Synthetic ${sourceId}')`
+      : `formular_fuellen(${sourceId})`;
+  return `
+    <tr>
+      <td><img onclick="${onclick}" alt=""></td>
+      ${area === "schueler" ? "<td></td>" : ""}
+      <td>
+        <table>
+          <tr><td>${label} A</td></tr>
+          <tr><td>${label} B</td></tr>
+        </table>
+      </td>
+    </tr>
+  `;
+}
+
 function clientForPaginatedPages(
   pages: ReadonlyMap<string, { body?: string; status?: number }>,
   requests: string[] = []
@@ -627,7 +650,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         status: 200
       }),
       new Response(
-        "<html><body><h1>Interessenten</h1><table></table><span class=\"pagination_selected\">1</span></body></html>",
+        "<html><body><h1>Interessenten</h1><table><tr onclick=\"formular_fuellen(900001)\"><td>Synthetic</td></tr></table><span class=\"pagination_selected\">1</span></body></html>",
         {
           headers: { "Content-Type": "text/html; charset=utf-8" },
           status: 200
@@ -1275,6 +1298,51 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ]);
   });
 
+  it.each([
+    { area: "interessenten" as const, ids: ["910001", "910002"] },
+    { area: "schueler" as const, ids: ["710001", "710002"] }
+  ])(
+    "ordnet verschachtelte $area-Daten der aeusseren stabilen ID zu",
+    async ({ area, ids }) => {
+      const offsets = [0, 30];
+      const pages = new Map<string, { body: string }>();
+      for (const [index, offset] of offsets.entries()) {
+        const sourceId = ids[index] ?? "";
+        const path = paginationHref(area, offset).replaceAll("&amp;", "&");
+        pages.set(path, {
+          body: paginatedListPage({
+            area,
+            currentOffset: offset,
+            offsets,
+            rows: nestedStrictListRow(
+              area,
+              sourceId,
+              `Synthetic-${index + 1}`
+            )
+          })
+        });
+      }
+
+      const result = await clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        area
+      );
+
+      expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
+      expect(result.records).toHaveLength(2);
+      const textField = area === "schueler" ? "c02" : "c01";
+      expect(result.records[0]?.payload[textField]).toBe(
+        "Synthetic-1 A Synthetic-1 B"
+      );
+      expect(result.records[1]?.payload[textField]).toBe(
+        "Synthetic-2 A Synthetic-2 B"
+      );
+    }
+  );
+
   it("liest eine Schuelerliste mit mehr als 500 stabilen Datensaetzen vollstaendig", async () => {
     const offsets = Array.from({ length: 17 }, (_, index) => index * 30);
     const pages = new Map<string, { body: string }>();
@@ -1307,6 +1375,33 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(result.rowCount).toBe(501);
     expect(result.records[0]?.sourceId).toBe("700000");
     expect(result.records.at(-1)?.sourceId).toBe("700500");
+  });
+
+  it("verwirft eine vollstaendig gelesene paginierte Liste ohne Datensaetze", async () => {
+    const offsets = [0, 30];
+    const pages = new Map<string, { body: string }>();
+    for (const offset of offsets) {
+      pages.set(`/index.php?show=interessenten&offset=${offset}`, {
+        body: paginatedListPage({
+          area: "interessenten",
+          currentOffset: offset,
+          offsets,
+          rows: "<tr><td>Nur Layout ohne stabile ID</td></tr>"
+        })
+      });
+    }
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch"
+    });
   });
 
   it.each([

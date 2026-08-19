@@ -14,7 +14,7 @@ Arbeitsregel:
 
 1. Der Benutzer nennt genau die Todo-ID, mit der begonnen werden soll.
 2. Vorher wird kein anderer Punkt umgesetzt.
-3. Fehlende Informationen, HAR-Aufnahmen, Zugänge oder Entscheidungen werden
+3. Fehlende Informationen, HAR-Aufnahmen, Zugänge oder Entscheidungen werdena
    beim Benutzer angefragt und nicht geraten.
 4. Nach der Umsetzung wird nur der freigegebene Punkt getestet.
 5. Erst nach bestandener Abnahme wird `[ ]` zu `[x]` geändert.
@@ -107,13 +107,13 @@ V1 ist erst fertig, wenn alle folgenden Punkte erfüllt sind:
 |---|---|
 | Cloudflare-Tarif | Workers Paid laut Benutzer/Cloudflare-Oberfläche aktiv |
 | Aktiver Staging-Worker | `matool-middleware-staging` |
-| Aktive Live-Version | `e0833ded-e811-4b22-b8c6-2cc5083238a6` vom 11.08.2026 |
+| Aktive Live-Version | `4de71702-2e42-459a-8a22-23a170bf7fbb` vom 19.08.2026, Quellcommit `75fa85a` |
 | Staging-URL | `https://matool-middleware-staging.soft-hill-4630.workers.dev` |
 | Cron | `0 7-18 * * mon-fri` plus Berliner Zeitfenster im Worker |
 | D1 | `matool-middleware-staging`, Region EU/EEUR, 9,79 MB |
 | Verwendete Dienste | Worker, Cron Trigger, D1, Static Assets, Logs/Observability |
 | Nicht verwendete Dienste | KV, R2, Queues, Durable Objects, Analytics Engine |
-| Migrationen live | 0001 bis 0004 angewendet; 0005 noch offen |
+| Migrationen live | 0001 bis 0005 angewendet; keine Migration ausstehend |
 | Zapier-Ausgang | `OUTBOUND_DELIVERY_ENABLED=false` |
 | Zapier-App live | nur private Version `0.0.0` vom 10.08.2026 nachgewiesen |
 | Zapier-Subscription | keine aktive v2-Snapshot-Subscription nachgewiesen |
@@ -431,32 +431,39 @@ angelegte Datensätze enthalten.
 - **Ziel:** Der bereits lokal entwickelte Paid-/Changefeed-Stand wird
   kontrolliert geprüft, versioniert und ausschließlich auf Staging
   bereitgestellt.
-- **Befund:** Live läuft noch die Version vom 11.08.2026 mit 4 Details und
-  20 Klassen. Migration `0005_zapier_snapshot_changefeed.sql` fehlt remote.
+- **Befund:** Commit `75fa85a` wurde am 19.08.2026 automatisch als Version
+  `4de71702-2e42-459a-8a22-23a170bf7fbb` auf Staging bereitgestellt.
+  Migration `0005_zapier_snapshot_changefeed.sql` ist angewendet. Der erste
+  manuelle Live-Lauf ist wegen eines stillen 0-Abrufs der verschachtelten
+  Interessentenliste fachlich fehlgeschlagen; REL-01 bleibt deshalb offen.
 - **Abhängigkeiten:** keine; Outbound bleibt bei diesem Todo `false`.
 - **Arbeitsschritte:**
-  - [ ] Bestehende uncommittete Änderungen einzeln gegen die freigegebenen
+  - [x] Bestehende uncommittete Änderungen einzeln gegen die freigegebenen
         Punkte „Paid-Betrieb“ und „verlustfreies Zapier“ prüfen.
-  - [ ] Sicherstellen, dass keine Kontaktfunktion aktiviert wird.
-  - [ ] 243 bestehende Tests, Typechecks, Builds und Repository-Scan erneut
-        ausführen.
-  - [ ] Migration 0005 zuerst auf Staging anwenden und Schema prüfen.
-  - [ ] Neue Worker-Version auf Staging bereitstellen.
-  - [ ] Aktive Versions-ID und vorherige Rollback-Version notieren.
+  - [x] Sicherstellen, dass keine Kontaktfunktion aktiviert wird.
+  - [x] 238 Worker-/Core-Tests und 19 Zapier-Tests einschließlich Typechecks,
+        Builds, Wrangler-Staging-Dry-Run und Repository-Scan erneut ausführen.
+  - [x] Migration 0005 zuerst auf Staging anwenden und Schema prüfen.
+  - [x] Neue Worker-Version auf Staging bereitstellen.
+  - [x] Aktive Versions-ID und vorherige Rollback-Version notieren.
   - [ ] Einen kontrollierten manuellen Read-only-Lauf ausführen.
 - **Abnahmekriterien:**
-  - [ ] Migration 0005 ist nicht mehr ausstehend.
-  - [ ] Tabelle `zapier_snapshot_subscriptions` und die neuen Changefeed-Felder
+  - [x] Migration 0005 ist nicht mehr ausstehend.
+  - [x] Tabelle `zapier_snapshot_subscriptions` und die neuen Changefeed-Felder
         existieren.
-  - [ ] Aktive Worker-Version ist neuer als `e0833ded…`.
+  - [x] Aktive Worker-Version ist neuer als `e0833ded…`.
   - [ ] Interessenten-Details sind nicht mehr auf 4 begrenzt.
   - [ ] Klassen sind nicht mehr auf 20 begrenzt.
-  - [ ] `OUTBOUND_DELIVERY_ENABLED` bleibt `false`.
-  - [ ] First-Trial-/Kontaktprozess bleibt `disabled`.
-  - [ ] Rollback wurde nur dokumentiert, nicht unnötig ausgeführt.
+  - [x] `OUTBOUND_DELIVERY_ENABLED` bleibt `false`.
+  - [x] First-Trial-/Kontaktprozess bleibt `disabled`.
+  - [x] Rollback wurde nur dokumentiert, nicht unnötig ausgeführt.
 - **Aufwand:** 1–2 Stunden.
-- **Nachweis:** _Versions-ID, Testresultat, Migrationsergebnis und Lauf-ID hier
-  eintragen_
+- **Nachweis:** Commit `75fa85a`; Version
+  `4de71702-2e42-459a-8a22-23a170bf7fbb`; `/healthz` HTTP 200; Migration 0005
+  ohne ausstehende Folgemigration; Changefeed-Tabelle und -Spalten vorhanden;
+  `OUTBOUND_DELIVERY_ENABLED=false`; Prozess `interessenten_first_trial` ist
+  `disabled`. Manueller Lauf `sync_0ff56284-827a-41b9-9d51-3b7cc4e22b08`
+  bleibt als fehlgeschlagener Live-Nachweis offen.
 
 ---
 
@@ -526,6 +533,11 @@ angelegte Datensätze enthalten.
   Zusammen mit bis zu 500 Interessenten-Details, 500 Klassen-Details und
   700 ms Mindestabstand ist ein vollständiger Lauf weiterhin nicht sicher
   unter Cloudflares 15-Minuten-Grenze nachgewiesen.
+- **Live-Beleg vom 19.08.2026:** Der manuelle Lauf
+  `sync_0ff56284-827a-41b9-9d51-3b7cc4e22b08` war nach 15 Minuten 31 Sekunden
+  weiterhin `running`, ohne terminalen Gesamtzähler; der Bereich `schueler`
+  hatte noch nicht begonnen. Damit ist die 15-Minuten-Grenze im realen
+  Paid-Betrieb überschritten und RUN-03 nachweislich produktionsblockierend.
 - **Abhängigkeiten:** RUN-01 und RUN-02.
 - **Arbeitsschritte:**
   - [ ] 429 und geeignete 5xx begrenzt wiederholen.
@@ -577,6 +589,13 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   3.493 aktuelle Interessenten in der Quelle belegt. Der Hub liest bislang nur
   eine Seite. MATOOL merkt sich die zuletzt geöffnete Seite in der Sitzung;
   deshalb muss ein Vollabruf ausdrücklich mit `offset=0` beginnen.
+- **Fehlgeschlagener Live-Nachweis vom 19.08.2026:** Der neu bereitgestellte
+  Mehrseiten-Abruf verarbeitete alle 117 Seiten, speicherte den Bereich im Lauf
+  `sync_0ff56284-827a-41b9-9d51-3b7cc4e22b08` jedoch fälschlich als
+  `succeeded` mit 0 gelesenen und 0 aktuellen D1-Datensätzen. Ursache: Die
+  stabile ID befindet sich in der äußeren Tabellenzeile, die Listendaten in
+  einer verschachtelten inneren Tabelle; der Parser verlor diese Zuordnung.
+  Der Punkt bleibt bis zu Fix und erneutem 1:1-Live-Abgleich offen.
 - **Benötigte Daten:** vollständiger read-only HAR/HTML, falls die vorhandene
   Aufnahme nicht alle Listen-/Paginationfälle enthält; unabhängige
   MATOOL-Anzahl.
@@ -591,6 +610,8 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [x] Pagination und mehr als 100/500 Datensätze synthetisch testen.
   - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
         und doppelte stabile IDs im Test sicher ablehnen.
+  - [x] Echte verschachtelte Listenstruktur nachbilden und äußere stabile ID
+        mit den inneren Tabellenfeldern genau einmal zusammenführen.
   - [ ] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
   - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
@@ -648,6 +669,8 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
         synthetisch lesen und auf Vollständigkeit prüfen.
   - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
         und doppelte stabile IDs im Test sicher ablehnen.
+  - [x] Echte dreizellige äußere Mitgliederzeile mit verschachtelter
+        Datentabelle und stabiler ID als Regressionstest abdecken.
   - [ ] Vollständige Schülerliste und Pagination lesen.
   - [ ] Schülerdetail-Endpunkt und alle freigegebenen Felder abbilden.
   - [ ] Stabile Schüler-ID speichern.
@@ -769,9 +792,15 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Priorität:** kritisch
 - **Befund:** 0 Datensätze oder ein starker Rückgang werden als Erfolg
   gespeichert; fehlende Datensätze bleiben unbegrenzt aktiv.
+- **Live-Beleg vom 19.08.2026:** Der Interessentenbereich des Laufs
+  `sync_0ff56284-827a-41b9-9d51-3b7cc4e22b08` wurde trotz nachgewiesener
+  Quellmenge 3.493 mit 0 Datensätzen als `succeeded` gespeichert. Dieser
+  konkrete Fehlerfall muss nach dem Parser-Fix als Regressionstest bestehen.
 - **Abhängigkeiten:** DEC-04 und stabile Quellmengen aus DATA-01 bis DATA-07.
 - **Arbeitsschritte:**
   - [ ] Bereichsmarker und vollständigen Seitenabschluss verlangen.
+  - [x] Vollständig gelesene paginierte Pflichtliste mit 0 erkannten
+        Datensätzen als Schemafehler ablehnen.
   - [ ] erwartete Quellanzahl beziehungsweise letzte gesunde Baseline speichern.
   - [ ] kontrollierte Warn-/Fehlerschwellen je Bereich festlegen.
   - [ ] unerwarteten Rückgang nicht in den aktuellen Bestand übernehmen.
@@ -813,9 +842,10 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - [ ] **Status:** offen
 - **Priorität:** kritisch
 - **Befund:** Lokal existiert der verlustfreie REST-Hook
-  `matool_record_v2`. Live ist Migration 0005 nicht angewendet,
-  Outbound ist deaktiviert und bestehende Zaps können noch den Legacy-Poll mit
-  maximal 100 Datensätzen verwenden.
+  `matool_record_v2`. Migration 0005 ist auf Staging angewendet; Outbound ist
+  deaktiviert, eine aktive v2-Subscription ist nicht nachgewiesen und
+  bestehende Zaps können noch den Legacy-Poll mit maximal 100 Datensätzen
+  verwenden.
 - **Abhängigkeiten:** REL-01, RUN-01, DQ-01 und DQ-02.
 - **Arbeitsschritte:**
   - [ ] aktuelle private Zapier-App-Version bauen, validieren und pushen.
@@ -1023,3 +1053,7 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | DATA-01/DATA-03 | Mehrseiten-Abruf lokal implementiert und gezielt geprüft | 35/35 Client-Tests sowie Worker- und Test-Typprüfung bestanden; Live-Deployment und D1-Abgleich bleiben offen |
 | 19.08.2026 | DATA-01/DATA-03/RUN-03 | Vollständige lokale Projektprüfung und unabhängiges Patch-Review | 236/236 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden; vor Deployment müssen zwei Fail-closed-Korrekturen erfolgen, Gesamtlaufzeit bleibt unter RUN-03 offen |
 | 19.08.2026 | DATA-01/DATA-03 | Beide Fail-closed-Reviewbefunde korrigiert und gesamte Prüfung wiederholt | Fehlende Seitennavigation und jede doppelte stabile ID führen zum Fehler; Seitenlimit 250; 238/238 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden |
+| 19.08.2026 | REL-01 | Commit `75fa85a` automatisch auf Staging bereitgestellt und Migration 0005 angewendet | Worker `4de71702…`, Health HTTP 200, Changefeed-Schema vorhanden, keine Migration ausstehend, Outbound false und Kontaktprozess disabled |
+| 19.08.2026 | DATA-01/DQ-02 | Ersten Live-Mehrseitenabruf gegen MATOOL und D1 geprüft | Lauf `sync_0ff56284…` verarbeitete 117 Seiten, speicherte aber fälschlich 0 von 3.493 Interessenten als Erfolg; Parser-Zuordnung für verschachtelte Tabellen und erneuter Live-Abgleich offen |
+| 19.08.2026 | RUN-03 | Realen Paid-Lauf gegen die Laufzeitgrenze geprüft | `sync_0ff56284…` war nach 15:31 Minuten noch nicht abgeschlossen und hatte Mitglieder noch nicht begonnen; fortsetzbare Aufteilung/Gesamtdeadline bleibt offen |
+| 19.08.2026 | DATA-01/DATA-03/DQ-02 | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |

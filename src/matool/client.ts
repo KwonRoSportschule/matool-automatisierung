@@ -427,6 +427,10 @@ export class MatoolClient {
       }
     }
 
+    if (records.size === 0) {
+      throw paginatedSafeAreaSchemaError();
+    }
+
     return {
       area,
       bodyBytes,
@@ -1440,6 +1444,7 @@ async function extractSafeAreaPage(
   contentType: string,
   area: MatoolSafeArea
 ): Promise<ParsedSafeAreaPage> {
+  const strictListArea = isPaginatedSafeArea(area);
   const rows: SafeAreaRowCapture[] = [];
   const pagination: SafeAreaPaginationCapture = {
     detected: false,
@@ -1449,32 +1454,63 @@ async function extractSafeAreaPage(
   };
   const selectedPaginationStack: SafeAreaPaginationMarker[] = [];
   const tableStack: number[] = [];
+  const rowStack: SafeAreaRowCapture[] = [];
+  type CellCapture = {
+    ignoredDepth: number;
+    row: SafeAreaRowCapture;
+    text: string;
+  };
+  const cellStack: CellCapture[] = [];
   let tableCount = 0;
   let activeRow: SafeAreaRowCapture | undefined;
-  let activeCell:
-    | { ignoredDepth: number; row: SafeAreaRowCapture; text: string }
-    | undefined;
+  let activeCell: CellCapture | undefined;
   let mailFieldDetected = false;
   let passwordFieldDetected = false;
 
-  const startCell = (kind: "td" | "th"): void => {
+  const startCell = (kind: "td" | "th"): CellCapture | undefined => {
     if (!activeRow || activeRow.cells.length >= MAX_SAFE_AREA_CELLS) {
-      activeCell = undefined;
-      return;
+      if (!strictListArea) {
+        activeCell = undefined;
+      }
+      return undefined;
     }
     if (kind === "td") {
       activeRow.tdCount += 1;
     } else {
       activeRow.thCount += 1;
     }
-    activeCell = { ignoredDepth: 0, row: activeRow, text: "" };
+    const capture = { ignoredDepth: 0, row: activeRow, text: "" };
+    activeCell = capture;
+    if (strictListArea) {
+      cellStack.push(capture);
+    }
+    return capture;
   };
-  const endCell = (): void => {
-    if (!activeCell) {
+  const endCell = (capture: CellCapture | undefined): void => {
+    if (!capture) {
       return;
     }
-    activeCell.row.cells.push(activeCell.text);
-    activeCell = undefined;
+    if (!strictListArea) {
+      if (activeCell === capture) {
+        capture.row.cells.push(capture.text);
+        activeCell = undefined;
+      }
+      return;
+    }
+    if (cellStack.at(-1) !== capture) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    cellStack.pop();
+    capture.row.cells.push(capture.text);
+    const parent = cellStack.at(-1);
+    if (parent && capture.text.trim().length > 0) {
+      parent.text = appendBounded(
+        parent.text,
+        `${parent.text.trim().length > 0 ? " " : ""}${capture.text}`,
+        MAX_SAFE_AREA_CELL_LENGTH
+      );
+    }
+    activeCell = parent;
   };
   const appendText = (value: string): void => {
     if (activeCell && activeCell.ignoredDepth === 0) {
@@ -1510,11 +1546,22 @@ async function extractSafeAreaPage(
           thCount: 0
         };
         activeRow = row;
+        if (strictListArea) {
+          rowStack.push(row);
+        }
         rows.push(row);
         element.onEndTag(() => {
-          if (activeRow === row) {
-            activeRow = undefined;
+          if (!strictListArea) {
+            if (activeRow === row) {
+              activeRow = undefined;
+            }
+            return;
           }
+          if (rowStack.at(-1) !== row) {
+            throw paginatedSafeAreaSchemaError();
+          }
+          rowStack.pop();
+          activeRow = rowStack.at(-1);
         });
       }
     })
@@ -1529,8 +1576,8 @@ async function extractSafeAreaPage(
     })
     .on("table td", {
       element(element) {
-        startCell("td");
-        element.onEndTag(endCell);
+        const capture = startCell("td");
+        element.onEndTag(() => endCell(capture));
       },
       text(text) {
         appendText(text.text);
@@ -1538,8 +1585,8 @@ async function extractSafeAreaPage(
     })
     .on("table th", {
       element(element) {
-        startCell("th");
-        element.onEndTag(endCell);
+        const capture = startCell("th");
+        element.onEndTag(() => endCell(capture));
       },
       text(text) {
         appendText(text.text);
@@ -1721,7 +1768,6 @@ async function extractSafeAreaPage(
       const fallback = `c${index.toString().padStart(2, "0")}`;
       payload[headerNames?.[index] ?? fallback] = cell;
     });
-    const strictListArea = isPaginatedSafeArea(area);
     const explicitId = strictListArea
       ? row.stableListIds.length === 1
         ? row.stableListIds[0]
