@@ -6,9 +6,10 @@ Grundlage: Code-, Cloudflare-, D1-, MATOOL- und Zapier-Audit vom 19. August 2026
 ## Zweck dieses Dokuments
 
 Dieses Dokument ist die zentrale Arbeitsliste bis zur produktionsreifen Version
+
 1. Jeder offene Punkt bekommt eine eindeutige ID und wird einzeln bearbeitet.
-Ein Punkt ist erst erledigt, wenn alle Abnahmekriterien bestanden und die
-Nachweise eingetragen wurden.
+   Ein Punkt ist erst erledigt, wenn alle Abnahmekriterien bestanden und die
+   Nachweise eingetragen wurden.
 
 Arbeitsregel:
 
@@ -75,25 +76,34 @@ V1 ist erst fertig, wenn alle folgenden Punkte erfüllt sind:
 - [ ] Alle kritischen und hohen Todos dieses Dokuments sind erledigt.
 - [ ] Die Produktionsumgebung ist über die endgültige Domain erreichbar.
 - [ ] Kein anonymer Besucher kann unfreigegebene personenbezogene Daten oder
+  
       Verwaltungsfunktionen aufrufen.
 - [ ] Cron und manueller Abruf können nicht gleichzeitig als schreibende Läufe
+  
       arbeiten.
 - [ ] Abgebrochene Läufe bleiben nicht dauerhaft auf `running`.
 - [ ] Jeder Datenbereich besitzt einen vollständigen, nachvollziehbaren
+  
       Quell-/D1-Abgleich.
 - [ ] Keine Pagination, Detailansicht oder fachlich notwendige Relation fehlt.
 - [ ] Unerwartet leere oder stark verkleinerte Abrufe werden nicht als Erfolg
+  
       gespeichert.
 - [ ] Ein vollständiger Lauf bleibt mit mindestens 20 Prozent Reserve unter
+  
       der Cloudflare-Cron-Grenze von 15 Minuten, also höchstens 12 Minuten.
 - [ ] Der produktive Zap verwendet `matool_record_v2`; der Legacy-Trigger wird
+  
       nicht mehr benutzt.
 - [ ] Eine getestete MATOOL-Änderung erscheint genau einmal fachlich in D1 und
+  
       wird mit stabiler ID an Zapier zugestellt. Technische Wiederholungen
       dürfen keine doppelte Zapier-Aktion verursachen.
 - [ ] Mindestens ein kompletter Arbeitstag mit 11 vorgesehenen Stundenläufen
+  
       endet ohne hängenden oder unvollständigen Lauf.
 - [ ] Alle 243 bestehenden automatisierten Tests und alle ergänzten
+  
       V1-Abnahmetests bestehen.
 - [ ] Ein dokumentierter Rollback auf die vorherige Worker-Version ist möglich.
 
@@ -103,22 +113,22 @@ V1 ist erst fertig, wenn alle folgenden Punkte erfüllt sind:
 
 ### Cloudflare und Betrieb
 
-| Punkt | Stand am 19.08.2026 |
-|---|---|
-| Cloudflare-Tarif | Workers Paid laut Benutzer/Cloudflare-Oberfläche aktiv |
-| Aktiver Staging-Worker | `matool-middleware-staging` |
-| Aktive Live-Version | `4de71702-2e42-459a-8a22-23a170bf7fbb` vom 19.08.2026, Quellcommit `75fa85a` |
-| Staging-URL | `https://matool-middleware-staging.soft-hill-4630.workers.dev` |
-| Cron | `0 7-18 * * mon-fri` plus Berliner Zeitfenster im Worker |
-| D1 | `matool-middleware-staging`, Region EU/EEUR, 9,79 MB |
-| Verwendete Dienste | Worker, Cron Trigger, D1, Static Assets, Logs/Observability |
-| Nicht verwendete Dienste | KV, R2, Queues, Durable Objects, Analytics Engine |
-| Migrationen live | 0001 bis 0005 angewendet; keine Migration ausstehend |
-| Zapier-Ausgang | `OUTBOUND_DELIVERY_ENABLED=false` |
-| Zapier-App live | nur private Version `0.0.0` vom 10.08.2026 nachgewiesen |
-| Zapier-Subscription | keine aktive v2-Snapshot-Subscription nachgewiesen |
-| Öffentlicher Zugriff | Full Access und Klartext aktuell aktiv |
-| Produktion | Worker, D1, Domain, Secrets und Cron fehlen |
+| Punkt                    | Stand am 19.08.2026                                                          |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| Cloudflare-Tarif         | Workers Paid laut Benutzer/Cloudflare-Oberfläche aktiv                       |
+| Aktiver Staging-Worker   | `matool-middleware-staging`                                                  |
+| Aktive Live-Version      | `4de71702-2e42-459a-8a22-23a170bf7fbb` vom 19.08.2026, Quellcommit `75fa85a` |
+| Staging-URL              | `https://matool-middleware-staging.soft-hill-4630.workers.dev`               |
+| Cron                     | `0 7-18 * * mon-fri` plus Berliner Zeitfenster im Worker                     |
+| D1                       | `matool-middleware-staging`, Region EU/EEUR, 9,79 MB                         |
+| Verwendete Dienste       | Worker, Cron Trigger, D1, Static Assets, Logs/Observability                  |
+| Nicht verwendete Dienste | KV, R2, Queues, Durable Objects, Analytics Engine                            |
+| Migrationen live         | 0001 bis 0005 angewendet; keine Migration ausstehend                         |
+| Zapier-Ausgang           | `OUTBOUND_DELIVERY_ENABLED=false`                                            |
+| Zapier-App live          | nur private Version `0.0.0` vom 10.08.2026 nachgewiesen                      |
+| Zapier-Subscription      | keine aktive v2-Snapshot-Subscription nachgewiesen                           |
+| Öffentlicher Zugriff     | Full Access und Klartext aktuell aktiv                                       |
+| Produktion               | Worker, D1, Domain, Secrets und Cron fehlen                                  |
 
 Staging-Secrets, nur Namen:
 
@@ -156,21 +166,21 @@ Historie:
 MATOOL-Gesamtwert. `D1 gesamt` kann alte oder durch instabile IDs mehrfach
 angelegte Datensätze enthalten.
 
-| Datenbereich | Letzter Abruf | D1 gesamt | Bekannter Befund |
-|---|---:|---:|---|
-| Interessenten | 94 | 1.100 | nur 30 fachlich benannte Strukturen; 64 generische `c00` |
-| Interessenten-Details | 4 | 20 | aktive Vierer-Begrenzung |
-| Klassen | 20 | 2.595 | aktive 20er-Begrenzung; starke Mehrfach-/Altbestände |
-| Schüler | 96 | 132 | 66 generische `c00`; keine Schülerdetails |
-| Check-in | 5 | 43 | kein belastbarer Anwesenheits-/Zeitraumabgleich |
-| Prüfungen | 626 | 675 | nicht unabhängig gegen MATOOL geprüft |
-| Artikel | 75 | 110 | nur 25 benannte Strukturen; keine Artikeldetails |
-| Lager | 121 | 789 | hoher Altbestand; keine Löschungssemantik |
-| Newsletter | 598 | 598 | Anzahl plausibel; Inhalt nicht unabhängig geprüft |
-| Archiv | 12 | 13 | fehlende Datensätze bleiben gespeichert |
-| Telemetrie | 0 | 0 | leerer Abruf gilt als Erfolg |
-| Berichte | 0 | 0 | leerer Abruf gilt als Erfolg |
-| Karte | 1 | 1 | Inhalt nicht unabhängig geprüft |
+| Datenbereich          | Letzter Abruf | D1 gesamt | Bekannter Befund                                         |
+| --------------------- | -------------:| ---------:| -------------------------------------------------------- |
+| Interessenten         | 94            | 1.100     | nur 30 fachlich benannte Strukturen; 64 generische `c00` |
+| Interessenten-Details | 4             | 20        | aktive Vierer-Begrenzung                                 |
+| Klassen               | 20            | 2.595     | aktive 20er-Begrenzung; starke Mehrfach-/Altbestände     |
+| Schüler               | 96            | 132       | 66 generische `c00`; keine Schülerdetails                |
+| Check-in              | 5             | 43        | kein belastbarer Anwesenheits-/Zeitraumabgleich          |
+| Prüfungen             | 626           | 675       | nicht unabhängig gegen MATOOL geprüft                    |
+| Artikel               | 75            | 110       | nur 25 benannte Strukturen; keine Artikeldetails         |
+| Lager                 | 121           | 789       | hoher Altbestand; keine Löschungssemantik                |
+| Newsletter            | 598           | 598       | Anzahl plausibel; Inhalt nicht unabhängig geprüft        |
+| Archiv                | 12            | 13        | fehlende Datensätze bleiben gespeichert                  |
+| Telemetrie            | 0             | 0         | leerer Abruf gilt als Erfolg                             |
+| Berichte              | 0             | 0         | leerer Abruf gilt als Erfolg                             |
+| Karte                 | 1             | 1         | Inhalt nicht unabhängig geprüft                          |
 
 ### Bereits bestandene Prüfungen
 
@@ -185,6 +195,7 @@ angelegte Datensätze enthalten.
 - [x] Lokale A→B→A-Tests erzeugen drei unterschiedliche Ereignis-IDs.
 - [x] Lokale Zapier-Retry-Tests für 429, 5xx und Netzwerkfehler bestanden.
 - [x] Ein echter automatischer Staging-Cronlauf nach Tarifupgrade wurde
+  
       beobachtet.
 
 ### Kapazitäts- und Kostenbasis
@@ -212,6 +223,7 @@ angelegte Datensätze enthalten.
 ### TODO DEC-01 – Feiertags-Bundesland festlegen
 
 - [x] **Status:** erledigt
+
 - **Priorität:** hoch
 - **Entscheidung:** Welches Bundesland gilt für die Feiertage der Schule?
 - **Aktueller Stand:** Im Code ist Schleswig-Holstein fest eingestellt. Die
@@ -239,6 +251,7 @@ angelegte Datensätze enthalten.
 ### TODO DEC-02 – Produktionsdomain und Mitarbeiterzugriff festlegen
 
 - [x] **Status:** erledigt
+
 - **Priorität:** kritisch
 - **Entscheidungen:**
   - endgültiger Produktionshostname
@@ -275,6 +288,7 @@ angelegte Datensätze enthalten.
 ### TODO DEC-03 – Klartext ohne Anmeldung verbindlich freigeben oder beenden
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Aktuell sind personenbezogene Klartextdaten und ein öffentlicher
   CSRF-/Verwaltungszugang ohne Anmeldung erreichbar.
@@ -298,6 +312,7 @@ angelegte Datensätze enthalten.
 ### TODO DEC-04 – Löschungs- und Inaktivitätsregel festlegen
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Entscheidung:** Was soll geschehen, wenn ein bisher bekannter Datensatz in
   MATOOL nicht mehr erscheint?
@@ -313,6 +328,7 @@ angelegte Datensätze enthalten.
 ### TODO DEC-05 – Zapier-Tarif und sicheren V1-Test-Zap bestätigen
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Entscheidungen/Angaben:**
   - aktueller Zapier-Tarif und Task-Stufe
@@ -335,6 +351,7 @@ angelegte Datensätze enthalten.
 ### TODO SEC-00 – Personenbezogene Ausgabedateien aus GitHub entfernen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Das Repository `KwonRoSportschule/matool-automatisierung` ist
   öffentlich. Commit `f62b651` enthält unter `outputs/` eine Excel-Datei, die
@@ -351,14 +368,18 @@ angelegte Datensätze enthalten.
   der Git-Historie.
 - **Arbeitsschritte:**
   - [x] Entscheidung dokumentieren, dass das Repository vorerst öffentlich
+    
         bleibt und keine Sichtbarkeitsänderung vorgenommen wird.
   - [ ] Ausgabedateien lokal außerhalb des Repository-Verlaufs sichern.
   - [ ] `outputs/` aus dem aktuellen Git-Stand und der veröffentlichten
+    
         Historie entfernen.
   - [ ] `outputs/` und vergleichbare personenbezogene Exportdateien dauerhaft
+    
         per `.gitignore` ausschließen.
   - [ ] GitHub-Historie und frischen Klon auf XLSX-/Bild-/Kontaktdaten prüfen.
   - [ ] Danach verifizieren, dass die Cloudflare-GitHub-App weiterhin auf das
+    
         bereinigte Repository zugreifen kann.
 - **Abnahme:** Im aktuellen GitHub-Baum und in der erreichbaren Historie sind
   keine personenbezogenen MATOOL-Exporte mehr vorhanden; ein neuer Export wird
@@ -371,6 +392,7 @@ angelegte Datensätze enthalten.
 ### TODO REL-00 – Automatisches Cloudflare-Git-Deployment korrigieren
 
 - [x] **Status:** erledigt
+
 - **Priorität:** kritisch
 - **Befund:** Der Cloudflare-Build vom 19.08.2026 führte ausschließlich
   `npx wrangler deploy` aus. Dadurch wurde weder `dist/client` erzeugt noch
@@ -383,13 +405,17 @@ angelegte Datensätze enthalten.
 - **Verifizierter GitHub-Stand vom 19.08.2026:**
   - [x] Repository ist mit dem korrekten Remote verbunden.
   - [x] Lokales `main` und GitHub-`main` standen beim Auslösen des
+    
         Nachweis-Builds beide auf Commit `38a916a`.
   - [x] Der vorausgehende Code-Stand `f62b651` hatte eine erfolgreiche
+    
         GitHub-CI; die REL-00-Änderung betraf anschließend nur dieses
         Todo-Dokument.
   - [x] Der vorhandene Cloudflare-Lauf konnte das Repository klonen und die
+    
         Abhängigkeiten installieren; die GitHub-Verbindung besteht.
   - [x] Commit `38a916a` wurde nach dem Push auf `main` automatisch gebaut und
+    
         ohne manuellen Wrangler-Deploy veröffentlicht.
 - **Festgelegte Cloudflare-Buildwerte:**
   - Repository: `KwonRoSportschule/matool-automatisierung`
@@ -401,11 +427,14 @@ angelegte Datensätze enthalten.
   - überwachte Pfade: alle
 - **Arbeitsschritte:**
   - [x] Cloudflare-Build auf `pnpm run build:web` und Deployment auf
+    
         `pnpm exec wrangler deploy --env staging --strict` festlegen.
   - [x] Sicherstellen, dass zuerst der Web-Build `dist/client` erzeugt.
   - [x] Sicherstellen, dass Wrangler ausdrücklich `--env staging --strict`
+    
         verwendet.
   - [x] Einen neuen Cloudflare-Git-Build beobachten, ohne andere Umgebungen
+    
         zu verändern.
 - **Abnahme:** Der Cloudflare-Git-Build erstellt `dist/client`, nennt Staging
   ausdrücklich als Ziel und endet erfolgreich. Die aktive Staging-Version
@@ -427,6 +456,7 @@ angelegte Datensätze enthalten.
 ### TODO REL-01 – Paid- und Zapier-v2-Code auf Staging bereitstellen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Ziel:** Der bereits lokal entwickelte Paid-/Changefeed-Stand wird
   kontrolliert geprüft, versioniert und ausschließlich auf Staging
@@ -439,9 +469,11 @@ angelegte Datensätze enthalten.
 - **Abhängigkeiten:** keine; Outbound bleibt bei diesem Todo `false`.
 - **Arbeitsschritte:**
   - [x] Bestehende uncommittete Änderungen einzeln gegen die freigegebenen
+    
         Punkte „Paid-Betrieb“ und „verlustfreies Zapier“ prüfen.
   - [x] Sicherstellen, dass keine Kontaktfunktion aktiviert wird.
   - [x] 238 Worker-/Core-Tests und 19 Zapier-Tests einschließlich Typechecks,
+    
         Builds, Wrangler-Staging-Dry-Run und Repository-Scan erneut ausführen.
   - [x] Migration 0005 zuerst auf Staging anwenden und Schema prüfen.
   - [x] Neue Worker-Version auf Staging bereitstellen.
@@ -450,6 +482,7 @@ angelegte Datensätze enthalten.
 - **Abnahmekriterien:**
   - [x] Migration 0005 ist nicht mehr ausstehend.
   - [x] Tabelle `zapier_snapshot_subscriptions` und die neuen Changefeed-Felder
+    
         existieren.
   - [x] Aktive Worker-Version ist neuer als `e0833ded…`.
   - [ ] Interessenten-Details sind nicht mehr auf 4 begrenzt.
@@ -472,6 +505,7 @@ angelegte Datensätze enthalten.
 ### TODO RUN-01 – Globalen Lauf-Lock, Fencing und Stale-Recovery bauen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Ziel:** Zu jedem Zeitpunkt darf nur ein MATOOL-Gesamtlauf schreiben.
 - **Befund:** Cron, manueller Abruf und doppelter Cron können parallel laufen.
@@ -483,14 +517,17 @@ angelegte Datensätze enthalten.
   - [ ] Eindeutiges Fencing-Token an alle Schreibvorgänge binden.
   - [ ] Heartbeat beziehungsweise Ablaufzeit festlegen.
   - [ ] Veraltete `running`-Läufe nachvollziehbar auf `aborted`/`failed`
+    
         terminalisieren.
   - [ ] Manuelle und geplante Läufe benutzen denselben Lock.
 - **Abnahmekriterien:**
   - [ ] 20 parallele Startversuche erzeugen genau einen Writer.
   - [ ] Ein zweiter Start erhält einen klaren `already_running`-Status.
   - [ ] Nach simuliertem Worker-Abbruch kann ein neuer Lauf nach Ablauf der
+    
         Lease übernehmen.
   - [ ] Der alte Writer kann nach Lease-Verlust keine neueren Daten
+    
         überschreiben.
   - [ ] Keine Testzeile bleibt dauerhaft auf `running`.
 - **Aufwand:** 3–6 Stunden.
@@ -499,6 +536,7 @@ angelegte Datensätze enthalten.
 ### TODO RUN-02 – Abruf in fortsetzbare Pakete unter 12 Minuten teilen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Ziel:** Auch mehr als 500 Details oder Klassen werden vollständig gelesen,
   ohne die 15-Minuten-Crongrenze zu überschreiten.
@@ -509,6 +547,7 @@ angelegte Datensätze enthalten.
   - [ ] Fortsetzbaren Cursor/Checkpoint pro Datenbereich definieren.
   - [ ] Sicheres Paketbudget mit mindestens 20 Prozent Zeitreserve festlegen.
   - [ ] Unfertige Pakete eindeutig als `in_progress` statt `succeeded`
+    
         speichern.
   - [ ] Nächster Lauf setzt exakt beim bestätigten Checkpoint fort.
   - [ ] Priorisierung darf keinen Bereich dauerhaft verhungern lassen.
@@ -524,6 +563,7 @@ angelegte Datensätze enthalten.
 ### TODO RUN-03 – MATOOL-Retry, Session-Recovery und Gesamtdeadline ergänzen
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Ziel:** Vorübergehende MATOOL-Fehler lassen nicht den gesamten Stundenlauf
   unkontrolliert ausfallen.
@@ -544,6 +584,7 @@ angelegte Datensätze enthalten.
   - [ ] `Retry-After`, Backoff und Jitter beachten.
   - [ ] Abgelaufene Session sicher erkennen.
   - [ ] Genau einen vollständigen Re-Login-Versuch pro betroffenen Bereich
+    
         erlauben.
   - [ ] Gesamtdeadline vor Cloudflares 15-Minuten-Grenze durchsetzen.
   - [ ] Checkpoint vor kontrolliertem Abbruch speichern.
@@ -563,22 +604,23 @@ angelegte Datensätze enthalten.
 
 Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 
-| Prüfung | Wert/Nachweis |
-|---|---|
-| unabhängige Anzahl in MATOOL | _offen_ |
-| Anzahl des vollständigen Abrufs | _offen_ |
-| Anzahl aktueller D1-Datensätze | _offen_ |
-| stabile MATOOL-ID vorhanden | _offen_ |
-| Pagination vollständig | _offen_ |
-| wichtige Felder stichprobenartig 1:1 | _offen_ |
-| Detaildaten vollständig | _offen_ |
-| Beziehungen geprüft | _offen/nicht anwendbar_ |
-| leerer/kleiner Abruf korrekt erkannt | _offen_ |
-| Ergebnis | _offen_ |
+| Prüfung                              | Wert/Nachweis           |
+| ------------------------------------ | ----------------------- |
+| unabhängige Anzahl in MATOOL         | _offen_                 |
+| Anzahl des vollständigen Abrufs      | _offen_                 |
+| Anzahl aktueller D1-Datensätze       | _offen_                 |
+| stabile MATOOL-ID vorhanden          | _offen_                 |
+| Pagination vollständig               | _offen_                 |
+| wichtige Felder stichprobenartig 1:1 | _offen_                 |
+| Detaildaten vollständig              | _offen_                 |
+| Beziehungen geprüft                  | _offen/nicht anwendbar_ |
+| leerer/kleiner Abruf korrekt erkannt | _offen_                 |
+| Ergebnis                             | _offen_                 |
 
 ### TODO DATA-01 – Interessenten und alle Interessenten-Details
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Liste enthält gemischte generische Zeilen; live werden nur vier
   Details pro Lauf gelesen.
@@ -604,16 +646,20 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   Probetraining 1/2 mit Datum/Zeit/Klasse, Status, Anmerkung und Werbequelle.
 - **Arbeitsschritte:**
   - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
+    
         personenbezogener Daten erfassen: 117 Seiten / 3.493 Interessenten.
   - [ ] Liste und interne stabile ID vollständig lesen.
   - [ ] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
   - [x] Pagination und mehr als 100/500 Datensätze synthetisch testen.
   - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
+    
         und doppelte stabile IDs im Test sicher ablehnen.
   - [x] Echte verschachtelte Listenstruktur nachbilden und äußere stabile ID
+    
         mit den inneren Tabellenfeldern genau einmal zusammenführen.
   - [ ] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
   - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
+    
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
         D1-Bestand abgleichen; jede Abweichung bis auf stabile MATOOL-ID-Ebene
         erklären und beheben.
@@ -629,6 +675,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-02 – Klassen, Kurse und Stunden
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Live werden 20 Klassen gelesen; D1 enthält 2.595 Zeilen. Frühere
   Beobachtung nannte ungefähr 43 Klassen, muss aber unabhängig bestätigt
@@ -641,6 +688,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] Stabile Klassen-ID gegen MATOOL prüfen.
   - [ ] Pagination statt Abbruch unterstützen.
   - [ ] Schülerlistenbeziehung entweder speichern oder begründet einem anderen
+    
         Bereich zuordnen.
 - **Abnahme:** Alle aktuellen Klassen genau einmal in D1; keine 20er-Rotation,
   keine neuen Scheinklassen bei unverändertem MATOOL-Bestand.
@@ -650,6 +698,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-03 – Schüler/Mitglieder und Schülerdetails
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Nur eine generische Schülerliste wird gelesen; 66 von 96 Zeilen
   besitzen nur generische Felder. Der HAR-belegte Endpunkt
@@ -664,18 +713,23 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   der ein Schüler geöffnet und seine Detaildaten geladen werden.
 - **Arbeitsschritte:**
   - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
+    
         personenbezogener Daten erfassen: 19 Seiten / 559 Mitglieder.
   - [x] Mehr als 500 stabile Mitglieder-Listendatensätze über mehrere Seiten
+    
         synthetisch lesen und auf Vollständigkeit prüfen.
   - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
+    
         und doppelte stabile IDs im Test sicher ablehnen.
   - [x] Echte dreizellige äußere Mitgliederzeile mit verschachtelter
+    
         Datentabelle und stabiler ID als Regressionstest abdecken.
   - [ ] Vollständige Schülerliste und Pagination lesen.
   - [ ] Schülerdetail-Endpunkt und alle freigegebenen Felder abbilden.
   - [ ] Stabile Schüler-ID speichern.
   - [ ] Beziehung Schüler → Klasse/Kurs prüfen und speichern.
   - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
+    
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
         D1-Bestand abgleichen; jede Abweichung bis auf stabile MATOOL-ID-Ebene
         erklären und beheben.
@@ -690,6 +744,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-04 – Check-in und Anwesenheiten
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Aktuell nur generischer Einseitenabruf; Zeitraum, vollständige
   Anwesenheit und Beziehungen sind nicht belegt.
@@ -707,6 +762,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-05 – Artikel, Artikeldetails und Lager
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Artikel werden nur als generische Liste gelesen; der HAR-belegte
   Endpunkt `/json/artikel_daten.php` fehlt. Lager besitzt einen starken
@@ -726,6 +782,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-06 – Prüfungen, Newsletter, Archiv und Karte
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Mengen werden gelesen, aber nur aus generischen Einseiten-HTML-
   Tabellen und ohne unabhängigen MATOOL-Abgleich.
@@ -744,6 +801,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DATA-07 – Telemetrie und Berichte
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Beide Bereiche liefern 0 Datensätze und werden trotzdem als
   erfolgreich gespeichert. Die in der HAR-Dokumentation erkannten Endpunkte
@@ -753,6 +811,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   kostenpflichtige Aktion ohne Benutzerfreigabe auslösen.
 - **Arbeitsschritte:**
   - [ ] klären, welche Telemetrie-/Berichtsdaten als strukturierte V1-Daten
+    
         verfügbar sind.
   - [ ] read-only Endpunkte und Pagination implementieren.
   - [ ] echten leeren Bestand von Fehler-/Loginseite unterscheiden.
@@ -769,6 +828,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DQ-01 – Stabile IDs und vollständiges Feldschema erzwingen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Fehlt eine MATOOL-ID, wird der ganze Payload-Hash zur source ID.
   Jede Feldänderung kann dadurch einen neuen Datensatz anlegen. Es werden
@@ -789,6 +849,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DQ-02 – Leer-/Schrumpfungsprüfung und Löschungssemantik
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** 0 Datensätze oder ein starker Rückgang werden als Erfolg
   gespeichert; fehlende Datensätze bleiben unbegrenzt aktiv.
@@ -800,6 +861,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Arbeitsschritte:**
   - [ ] Bereichsmarker und vollständigen Seitenabschluss verlangen.
   - [x] Vollständig gelesene paginierte Pflichtliste mit 0 erkannten
+    
         Datensätzen als Schemafehler ablehnen.
   - [ ] erwartete Quellanzahl beziehungsweise letzte gesunde Baseline speichern.
   - [ ] kontrollierte Warn-/Fehlerschwellen je Bereich festlegen.
@@ -814,6 +876,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO DQ-03 – Historische Scheindaten kontrolliert bereinigen
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Beispielsweise 2.595 Klassen-Snapshots bei einer viel kleineren
   erwarteten realen Klassenmenge und 1.100 Interessenten-Snapshots bei zuletzt
@@ -824,6 +887,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] Backup/Export und exakte Kandidatenliste erstellen.
   - [ ] echte aktuelle IDs gegen MATOOL verifizieren.
   - [ ] Für Interessenten und Mitglieder getrennt die Mengen `MATOOL sichtbar`,
+    
         `vollständiger Abruf`, `D1 aktiv` und `D1 historisch` dokumentieren; nur
         eindeutig verifizierte Alt-/Scheindaten inaktiv markieren.
   - [ ] Alt-/Scheindaten zunächst als inaktiv markieren.
@@ -840,6 +904,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO ZAP-01 – Zapier-v2 bereitstellen und bestehenden Zap migrieren
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Lokal existiert der verlustfreie REST-Hook
   `matool_record_v2`. Migration 0005 ist auf Staging angewendet; Outbound ist
@@ -852,6 +917,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] sicherstellen, dass Legacy `matool_record` verborgen bleibt.
   - [ ] neuen Zap mit `matool_record_v2` verbinden.
   - [ ] vor Outbound-Aktivierung D1-Prozessmodus
+    
         `interessenten_first_trial=disabled` nachweisen.
   - [ ] `OUTBOUND_DELIVERY_ENABLED` kontrolliert auf Staging aktivieren.
   - [ ] Subscription erstellen und Teständerungen zustellen.
@@ -868,6 +934,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO ZAP-02 – Zustellungsfehler und Backlog dauerhaft beherrschen
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Die Zustellung verarbeitet maximal 50 Ereignisse/20 Sekunden pro
   Drain. Permanente 400/401/403-Fehler werden immer wieder versucht und können
@@ -878,6 +945,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] maximale Versuche und permanenten Fehlerzustand definieren.
   - [ ] defektes Ereignis oder defekte Subscription isolieren.
   - [ ] unabhängigen, sicheren Backlog-Drain im bestehenden Worker-Scope
+    
         festlegen.
   - [ ] Backloggröße, ältestes Ereignis und letzten Fehler anzeigen.
   - [ ] At-least-once-Verhalten und Zapier-Deduplizierung dokumentieren.
@@ -894,6 +962,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO UI-01 – Dashboard darf unvollständigen Betrieb nicht als gesund melden
 
 - [ ] **Status:** offen
+
 - **Priorität:** hoch
 - **Befund:** Dashboard meldet `healthy`, obwohl 76 Läufe hängen und Details,
   Klassen, Telemetrie sowie Berichte unvollständig sind.
@@ -902,6 +971,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] Gesamtstatus aus MATOOL-, D1-, Cron- und Zapierstatus ableiten.
   - [ ] Stale-Läufe und letzte vollständige Synchronisation anzeigen.
   - [ ] pro Bereich letzte Quellmenge, gespeicherte Menge und
+    
         Vollständigkeitsstatus anzeigen.
   - [ ] Zapier-Backlog und letzten Zustellungsfehler anzeigen.
   - [ ] technisches `succeeded` von fachlich `complete` trennen.
@@ -914,6 +984,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO SEC-01 – Entscheidung DEC-03 technisch durchsetzen
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Ziel:** Datenbank und Verwaltungsfunktionen sind nur im ausdrücklich
   freigegebenen Umfang erreichbar.
@@ -936,6 +1007,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO PROD-01 – Produktionsumgebung provisionieren
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Befund:** Produktions-Worker und Produktions-D1 existieren nicht;
   D1-ID, Access-Werte, Domain, Secrets und Cron sind Platzhalter oder leer.
@@ -957,6 +1029,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO QA-01 – V1-End-to-End-, Fehler- und Belastungsabnahme
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Abhängigkeiten:** alle vorherigen kritischen und hohen Todos.
 - **Pflichttests:**
@@ -987,6 +1060,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ### TODO REL-02 – V1 versionieren, zu GitHub sichern und freigeben
 
 - [ ] **Status:** offen
+
 - **Priorität:** kritisch
 - **Abhängigkeiten:** QA-01 vollständig bestanden.
 - **Arbeitsschritte:**
@@ -1024,36 +1098,38 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 
 Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 
-| Kategorie | Erledigt | Gesamt | Status |
-|---|---:|---:|---|
-| Entscheidungen | 2 | 5 | in Arbeit |
-| Staging-Release | 1 | 3 | in Arbeit |
-| Laufstabilität | 0 | 3 | offen |
-| MATOOL-Datenbereiche | 0 | 7 | offen |
-| Datenqualität | 0 | 3 | offen |
-| Zapier | 0 | 2 | offen |
-| Hub/Zugriff | 0 | 2 | offen |
-| Produktion/Freigabe | 0 | 3 | offen |
-| **Gesamt** | **3** | **28** | **V1 nicht freigegeben** |
+| Kategorie            | Erledigt | Gesamt | Status                   |
+| -------------------- | --------:| ------:| ------------------------ |
+| Entscheidungen       | 2        | 5      | in Arbeit                |
+| Staging-Release      | 1        | 3      | in Arbeit                |
+| Laufstabilität       | 0        | 3      | offen                    |
+| MATOOL-Datenbereiche | 0        | 7      | offen                    |
+| Datenqualität        | 0        | 3      | offen                    |
+| Zapier               | 0        | 2      | offen                    |
+| Hub/Zugriff          | 0        | 2      | offen                    |
+| Produktion/Freigabe  | 0        | 3      | offen                    |
+| **Gesamt**           | **3**    | **28** | **V1 nicht freigegeben** |
 
 ## Änderungsverlauf dieses Dokuments
 
-| Datum | Todo-ID | Änderung | Ergebnis/Nachweis |
-|---|---|---|---|
-| 19.08.2026 | BASE | V1-Todo-Liste aus vollständigem Audit erstellt | Ausgangsstand dokumentiert |
-| 19.08.2026 | DEC-01 | Feiertagskalender auf Bayern/Rosenheim umgestellt und verifiziert | 32/32 Tests und beide Typechecks bestanden |
-| 19.08.2026 | DEC-02 | Bestehende öffentliche `workers.dev`-Adresse als dauerhafte V1-Adresse ohne Login festgelegt | Anonymer Seitenaufruf und aktivierte Verwaltungsfunktionen verifiziert; keine Aktion ausgelöst |
-| 19.08.2026 | REL-00 | Fehlgeschlagenen Cloudflare-Git-Build als neuen Release-Blocker aufgenommen | `dist/client` fehlte und Zielumgebung war nicht angegeben; Umsetzung offen |
-| 19.08.2026 | SEC-00 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden | Separates Sicherheits-Todo bleibt offen; Repository bleibt auf Benutzerwunsch vorerst öffentlich |
-| 19.08.2026 | REL-00 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen |
-| 19.08.2026 | REL-00 | Automatisches GitHub-Deployment nach Staging vollständig verifiziert | Build `7e180f43`, Commit `38a916a`, Worker-Version `67f5c688`, Health ok und Startseite 200 |
-| 19.08.2026 | DATA-01/DATA-03/DQ-03 | Benutzer meldet weniger Interessenten und Mitglieder im Hub als sichtbar in MATOOL | Verbindlichen 1:1-Bestandsabgleich und idempotenten Kontrolllauf als offene Pflichtschritte ergänzt; Umsetzung und Verifikation offen |
-| 19.08.2026 | BASE | Verbindliche Pflege- und Meldepflicht für diese GitHub-Todo-Liste ergänzt | Maßgebliche Datei, Aktualisierungszeitpunkte, Abhakregel, Erhalt und Ergänzung von Todos sowie Pflichtangaben je Update festgeschrieben |
-| 19.08.2026 | DATA-01/DATA-03 | MATOOL-Pagination und Quellmengen im angemeldeten Nur-Lese-Zugriff geprüft | Interessenten: 117 Seiten / 3.493 Datensätze; Mitglieder: 19 Seiten / 559 Datensätze; Implementierung und D1-Abgleich bleiben offen |
-| 19.08.2026 | DATA-01/DATA-03 | Mehrseiten-Abruf lokal implementiert und gezielt geprüft | 35/35 Client-Tests sowie Worker- und Test-Typprüfung bestanden; Live-Deployment und D1-Abgleich bleiben offen |
-| 19.08.2026 | DATA-01/DATA-03/RUN-03 | Vollständige lokale Projektprüfung und unabhängiges Patch-Review | 236/236 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden; vor Deployment müssen zwei Fail-closed-Korrekturen erfolgen, Gesamtlaufzeit bleibt unter RUN-03 offen |
-| 19.08.2026 | DATA-01/DATA-03 | Beide Fail-closed-Reviewbefunde korrigiert und gesamte Prüfung wiederholt | Fehlende Seitennavigation und jede doppelte stabile ID führen zum Fehler; Seitenlimit 250; 238/238 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden |
-| 19.08.2026 | REL-01 | Commit `75fa85a` automatisch auf Staging bereitgestellt und Migration 0005 angewendet | Worker `4de71702…`, Health HTTP 200, Changefeed-Schema vorhanden, keine Migration ausstehend, Outbound false und Kontaktprozess disabled |
-| 19.08.2026 | DATA-01/DQ-02 | Ersten Live-Mehrseitenabruf gegen MATOOL und D1 geprüft | Lauf `sync_0ff56284…` verarbeitete 117 Seiten, speicherte aber fälschlich 0 von 3.493 Interessenten als Erfolg; Parser-Zuordnung für verschachtelte Tabellen und erneuter Live-Abgleich offen |
-| 19.08.2026 | RUN-03 | Realen Paid-Lauf gegen die Laufzeitgrenze geprüft | `sync_0ff56284…` war nach 15:31 Minuten noch nicht abgeschlossen und hatte Mitglieder noch nicht begonnen; fortsetzbare Aufteilung/Gesamtdeadline bleibt offen |
-| 19.08.2026 | DATA-01/DATA-03/DQ-02 | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |
+| Datum      | Todo-ID                | Änderung                                                                                     | Ergebnis/Nachweis                                                                                                                                                                                                |
+| ---------- | ---------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 19.08.2026 | BASE                   | V1-Todo-Liste aus vollständigem Audit erstellt                                               | Ausgangsstand dokumentiert                                                                                                                                                                                       |
+| 19.08.2026 | DEC-01                 | Feiertagskalender auf Bayern/Rosenheim umgestellt und verifiziert                            | 32/32 Tests und beide Typechecks bestanden                                                                                                                                                                       |
+| 19.08.2026 | DEC-02                 | Bestehende öffentliche `workers.dev`-Adresse als dauerhafte V1-Adresse ohne Login festgelegt | Anonymer Seitenaufruf und aktivierte Verwaltungsfunktionen verifiziert; keine Aktion ausgelöst                                                                                                                   |
+| 19.08.2026 | REL-00                 | Fehlgeschlagenen Cloudflare-Git-Build als neuen Release-Blocker aufgenommen                  | `dist/client` fehlte und Zielumgebung war nicht angegeben; Umsetzung offen                                                                                                                                       |
+| 19.08.2026 | SEC-00                 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden                | Separates Sicherheits-Todo bleibt offen; Repository bleibt auf Benutzerwunsch vorerst öffentlich                                                                                                                 |
+| 19.08.2026 | REL-00                 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt         | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen                                                                                                                                     |
+| 19.08.2026 | REL-00                 | Automatisches GitHub-Deployment nach Staging vollständig verifiziert                         | Build `7e180f43`, Commit `38a916a`, Worker-Version `67f5c688`, Health ok und Startseite 200                                                                                                                      |
+| 19.08.2026 | DATA-01/DATA-03/DQ-03  | Benutzer meldet weniger Interessenten und Mitglieder im Hub als sichtbar in MATOOL           | Verbindlichen 1:1-Bestandsabgleich und idempotenten Kontrolllauf als offene Pflichtschritte ergänzt; Umsetzung und Verifikation offen                                                                            |
+| 19.08.2026 | BASE                   | Verbindliche Pflege- und Meldepflicht für diese GitHub-Todo-Liste ergänzt                    | Maßgebliche Datei, Aktualisierungszeitpunkte, Abhakregel, Erhalt und Ergänzung von Todos sowie Pflichtangaben je Update festgeschrieben                                                                          |
+| 19.08.2026 | DATA-01/DATA-03        | MATOOL-Pagination und Quellmengen im angemeldeten Nur-Lese-Zugriff geprüft                   | Interessenten: 117 Seiten / 3.493 Datensätze; Mitglieder: 19 Seiten / 559 Datensätze; Implementierung und D1-Abgleich bleiben offen                                                                              |
+| 19.08.2026 | DATA-01/DATA-03        | Mehrseiten-Abruf lokal implementiert und gezielt geprüft                                     | 35/35 Client-Tests sowie Worker- und Test-Typprüfung bestanden; Live-Deployment und D1-Abgleich bleiben offen                                                                                                    |
+| 19.08.2026 | DATA-01/DATA-03/RUN-03 | Vollständige lokale Projektprüfung und unabhängiges Patch-Review                             | 236/236 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden; vor Deployment müssen zwei Fail-closed-Korrekturen erfolgen, Gesamtlaufzeit bleibt unter RUN-03 offen                                               |
+| 19.08.2026 | DATA-01/DATA-03        | Beide Fail-closed-Reviewbefunde korrigiert und gesamte Prüfung wiederholt                    | Fehlende Seitennavigation und jede doppelte stabile ID führen zum Fehler; Seitenlimit 250; 238/238 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden                                                           |
+| 19.08.2026 | REL-01                 | Commit `75fa85a` automatisch auf Staging bereitgestellt und Migration 0005 angewendet        | Worker `4de71702…`, Health HTTP 200, Changefeed-Schema vorhanden, keine Migration ausstehend, Outbound false und Kontaktprozess disabled                                                                         |
+| 19.08.2026 | DATA-01/DQ-02          | Ersten Live-Mehrseitenabruf gegen MATOOL und D1 geprüft                                      | Lauf `sync_0ff56284…` verarbeitete 117 Seiten, speicherte aber fälschlich 0 von 3.493 Interessenten als Erfolg; Parser-Zuordnung für verschachtelte Tabellen und erneuter Live-Abgleich offen                    |
+| 19.08.2026 | RUN-03                 | Realen Paid-Lauf gegen die Laufzeitgrenze geprüft                                            | `sync_0ff56284…` war nach 15:31 Minuten noch nicht abgeschlossen und hatte Mitglieder noch nicht begonnen; fortsetzbare Aufteilung/Gesamtdeadline bleibt offen                                                   |
+| 19.08.2026 | DATA-01/DATA-03/DQ-02  | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert                          | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |
+
+
