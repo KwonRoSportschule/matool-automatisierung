@@ -319,6 +319,42 @@ angelegte Datensätze enthalten.
 
 ## Phase 1 – Lokalen fertigen Stand kontrolliert auf Staging bringen
 
+### TODO SEC-00 – Personenbezogene Ausgabedateien aus GitHub entfernen
+
+- [ ] **Status:** offen
+- **Priorität:** kritisch
+- **Befund:** Das Repository `KwonRoSportschule/matool-automatisierung` ist
+  öffentlich. Commit `f62b651` enthält unter `outputs/` eine Excel-Datei, die
+  direkt aus den unmaskierten Live-Bereichen `interessenten` und
+  `interessenten_details` erzeugt wurde. Ohne Werte auszugeben wurden darin
+  E-Mail- und telefonähnliche Kontaktfelder bestätigt. Die zugehörige
+  PNG-Vorschau und der Generator gehören ebenfalls nicht in den öffentlichen
+  Quellcode-Verlauf. Ein normaler Lösch-Commit entfernt die Datei nicht aus der
+  bereits veröffentlichten Git-Historie.
+- **Benutzerentscheidung vom 19.08.2026:** Das Repository soll vorerst
+  öffentlich bleiben. Die Sichtbarkeit wird nicht verändert. Die Bereinigung
+  der bereits veröffentlichten Historie wurde noch nicht freigegeben.
+- **Abhängigkeit:** ausdrückliche Freigabe für eine bereinigende Umschreibung
+  der Git-Historie.
+- **Arbeitsschritte:**
+  - [x] Entscheidung dokumentieren, dass das Repository vorerst öffentlich
+        bleibt und keine Sichtbarkeitsänderung vorgenommen wird.
+  - [ ] Ausgabedateien lokal außerhalb des Repository-Verlaufs sichern.
+  - [ ] `outputs/` aus dem aktuellen Git-Stand und der veröffentlichten
+        Historie entfernen.
+  - [ ] `outputs/` und vergleichbare personenbezogene Exportdateien dauerhaft
+        per `.gitignore` ausschließen.
+  - [ ] GitHub-Historie und frischen Klon auf XLSX-/Bild-/Kontaktdaten prüfen.
+  - [ ] Danach verifizieren, dass die Cloudflare-GitHub-App weiterhin auf das
+        bereinigte Repository zugreifen kann.
+- **Abnahme:** Im aktuellen GitHub-Baum und in der erreichbaren Historie sind
+  keine personenbezogenen MATOOL-Exporte mehr vorhanden; ein neuer Export wird
+  nicht von Git erfasst; ein frischer Prüflauf findet keine Kontaktwerte in
+  Binärdateien.
+- **Aufwand:** 30–90 Minuten nach Freigabe.
+- **Nachweis:** _Repository-Sichtbarkeit, bereinigter Commit/History-Stand und
+  Binärdatei-Prüfung hier eintragen_
+
 ### TODO REL-00 – Automatisches Cloudflare-Git-Deployment korrigieren
 
 - [ ] **Status:** offen
@@ -328,7 +364,25 @@ angelegte Datensätze enthalten.
   `--env staging` angegeben. Der Lauf brach vor dem Upload mit
   `dist/client does not exist` ab. Ohne den Abbruch hätte der Befehl die
   oberste Wrangler-Umgebung statt Staging anvisiert.
-- **Abhängigkeiten:** keine; vor REL-01 erledigen.
+- **Abhängigkeiten:** keine technische Abhängigkeit; SEC-00 bleibt aufgrund der
+  ausdrücklichen Entscheidung für ein öffentliches Repository separat offen.
+  REL-00 muss vor REL-01 erledigt werden.
+- **Verifizierter GitHub-Stand vom 19.08.2026:**
+  - [x] Repository ist mit dem korrekten Remote verbunden.
+  - [x] Lokales `main` und GitHub-`main` stehen beide auf Commit `f62b651`.
+  - [x] GitHub-CI für Commit `f62b651` ist erfolgreich.
+  - [x] Der vorhandene Cloudflare-Lauf konnte das Repository klonen und die
+        Abhängigkeiten installieren; die GitHub-Verbindung besteht.
+  - [ ] Der jüngste `main`-Commit hat noch keinen erfolgreichen automatischen
+        Cloudflare-Deploy nachgewiesen.
+- **Festgelegte Cloudflare-Buildwerte:**
+  - Repository: `KwonRoSportschule/matool-automatisierung`
+  - Produktionsbranch: `main`
+  - Stammverzeichnis: `/`
+  - Build-Befehl: `pnpm run build:web`
+  - Deploy-Befehl: `pnpm exec wrangler deploy --env staging --strict`
+  - andere Branches: kein automatisches Deployment
+  - überwachte Pfade: alle
 - **Arbeitsschritte:**
   - [ ] Cloudflare-Build-/Deploy-Befehl auf das vorhandene Skript
         `pnpm run deploy:staging` festlegen.
@@ -344,6 +398,10 @@ angelegte Datensätze enthalten.
 - **Aufwand:** 15–30 Minuten.
 - **Nachweis:** _Build-ID, Commit, Zielumgebung und aktive Worker-Version hier
   eintragen_
+- **Betriebsregel:** GitHub-`main` ist die einzige Deploymentquelle. Keine
+  direkten Wrangler-/Dashboard-Deployments. Cloudflare sieht ausschließlich
+  gespeicherte und nach erfolgreicher Prüfung zu `main` gepushte Commits;
+  lokale Änderungen werden technisch nicht automatisch übertragen.
 
 ### TODO REL-01 – Paid- und Zapier-v2-Code auf Staging bereitstellen
 
@@ -855,7 +913,7 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 ## Empfohlene Bearbeitungsreihenfolge
 
 1. DEC-01 bis DEC-05
-2. REL-00 und danach REL-01
+2. SEC-00, danach REL-00 und REL-01
 3. RUN-01
 4. DATA-01 bis DATA-07, jeweils nur nach Vorliegen der benötigten HARs
 5. DQ-01 und DQ-02
@@ -874,14 +932,14 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | Kategorie | Erledigt | Gesamt | Status |
 |---|---:|---:|---|
 | Entscheidungen | 2 | 5 | in Arbeit |
-| Staging-Release | 0 | 2 | offen |
+| Staging-Release | 0 | 3 | offen |
 | Laufstabilität | 0 | 3 | offen |
 | MATOOL-Datenbereiche | 0 | 7 | offen |
 | Datenqualität | 0 | 3 | offen |
 | Zapier | 0 | 2 | offen |
 | Hub/Zugriff | 0 | 2 | offen |
 | Produktion/Freigabe | 0 | 3 | offen |
-| **Gesamt** | **2** | **27** | **V1 nicht freigegeben** |
+| **Gesamt** | **2** | **28** | **V1 nicht freigegeben** |
 
 ## Änderungsverlauf dieses Dokuments
 
@@ -891,3 +949,5 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | DEC-01 | Feiertagskalender auf Bayern/Rosenheim umgestellt und verifiziert | 32/32 Tests und beide Typechecks bestanden |
 | 19.08.2026 | DEC-02 | Bestehende öffentliche `workers.dev`-Adresse als dauerhafte V1-Adresse ohne Login festgelegt | Anonymer Seitenaufruf und aktivierte Verwaltungsfunktionen verifiziert; keine Aktion ausgelöst |
 | 19.08.2026 | REL-00 | Fehlgeschlagenen Cloudflare-Git-Build als neuen Release-Blocker aufgenommen | `dist/client` fehlte und Zielumgebung war nicht angegeben; Umsetzung offen |
+| 19.08.2026 | SEC-00 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden | Automatische Veröffentlichung bis zur freigegebenen Bereinigung blockiert |
+| 19.08.2026 | REL-00 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen |
