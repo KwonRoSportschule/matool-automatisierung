@@ -553,6 +553,9 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Priorität:** kritisch
 - **Befund:** Liste enthält gemischte generische Zeilen; live werden nur vier
   Details pro Lauf gelesen.
+- **Benutzerbeobachtung vom 19.08.2026:** MATOOL zeigt sichtbar mehr aktuelle
+  Interessenten als der Hub. Eine unabhängige Zählung mit identischen Filtern
+  steht noch aus.
 - **Benötigte Daten:** vollständiger read-only HAR/HTML, falls die vorhandene
   Aufnahme nicht alle Listen-/Paginationfälle enthält; unabhängige
   MATOOL-Anzahl.
@@ -564,9 +567,16 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
   - [ ] Pagination und mehr als 100/500 Datensätze testen.
   - [ ] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
+  - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
+        MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
+        D1-Bestand abgleichen; jede Abweichung bis auf stabile MATOOL-ID-Ebene
+        erklären und beheben.
 - **Abnahme:** Gemeinsame DATA-Abgleichtabelle vollständig bestanden;
   Lillis vorhandener Testdatensatz enthält unter anderem die erwartete E-Mail
-  und Telefonnummer, ohne diese Werte in Logs auszugeben.
+  und Telefonnummer, ohne diese Werte in Logs auszugeben. Zusätzlich stimmen
+  sichtbarer MATOOL-Bestand, vollständiger Abruf und aktiver D1-Bestand bei
+  identischen Filtern 1:1 überein; ein zweiter unveränderter Vollabruf erzeugt
+  weder fehlende noch doppelte Interessenten.
 - **Aufwand:** 4–8 Stunden nach Vorliegen aller Aufnahmen.
 - **Nachweis:** _noch einzutragen_
 
@@ -598,6 +608,9 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Befund:** Nur eine generische Schülerliste wird gelesen; 66 von 96 Zeilen
   besitzen nur generische Felder. Der HAR-belegte Endpunkt
   `/json/schueler_daten.php` wird nicht verwendet.
+- **Benutzerbeobachtung vom 19.08.2026:** MATOOL zeigt sichtbar mehr aktuelle
+  Mitglieder als der Hub. Eine unabhängige Zählung mit identischen Filtern
+  steht noch aus.
 - **Benötigte Daten:** Benutzer stellt eine read-only HAR-Aufnahme bereit, in
   der ein Schüler geöffnet und seine Detaildaten geladen werden.
 - **Arbeitsschritte:**
@@ -605,8 +618,15 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [ ] Schülerdetail-Endpunkt und alle freigegebenen Felder abbilden.
   - [ ] Stabile Schüler-ID speichern.
   - [ ] Beziehung Schüler → Klasse/Kurs prüfen und speichern.
+  - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
+        MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
+        D1-Bestand abgleichen; jede Abweichung bis auf stabile MATOOL-ID-Ebene
+        erklären und beheben.
 - **Abnahme:** Gemeinsame DATA-Abgleichtabelle bestanden; keine generischen
-  `c00`-Ersatzdatensätze für fachlich bekannte Schüler.
+  `c00`-Ersatzdatensätze für fachlich bekannte Schüler. Zusätzlich stimmen
+  sichtbarer MATOOL-Bestand, vollständiger Abruf und aktiver D1-Bestand bei
+  identischen Filtern 1:1 überein; ein zweiter unveränderter Vollabruf erzeugt
+  weder fehlende noch doppelte Mitglieder.
 - **Aufwand:** 1 Arbeitstag nach vollständigem HAR.
 - **Nachweis:** _noch einzutragen_
 
@@ -740,6 +760,9 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Arbeitsschritte:**
   - [ ] Backup/Export und exakte Kandidatenliste erstellen.
   - [ ] echte aktuelle IDs gegen MATOOL verifizieren.
+  - [ ] Für Interessenten und Mitglieder getrennt die Mengen `MATOOL sichtbar`,
+        `vollständiger Abruf`, `D1 aktiv` und `D1 historisch` dokumentieren; nur
+        eindeutig verifizierte Alt-/Scheindaten inaktiv markieren.
   - [ ] Alt-/Scheindaten zunächst als inaktiv markieren.
   - [ ] physische Löschung nur nach gesonderter Benutzerfreigabe.
 - **Abnahme:** Aktiver D1-Bestand entspricht der unabhängig bestätigten
@@ -960,3 +983,4 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | SEC-00 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden | Separates Sicherheits-Todo bleibt offen; Repository bleibt auf Benutzerwunsch vorerst öffentlich |
 | 19.08.2026 | REL-00 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen |
 | 19.08.2026 | REL-00 | Automatisches GitHub-Deployment nach Staging vollständig verifiziert | Build `7e180f43`, Commit `38a916a`, Worker-Version `67f5c688`, Health ok und Startseite 200 |
+| 19.08.2026 | DATA-01/DATA-03/DQ-03 | Benutzer meldet weniger Interessenten und Mitglieder im Hub als sichtbar in MATOOL | Verbindlichen 1:1-Bestandsabgleich und idempotenten Kontrolllauf als offene Pflichtschritte ergänzt; Umsetzung und Verifikation offen |
