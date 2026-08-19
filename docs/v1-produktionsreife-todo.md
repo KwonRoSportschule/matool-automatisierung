@@ -357,7 +357,7 @@ angelegte Datensätze enthalten.
 
 ### TODO REL-00 – Automatisches Cloudflare-Git-Deployment korrigieren
 
-- [ ] **Status:** offen
+- [x] **Status:** erledigt
 - **Priorität:** kritisch
 - **Befund:** Der Cloudflare-Build vom 19.08.2026 führte ausschließlich
   `npx wrangler deploy` aus. Dadurch wurde weder `dist/client` erzeugt noch
@@ -369,12 +369,15 @@ angelegte Datensätze enthalten.
   REL-00 muss vor REL-01 erledigt werden.
 - **Verifizierter GitHub-Stand vom 19.08.2026:**
   - [x] Repository ist mit dem korrekten Remote verbunden.
-  - [x] Lokales `main` und GitHub-`main` stehen beide auf Commit `f62b651`.
-  - [x] GitHub-CI für Commit `f62b651` ist erfolgreich.
+  - [x] Lokales `main` und GitHub-`main` standen beim Auslösen des
+        Nachweis-Builds beide auf Commit `38a916a`.
+  - [x] Der vorausgehende Code-Stand `f62b651` hatte eine erfolgreiche
+        GitHub-CI; die REL-00-Änderung betraf anschließend nur dieses
+        Todo-Dokument.
   - [x] Der vorhandene Cloudflare-Lauf konnte das Repository klonen und die
         Abhängigkeiten installieren; die GitHub-Verbindung besteht.
-  - [ ] Der jüngste `main`-Commit hat noch keinen erfolgreichen automatischen
-        Cloudflare-Deploy nachgewiesen.
+  - [x] Commit `38a916a` wurde nach dem Push auf `main` automatisch gebaut und
+        ohne manuellen Wrangler-Deploy veröffentlicht.
 - **Festgelegte Cloudflare-Buildwerte:**
   - Repository: `KwonRoSportschule/matool-automatisierung`
   - Produktionsbranch: `main`
@@ -384,20 +387,25 @@ angelegte Datensätze enthalten.
   - andere Branches: kein automatisches Deployment
   - überwachte Pfade: alle
 - **Arbeitsschritte:**
-  - [ ] Cloudflare-Build-/Deploy-Befehl auf das vorhandene Skript
-        `pnpm run deploy:staging` festlegen.
-  - [ ] Sicherstellen, dass zuerst der Web-Build `dist/client` erzeugt.
-  - [ ] Sicherstellen, dass Wrangler ausdrücklich `--env staging --strict`
+  - [x] Cloudflare-Build auf `pnpm run build:web` und Deployment auf
+        `pnpm exec wrangler deploy --env staging --strict` festlegen.
+  - [x] Sicherstellen, dass zuerst der Web-Build `dist/client` erzeugt.
+  - [x] Sicherstellen, dass Wrangler ausdrücklich `--env staging --strict`
         verwendet.
-  - [ ] Einen neuen Cloudflare-Git-Build beobachten, ohne andere Umgebungen
+  - [x] Einen neuen Cloudflare-Git-Build beobachten, ohne andere Umgebungen
         zu verändern.
 - **Abnahme:** Der Cloudflare-Git-Build erstellt `dist/client`, nennt Staging
   ausdrücklich als Ziel und endet erfolgreich. Die aktive Staging-Version
   entspricht dem ausgelösten Commit; keine Top-Level-/Produktionsumgebung
   wurde versehentlich veröffentlicht.
 - **Aufwand:** 15–30 Minuten.
-- **Nachweis:** _Build-ID, Commit, Zielumgebung und aktive Worker-Version hier
-  eintragen_
+- **Nachweis:** Cloudflare-Build `7e180f43-1e21-46e2-a3ad-4602bd8da322`
+  für GitHub-Commit `38a916a1f91001eb338e2508369e874199e8fa13` endete
+  nach 31 Sekunden erfolgreich. Das Protokoll bestätigt den Web-Build, den
+  Deploy-Befehl mit `--env staging --strict`, das D1-Binding
+  `matool-middleware-staging`, `APP_ENV=staging` und die aktive Worker-Version
+  `67f5c688-a249-4b06-901c-8495fb958252`. `/healthz` lieferte anschließend
+  `status=ok`; die Startseite lieferte HTTP 200 und `text/html`.
 - **Betriebsregel:** GitHub-`main` ist die einzige Deploymentquelle. Keine
   direkten Wrangler-/Dashboard-Deployments. Cloudflare sieht ausschließlich
   gespeicherte und nach erfolgreicher Prüfung zu `main` gepushte Commits;
@@ -932,14 +940,14 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | Kategorie | Erledigt | Gesamt | Status |
 |---|---:|---:|---|
 | Entscheidungen | 2 | 5 | in Arbeit |
-| Staging-Release | 0 | 3 | offen |
+| Staging-Release | 1 | 3 | in Arbeit |
 | Laufstabilität | 0 | 3 | offen |
 | MATOOL-Datenbereiche | 0 | 7 | offen |
 | Datenqualität | 0 | 3 | offen |
 | Zapier | 0 | 2 | offen |
 | Hub/Zugriff | 0 | 2 | offen |
 | Produktion/Freigabe | 0 | 3 | offen |
-| **Gesamt** | **2** | **28** | **V1 nicht freigegeben** |
+| **Gesamt** | **3** | **28** | **V1 nicht freigegeben** |
 
 ## Änderungsverlauf dieses Dokuments
 
@@ -949,5 +957,6 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | DEC-01 | Feiertagskalender auf Bayern/Rosenheim umgestellt und verifiziert | 32/32 Tests und beide Typechecks bestanden |
 | 19.08.2026 | DEC-02 | Bestehende öffentliche `workers.dev`-Adresse als dauerhafte V1-Adresse ohne Login festgelegt | Anonymer Seitenaufruf und aktivierte Verwaltungsfunktionen verifiziert; keine Aktion ausgelöst |
 | 19.08.2026 | REL-00 | Fehlgeschlagenen Cloudflare-Git-Build als neuen Release-Blocker aufgenommen | `dist/client` fehlte und Zielumgebung war nicht angegeben; Umsetzung offen |
-| 19.08.2026 | SEC-00 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden | Automatische Veröffentlichung bis zur freigegebenen Bereinigung blockiert |
+| 19.08.2026 | SEC-00 | Personenbezogene MATOOL-Exportdateien im öffentlichen GitHub-Verlauf gefunden | Separates Sicherheits-Todo bleibt offen; Repository bleibt auf Benutzerwunsch vorerst öffentlich |
 | 19.08.2026 | REL-00 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen |
+| 19.08.2026 | REL-00 | Automatisches GitHub-Deployment nach Staging vollständig verifiziert | Build `7e180f43`, Commit `38a916a`, Worker-Version `67f5c688`, Health ok und Startseite 200 |
