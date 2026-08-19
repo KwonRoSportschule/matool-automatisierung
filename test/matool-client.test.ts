@@ -132,6 +132,97 @@ function interessentRow(input: {
   `;
 }
 
+type PaginatedListArea = "interessenten" | "schueler";
+
+function paginationHref(area: PaginatedListArea, offset: number): string {
+  return area === "schueler"
+    ? `/index.php?show=schueler&amp;todo=&amp;offset=${offset}`
+    : `/index.php?show=interessenten&amp;offset=${offset}`;
+}
+
+function paginatedListPage(input: {
+  area: PaginatedListArea;
+  currentOffset: number;
+  offsets: readonly number[];
+  rows: string;
+  selectedOffset?: number;
+}): string {
+  const selectedOffset = input.selectedOffset ?? input.currentOffset;
+  const pagination = input.offsets
+    .map((offset, index) =>
+      offset === selectedOffset
+        ? `<span class="pagination_selected">${index + 1}</span>`
+        : `<a class="pagination" href="${paginationHref(input.area, offset)}">${index + 1}</a>`
+    )
+    .join("");
+  const headers =
+    input.area === "schueler"
+      ? ["NR.", "VORNAME", "NAME", "VERTRAG"]
+      : ["Nr.", "Datum", "Vorname", "Name", "Status"];
+  return `
+    <html><body>
+      <table>
+        <tr class="master_tab_tr_head">
+          ${headers.map((header) => `<td>${header}</td>`).join("")}
+        </tr>
+      </table>
+      <table>${input.rows}</table>
+      <nav>${pagination}</nav>
+      <input name="offset" value="0">
+    </body></html>
+  `;
+}
+
+function schuelerRow(sourceId: string, number: number): string {
+  return `
+    <tr onclick="formular_fuellen(${sourceId},'Synthetic ${sourceId}')">
+      <td>${number}</td><td>Vorname ${number}</td><td>Name ${number}</td>
+    </tr>
+  `;
+}
+
+function clientForPaginatedPages(
+  pages: ReadonlyMap<string, { body?: string; status?: number }>,
+  requests: string[] = []
+): MatoolClient {
+  return new MatoolClient(
+    "https://core.matool.de",
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const path = `${url.pathname}${url.search}`;
+      requests.push(path);
+      if (path === "/index.php" && init?.method === "POST") {
+        return new Response(null, {
+          headers: { Location: "/index.php" },
+          status: 302
+        });
+      }
+      if (path === "/index.php") {
+        return new Response("<html><body>Angemeldet</body></html>", {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            ...(requests.length === 1
+              ? {
+                  "Set-Cookie":
+                    "synthetic_session=opaque-test-value; Path=/; Secure; HttpOnly"
+                }
+              : {})
+          },
+          status: 200
+        });
+      }
+      const page = pages.get(path);
+      if (!page) {
+        throw new Error(`unexpected synthetic request: ${path}`);
+      }
+      return new Response(page.body ?? "", {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: page.status ?? 200
+      });
+    }) as typeof fetch
+  );
+}
+
 describe("MATOOL-Ausgangs-Host-Allowlist", () => {
   it("akzeptiert ausschließlich die verifizierte HTTPS-Basisadresse", () => {
     expect(validateMatoolBaseUrl("https://core.matool.de").origin).toBe(
@@ -536,7 +627,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         status: 200
       }),
       new Response(
-        "<html><body><h1>Interessenten</h1><table></table></body></html>",
+        "<html><body><h1>Interessenten</h1><table></table><span class=\"pagination_selected\">1</span></body></html>",
         {
           headers: { "Content-Type": "text/html; charset=utf-8" },
           status: 200
@@ -971,6 +1062,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
             <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
           </tr>
         </table>
+        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1003,6 +1095,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
             <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
           </tr>
         </table>
+        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1032,6 +1125,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         <table>
           <tr onclick="formular_fuellen(4711)"><td>4711</td><td>01.01.2026</td></tr>
         </table>
+        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1048,7 +1142,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     });
   });
 
-  it("extrahiert allowlist-basierte Tabellenzeilen mit stabilen IDs und Redaction", async () => {
+  it("speichert in Interessentenlisten nur Zeilen mit stabilen IDs", async () => {
     const longCell = "x".repeat(700);
     const page = `
       <html><body><h1>Interessenten</h1>
@@ -1058,15 +1152,13 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
             <td>Alice<script>PRIVATE-SCRIPT</script>
               <input value="PRIVATE-INPUT"><img alt="PRIVATE-IMAGE">
             </td>
-            <td><a href="/index.php?show=interessenten&amp;interessent=900001">Öffnen</a></td>
+            <td><a href="/index.php?show=interessenten&amp;interessent=900001">Oeffnen</a></td>
             <td>DE89 3704 0044 0532 0130 00</td>
-          </tr>
-          <tr onclick="formular_fuellen(900001)">
-            <td>Duplikat</td><td>Duplikat</td><td>Duplikat</td>
           </tr>
           <tr><td><a href="/index.php?show=interessenten&amp;page=2">Weiter</a></td></tr>
           <tr><td>${longCell}</td><td>Ohne technische ID</td></tr>
         </table>
+        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1080,33 +1172,292 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(result).toMatchObject({
       area: "interessenten",
       bodyBytes: new TextEncoder().encode(page).byteLength,
-      rowCount: 2
+      rowCount: 1
     });
     // Die Spaltennamen stammen aus der Kopfzeile der Tabelle.
     expect(result.records[0]).toEqual({
       sourceId: "900001",
       payload: {
         name: "Alice",
-        details: "Öffnen",
+        details: "Oeffnen",
         zahlung: "",
         columnCount: 3,
         tableIndex: 0
       }
     });
-    // Fuer zwei Spalten gibt es keine passende Kopfzeile; dann bleibt die
-    // Nummerierung erhalten.
-    expect(result.records[1]?.sourceId).toMatch(/^[a-f0-9]{64}$/u);
-    expect(result.records[1]?.payload.c00).toHaveLength(500);
+    expect(result.records.every(({ sourceId }) => /^\d+$/u.test(sourceId))).toBe(
+      true
+    );
     const serialized = JSON.stringify(result);
     for (const forbidden of [
       "PRIVATE-SCRIPT",
       "PRIVATE-INPUT",
       "PRIVATE-IMAGE",
-      "DE89",
-      "Duplikat"
+      "DE89"
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  it("verwirft eine strikte Liste ohne ausgewaehlte erste Seite", async () => {
+    const body = interessentenPage(
+      interessentRow({
+        createdDate: "01.08.2026",
+        displayNumber: "100",
+        firstName: "Vorname",
+        lastName: "Name",
+        sourceId: "900001",
+        status: "Neu"
+      })
+    );
+    const pages = new Map([
+      ["/index.php?show=interessenten&offset=0", { body }]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch"
+    });
+  });
+
+  it("liest alle angezeigten Interessentenseiten ab offset null genau einmal", async () => {
+    const offsets = [0, 30, 60];
+    const requests: string[] = [];
+    const pages = new Map<string, { body: string }>();
+    let expectedBodyBytes = 0;
+    for (const [index, offset] of offsets.entries()) {
+      const body = paginatedListPage({
+        area: "interessenten",
+        currentOffset: offset,
+        offsets,
+        rows:
+          interessentRow({
+            createdDate: `0${index + 1}.08.2026`,
+            displayNumber: String(100 + index),
+            firstName: `Vorname ${index}`,
+            lastName: `Name ${index}`,
+            sourceId: String(900_001 + index),
+            status: "Neu"
+          }) + (offset === 0 ? "<tr><td>Layout ohne ID</td></tr>" : "")
+      });
+      expectedBodyBytes += new TextEncoder().encode(body).byteLength;
+      pages.set(`/index.php?show=interessenten&offset=${offset}`, { body });
+    }
+
+    const result = await clientForPaginatedPages(
+      pages,
+      requests
+    ).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "interessenten"
+    );
+
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "900001",
+      "900002",
+      "900003"
+    ]);
+    expect(result.bodyBytes).toBe(expectedBodyBytes);
+    expect(requests.slice(-3)).toEqual([
+      "/index.php?show=interessenten&offset=0",
+      "/index.php?show=interessenten&offset=30",
+      "/index.php?show=interessenten&offset=60"
+    ]);
+  });
+
+  it("liest eine Schuelerliste mit mehr als 500 stabilen Datensaetzen vollstaendig", async () => {
+    const offsets = Array.from({ length: 17 }, (_, index) => index * 30);
+    const pages = new Map<string, { body: string }>();
+    let recordIndex = 0;
+    for (const offset of offsets) {
+      const pageSize = offset === offsets.at(-1) ? 21 : 30;
+      const rows = Array.from({ length: pageSize }, () => {
+        const current = recordIndex;
+        recordIndex += 1;
+        return schuelerRow(String(700_000 + current), current + 1);
+      }).join("");
+      pages.set(`/index.php?show=schueler&todo=&offset=${offset}`, {
+        body: paginatedListPage({
+          area: "schueler",
+          currentOffset: offset,
+          offsets,
+          rows
+        })
+      });
+    }
+
+    const result = await clientForPaginatedPages(pages).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "schueler"
+    );
+
+    expect(result.rowCount).toBe(501);
+    expect(result.records[0]?.sourceId).toBe("700000");
+    expect(result.records.at(-1)?.sourceId).toBe("700500");
+  });
+
+  it.each([
+    "https://attacker.invalid/index.php?show=interessenten&offset=30",
+    "/index.php?show=interessenten&offset=30&unexpected=1"
+  ])("verwirft einen unzulaessigen Pagination-Link %s", async (invalidHref) => {
+    const body = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0, 30],
+      rows: interessentRow({
+        createdDate: "01.08.2026",
+        displayNumber: "100",
+        firstName: "Vorname",
+        lastName: "Name",
+        sourceId: "900001",
+        status: "Neu"
+      })
+    }).replace(paginationHref("interessenten", 30), invalidHref);
+    const pages = new Map([
+      ["/index.php?show=interessenten&offset=0", { body }]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch",
+      status: 502
+    });
+  });
+
+  it("bricht bei einer fehlgeschlagenen Folgeseite ohne Teilresultat ab", async () => {
+    const offsets = [0, 30];
+    const pages = new Map<string, { body?: string; status?: number }>([
+      [
+        "/index.php?show=interessenten&offset=0",
+        {
+          body: paginatedListPage({
+            area: "interessenten",
+            currentOffset: 0,
+            offsets,
+            rows: interessentRow({
+              createdDate: "01.08.2026",
+              displayNumber: "100",
+              firstName: "Vorname",
+              lastName: "Name",
+              sourceId: "900001",
+              status: "Neu"
+            })
+          })
+        }
+      ],
+      ["/index.php?show=interessenten&offset=30", { status: 503 }]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({ code: "matool_unexpected_status" });
+  });
+
+  it("verwirft identische Duplikate ueber Seitengrenzen", async () => {
+    const offsets = [0, 30];
+    const duplicate = (status: string): string =>
+      interessentRow({
+        createdDate: "01.08.2026",
+        displayNumber: "100",
+        firstName: "Vorname",
+        lastName: "Name",
+        sourceId: "900001",
+        status
+      });
+    const pages = new Map([
+      [
+        "/index.php?show=interessenten&offset=0",
+        {
+          body: paginatedListPage({
+            area: "interessenten",
+            currentOffset: 0,
+            offsets,
+            rows: duplicate("Neu")
+          })
+        }
+      ],
+      [
+        "/index.php?show=interessenten&offset=30",
+        {
+          body: paginatedListPage({
+            area: "interessenten",
+            currentOffset: 30,
+            offsets,
+            rows: duplicate("Neu")
+          })
+        }
+      ]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch"
+    });
+  });
+
+  it("verwirft identische Duplikate innerhalb einer Seite", async () => {
+    const row = interessentRow({
+      createdDate: "01.08.2026",
+      displayNumber: "100",
+      firstName: "Vorname",
+      lastName: "Name",
+      sourceId: "900001",
+      status: "Neu"
+    });
+    const body = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0],
+      rows: `${row}${row}`
+    });
+    const pages = new Map([
+      ["/index.php?show=interessenten&offset=0", { body }]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch"
+    });
   });
 
   it("liest alle Klassen-Griffe und speichert nur freigegebene Klassendaten mit stabiler Antwort-ID", async () => {

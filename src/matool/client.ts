@@ -14,8 +14,10 @@ const MAX_INTERESSENTEN_CELL_LENGTH = 150;
 const MAX_INTERESSENTEN_ID_LENGTH = 32;
 const MAX_KLASSEN_RECORDS = 500;
 const MAX_SAFE_AREA_RECORDS = 20_000;
+const MAX_SAFE_AREA_PAGES = 250;
 const MAX_SAFE_AREA_CELLS = 64;
 const MAX_SAFE_AREA_CELL_LENGTH = 500;
+const PAGINATED_SAFE_AREAS = new Set(["interessenten", "schueler"]);
 // Detaildaten werden ausschliesslich ueber MATOOLs lesenden JSON-Endpunkt
 // geladen. Die Grenze entspricht der maximal verarbeiteten Listenmenge.
 const MAX_INTERESSENTEN_DETAIL_RECORDS = 500;
@@ -113,6 +115,7 @@ export interface MatoolInteressent {
 
 export type MatoolArea = "interessenten";
 export type MatoolSafeArea = (typeof SAFE_MATOOL_AREAS)[number];
+type MatoolPaginatedSafeArea = "interessenten" | "schueler";
 
 export interface MatoolSafeAreaRecord {
   payload: Record<string, boolean | number | string | null>;
@@ -379,8 +382,85 @@ export class MatoolClient {
     requireCredentials(credentials);
     await this.login(credentials);
 
+    if (isPaginatedSafeArea(allowedArea)) {
+      return this.extractPaginatedSafeArea(allowedArea);
+    }
+
+    return this.fetchSingleSafeAreaPage(allowedArea);
+  }
+
+  private async extractPaginatedSafeArea(
+    area: MatoolPaginatedSafeArea
+  ): Promise<MatoolSafeAreaResult> {
+    // MATOOL merkt sich die zuletzt geoeffnete Seite in der Session.
+    // Deshalb muss auch die erste Seite immer explizit offset=0 anfordern.
+    const firstPage = await this.fetchSafeAreaPage(area, 0);
+    const pagination = normalizeSafeAreaPagination(
+      firstPage.pagination,
+      area,
+      0
+    );
+    validateSelectedPaginationPage(pagination, 0);
+
+    const records = new Map<string, MatoolSafeAreaRecord>();
+    let bodyBytes = firstPage.bodyBytes;
+    mergePaginatedSafeAreaRecords(records, firstPage.records);
+
+    for (const offset of pagination.offsets) {
+      if (offset === 0) {
+        continue;
+      }
+      const page = await this.fetchSafeAreaPage(area, offset);
+      bodyBytes += page.bodyBytes;
+      const pagePagination = normalizeSafeAreaPagination(
+        page.pagination,
+        area,
+        offset
+      );
+      if (!sameNumbers(pagePagination.offsets, pagination.offsets)) {
+        throw paginatedSafeAreaSchemaError();
+      }
+      validateSelectedPaginationPage(pagePagination, offset);
+      mergePaginatedSafeAreaRecords(records, page.records);
+      if (records.size > MAX_SAFE_AREA_RECORDS) {
+        throw safeAreaLimitError();
+      }
+    }
+
+    return {
+      area,
+      bodyBytes,
+      records: [...records.values()],
+      rowCount: records.size
+    };
+  }
+
+  private async fetchSingleSafeAreaPage(
+    area: MatoolSafeArea
+  ): Promise<MatoolSafeAreaResult> {
+    const page = await this.fetchSafeAreaPage(area);
+    return {
+      area,
+      bodyBytes: page.bodyBytes,
+      records: page.records,
+      rowCount: page.records.length
+    };
+  }
+
+  private async fetchSafeAreaPage(
+    area: MatoolSafeArea,
+    offset?: number
+  ): Promise<SafeAreaPageResult> {
+    const query = new URLSearchParams({ show: area });
+    if (offset !== undefined) {
+      if (area === "schueler") {
+        query.set("todo", "");
+      }
+      query.set("offset", String(offset));
+    }
+
     const response = await this.request(
-      `/index.php?show=${encodeURIComponent(allowedArea)}`,
+      `/index.php?${query.toString()}`,
       {
         headers: { Accept: "text/html,application/xhtml+xml" },
         method: "GET"
@@ -405,16 +485,14 @@ export class MatoolClient {
     }
 
     const body = await readBoundedBody(response);
-    const records = await extractSafeAreaRows(
+    const page = await extractSafeAreaPage(
       body,
       contentType,
-      allowedArea
+      area
     );
     return {
-      area: allowedArea,
       bodyBytes: body.byteLength,
-      records,
-      rowCount: records.length
+      ...page
     };
   }
 
@@ -1053,9 +1131,31 @@ interface SafeAreaRowCapture {
   hrefIds: Array<{ id: string; key: string }>;
   linkCount: number;
   onclickIds: string[];
+  stableListIds: string[];
   tableIndex: number;
   tdCount: number;
   thCount: number;
+}
+
+interface SafeAreaPaginationMarker {
+  href?: string;
+  text: string;
+}
+
+interface SafeAreaPaginationCapture {
+  detected: boolean;
+  invalidElement: boolean;
+  links: string[];
+  selected: SafeAreaPaginationMarker[];
+}
+
+interface ParsedSafeAreaPage {
+  pagination: SafeAreaPaginationCapture;
+  records: MatoolSafeAreaRecord[];
+}
+
+interface SafeAreaPageResult extends ParsedSafeAreaPage {
+  bodyBytes: number;
 }
 
 /**
@@ -1335,12 +1435,19 @@ function interessentDetailSchemaError(): AppError {
   );
 }
 
-async function extractSafeAreaRows(
+async function extractSafeAreaPage(
   body: Uint8Array,
   contentType: string,
   area: MatoolSafeArea
-): Promise<MatoolSafeAreaRecord[]> {
+): Promise<ParsedSafeAreaPage> {
   const rows: SafeAreaRowCapture[] = [];
+  const pagination: SafeAreaPaginationCapture = {
+    detected: false,
+    invalidElement: false,
+    links: [],
+    selected: []
+  };
+  const selectedPaginationStack: SafeAreaPaginationMarker[] = [];
   const tableStack: number[] = [];
   let tableCount = 0;
   let activeRow: SafeAreaRowCapture | undefined;
@@ -1397,6 +1504,7 @@ async function extractSafeAreaRows(
           hrefIds: [],
           linkCount: 0,
           onclickIds: [],
+          stableListIds: [],
           tableIndex: tableStack.at(-1) ?? -1,
           tdCount: 0,
           thCount: 0
@@ -1466,9 +1574,14 @@ async function extractSafeAreaRows(
         if (!activeRow) {
           return;
         }
+        const onclick = element.getAttribute("onclick") ?? "";
+        const stableListId = extractStableListId(onclick, area);
+        if (stableListId) {
+          activeRow.stableListIds.push(stableListId);
+        }
         const match =
           /^\s*(?:formular_fuellen|open\w*|show\w*|load\w*|edit\w*|.*(?:daten|detail)\w*)\s*\(\s*['"]?(\d{1,64})/iu.exec(
-            element.getAttribute("onclick") ?? ""
+            onclick
           );
         if (match?.[1]) {
           activeRow.onclickIds.push(match[1]);
@@ -1480,6 +1593,51 @@ async function extractSafeAreaRows(
         const name = element.getAttribute("name")?.trim().toLowerCase();
         mailFieldDetected ||= name === "mail";
         passwordFieldDetected ||= name === "pass";
+      }
+    })
+    .on(".pagination", {
+      element(element) {
+        pagination.detected = true;
+        const href = element.getAttribute("href");
+        if (element.tagName.toLowerCase() !== "a" || !href) {
+          pagination.invalidElement = true;
+          return;
+        }
+        if (pagination.links.length >= MAX_SAFE_AREA_PAGES) {
+          pagination.invalidElement = true;
+          return;
+        }
+        pagination.links.push(href);
+      }
+    })
+    .on(".pagination_selected", {
+      element(element) {
+        pagination.detected = true;
+        const href = element.getAttribute("href") ?? undefined;
+        const marker: SafeAreaPaginationMarker = {
+          ...(href ? { href } : {}),
+          text: ""
+        };
+        if (pagination.selected.length >= MAX_SAFE_AREA_PAGES) {
+          pagination.invalidElement = true;
+          return;
+        }
+        pagination.selected.push(marker);
+        selectedPaginationStack.push(marker);
+        if (href) {
+          pagination.links.push(href);
+        }
+        element.onEndTag(() => {
+          if (selectedPaginationStack.at(-1) === marker) {
+            selectedPaginationStack.pop();
+          }
+        });
+      },
+      text(text) {
+        const marker = selectedPaginationStack.at(-1);
+        if (marker) {
+          marker.text = appendBounded(marker.text, text.text, 32);
+        }
       }
     })
     .on("table script", {
@@ -1563,14 +1721,24 @@ async function extractSafeAreaRows(
       const fallback = `c${index.toString().padStart(2, "0")}`;
       payload[headerNames?.[index] ?? fallback] = cell;
     });
-    const explicitId = selectSafeAreaSourceId(row, area);
+    const strictListArea = isPaginatedSafeArea(area);
+    const explicitId = strictListArea
+      ? row.stableListIds.length === 1
+        ? row.stableListIds[0]
+        : undefined
+      : selectSafeAreaSourceId(row, area);
+    if (strictListArea && !explicitId) {
+      continue;
+    }
     const rowKey = explicitId
       ? `id:${explicitId}`
       : `payload:${canonicalJson(payload)}`;
-    if (seen.has(rowKey)) {
+    if (!strictListArea && seen.has(rowKey)) {
       continue;
     }
-    seen.add(rowKey);
+    if (!strictListArea) {
+      seen.add(rowKey);
+    }
     if (prepared.length >= MAX_SAFE_AREA_RECORDS) {
       throw new AppError(
         "matool_safe_area_limit_exceeded",
@@ -1581,12 +1749,230 @@ async function extractSafeAreaRows(
     prepared.push({ ...(explicitId ? { explicitId } : {}), payload });
   }
 
-  return Promise.all(
+  const records = await Promise.all(
     prepared.map(async ({ explicitId, payload }) => ({
       payload,
       sourceId:
         explicitId ?? (await sha256Hex(canonicalJson(payload)))
     }))
+  );
+  return { pagination, records };
+}
+
+interface NormalizedSafeAreaPagination {
+  detected: boolean;
+  offsets: number[];
+  selectedOffset?: number;
+  selectedPageNumber?: number;
+}
+
+function normalizeSafeAreaPagination(
+  capture: SafeAreaPaginationCapture,
+  area: MatoolPaginatedSafeArea,
+  currentOffset: number
+): NormalizedSafeAreaPagination {
+  if (capture.invalidElement) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  if (!capture.detected) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  if (capture.selected.length === 0) {
+    throw paginatedSafeAreaSchemaError();
+  }
+
+  const offsets = new Set<number>([currentOffset]);
+  for (const href of capture.links) {
+    offsets.add(parseSafeAreaPaginationOffset(href, area));
+  }
+
+  let selectedOffset: number | undefined;
+  let selectedPageNumber: number | undefined;
+  for (const marker of capture.selected) {
+    const pageText = marker.text.replace(/\s+/gu, "");
+    const pageNumber = /^\d+$/u.test(pageText)
+      ? Number(pageText)
+      : undefined;
+    const markerOffset = marker.href
+      ? parseSafeAreaPaginationOffset(marker.href, area)
+      : undefined;
+    if (
+      (pageNumber === undefined ||
+        !Number.isSafeInteger(pageNumber) ||
+        pageNumber < 1) &&
+      markerOffset === undefined
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    if (
+      pageNumber !== undefined &&
+      selectedPageNumber !== undefined &&
+      pageNumber !== selectedPageNumber
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    if (
+      markerOffset !== undefined &&
+      selectedOffset !== undefined &&
+      markerOffset !== selectedOffset
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    selectedPageNumber ??= pageNumber;
+    selectedOffset ??= markerOffset;
+  }
+
+  const normalizedOffsets = [...offsets].sort((left, right) => left - right);
+  if (
+    normalizedOffsets.length === 0 ||
+    normalizedOffsets.length > MAX_SAFE_AREA_PAGES ||
+    normalizedOffsets[0] !== 0
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  return {
+    detected: true,
+    offsets: normalizedOffsets,
+    ...(selectedOffset === undefined ? {} : { selectedOffset }),
+    ...(selectedPageNumber === undefined ? {} : { selectedPageNumber })
+  };
+}
+
+function parseSafeAreaPaginationOffset(
+  rawHref: string,
+  area: MatoolPaginatedSafeArea
+): number {
+  let url: URL;
+  try {
+    url = new URL(
+      rawHref.replace(/&amp;/giu, "&"),
+      "https://core.matool.de/"
+    );
+  } catch {
+    throw paginatedSafeAreaSchemaError();
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== ALLOWED_MATOOL_HOST ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/index.php" ||
+    url.hash
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+
+  const entries = [...url.searchParams];
+  const allowedKeys =
+    area === "schueler"
+      ? new Set(["show", "todo", "offset"])
+      : new Set(["show", "offset"]);
+  if (
+    entries.length !== allowedKeys.size ||
+    entries.some(([key]) => !allowedKeys.has(key)) ||
+    [...allowedKeys].some(
+      (key) => entries.filter(([entryKey]) => entryKey === key).length !== 1
+    ) ||
+    url.searchParams.get("show") !== area ||
+    (area === "schueler" && url.searchParams.get("todo") !== "")
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+
+  const rawOffset = url.searchParams.get("offset") ?? "";
+  if (!/^(?:0|[1-9]\d*)$/u.test(rawOffset)) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  const offset = Number(rawOffset);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  return offset;
+}
+
+function validateSelectedPaginationPage(
+  pagination: NormalizedSafeAreaPagination,
+  expectedOffset: number
+): void {
+  if (!pagination.detected) {
+    if (expectedOffset !== 0) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    return;
+  }
+  const expectedPageIndex = pagination.offsets.indexOf(expectedOffset);
+  if (
+    expectedPageIndex < 0 ||
+    (pagination.selectedOffset !== undefined &&
+      pagination.selectedOffset !== expectedOffset) ||
+    (pagination.selectedPageNumber !== undefined &&
+      pagination.selectedPageNumber !== expectedPageIndex + 1)
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+}
+
+function mergePaginatedSafeAreaRecords(
+  target: Map<string, MatoolSafeAreaRecord>,
+  records: readonly MatoolSafeAreaRecord[]
+): void {
+  for (const record of records) {
+    const existing = target.get(record.sourceId);
+    if (existing) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    if (target.size >= MAX_SAFE_AREA_RECORDS) {
+      throw safeAreaLimitError();
+    }
+    target.set(record.sourceId, record);
+  }
+}
+
+function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
+}
+
+function extractStableListId(
+  onclick: string,
+  area: MatoolSafeArea
+): string | undefined {
+  if (!isPaginatedSafeArea(area)) {
+    return undefined;
+  }
+  const match =
+    area === "interessenten"
+      ? /^\s*formular_fuellen\(\s*(?:(["'])(\d{1,64})\1|(\d{1,64}))\s*\)\s*;?\s*$/u.exec(
+          onclick
+        )
+      : /^\s*formular_fuellen\(\s*(?:(["'])(\d{1,64})\1|(\d{1,64}))\s*,\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)\s*;?\s*$/u.exec(
+          onclick
+        );
+  return match?.[2] ?? match?.[3];
+}
+
+function isPaginatedSafeArea(
+  area: MatoolSafeArea
+): area is MatoolPaginatedSafeArea {
+  return PAGINATED_SAFE_AREAS.has(area);
+}
+
+function paginatedSafeAreaSchemaError(): AppError {
+  return new AppError(
+    "matool_paginated_list_schema_mismatch",
+    502,
+    "Die paginierte MATOOL-Liste entspricht nicht dem bestaetigten Schema."
+  );
+}
+
+function safeAreaLimitError(): AppError {
+  return new AppError(
+    "matool_safe_area_limit_exceeded",
+    502,
+    "Die MATOOL-Antwort ueberschreitet das sichere Datensatzlimit."
   );
 }
 

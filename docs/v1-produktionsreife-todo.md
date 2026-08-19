@@ -21,6 +21,19 @@ Arbeitsregel:
 6. Fehler oder neue Blocker werden unter der betroffenen Todo-ID dokumentiert,
    nicht nebenbei behoben.
 
+### Verbindliche Dokumentationsregel
+
+1. Diese GitHub-Datei ist die maßgebliche V1-Todo-Liste.
+2. Sie wird nach jedem verifizierten Arbeitsschritt und vor jeder Übergabe auf
+   den aktuellen Stand gebracht.
+3. Bestehende Todos werden niemals entfernt.
+4. Ein Todo oder Teilschritt wird erst nach erfolgreicher Verifikation als
+   erledigt (`[x]`) markiert.
+5. Neu festgestellte Aufgaben, Fehler oder Risiken werden als offene Punkte
+   ergänzt.
+6. Jedes Fortschrittsupdate und jede Abschlussmeldung nennt ausdrücklich:
+   `Abgehakt`, `Hinzugefügt` und `Weiter offen`.
+
 ## Verbindlicher V1-Umfang
 
 Die Anwendung ist ausschließlich der Datenübertragungshub zwischen MATOOL und
@@ -508,7 +521,11 @@ angelegte Datensätze enthalten.
 - **Ziel:** Vorübergehende MATOOL-Fehler lassen nicht den gesamten Stundenlauf
   unkontrolliert ausfallen.
 - **Befund:** Netzwerkfehler werden einmal wiederholt; HTTP 429/5xx und
-  abgelaufene Sessions besitzen keine vollständige Recovery.
+  abgelaufene Sessions besitzen keine vollständige Recovery. Der bestätigte
+  Vollabruf ergänzt mindestens 117 Interessenten- und 19 Mitgliederseiten.
+  Zusammen mit bis zu 500 Interessenten-Details, 500 Klassen-Details und
+  700 ms Mindestabstand ist ein vollständiger Lauf weiterhin nicht sicher
+  unter Cloudflares 15-Minuten-Grenze nachgewiesen.
 - **Abhängigkeiten:** RUN-01 und RUN-02.
 - **Arbeitsschritte:**
   - [ ] 429 und geeignete 5xx begrenzt wiederholen.
@@ -553,9 +570,13 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Priorität:** kritisch
 - **Befund:** Liste enthält gemischte generische Zeilen; live werden nur vier
   Details pro Lauf gelesen.
-- **Benutzerbeobachtung vom 19.08.2026:** MATOOL zeigt sichtbar mehr aktuelle
-  Interessenten als der Hub. Eine unabhängige Zählung mit identischen Filtern
-  steht noch aus.
+- **Live-Nachweis vom 19.08.2026:** Bei den unveränderten Standardfiltern
+  (`Status`, `Schule`, `Quelle`, `Leistung` und `Monat` jeweils `alle`) zeigt
+  MATOOL 117 Seiten. Die Seiten verwenden `offset` in 30er-Schritten; Seite 1
+  enthält 30 und Seite 117 enthält 13 stabile numerische Datensätze. Damit sind
+  3.493 aktuelle Interessenten in der Quelle belegt. Der Hub liest bislang nur
+  eine Seite. MATOOL merkt sich die zuletzt geöffnete Seite in der Sitzung;
+  deshalb muss ein Vollabruf ausdrücklich mit `offset=0` beginnen.
 - **Benötigte Daten:** vollständiger read-only HAR/HTML, falls die vorhandene
   Aufnahme nicht alle Listen-/Paginationfälle enthält; unabhängige
   MATOOL-Anzahl.
@@ -563,9 +584,13 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   Telefon, Handy, E-Mail, Quelle, Kontakt, Kontaktart, Schule, Leistung,
   Probetraining 1/2 mit Datum/Zeit/Klasse, Status, Anmerkung und Werbequelle.
 - **Arbeitsschritte:**
+  - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
+        personenbezogener Daten erfassen: 117 Seiten / 3.493 Interessenten.
   - [ ] Liste und interne stabile ID vollständig lesen.
   - [ ] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
-  - [ ] Pagination und mehr als 100/500 Datensätze testen.
+  - [x] Pagination und mehr als 100/500 Datensätze synthetisch testen.
+  - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
+        und doppelte stabile IDs im Test sicher ablehnen.
   - [ ] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
   - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
@@ -608,12 +633,21 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 - **Befund:** Nur eine generische Schülerliste wird gelesen; 66 von 96 Zeilen
   besitzen nur generische Felder. Der HAR-belegte Endpunkt
   `/json/schueler_daten.php` wird nicht verwendet.
-- **Benutzerbeobachtung vom 19.08.2026:** MATOOL zeigt sichtbar mehr aktuelle
-  Mitglieder als der Hub. Eine unabhängige Zählung mit identischen Filtern
-  steht noch aus.
+- **Live-Nachweis vom 19.08.2026:** Beim unveränderten Standortfilter `alle`
+  zeigt MATOOL 19 Seiten. Die Seiten verwenden `offset` in 30er-Schritten;
+  Seite 1 enthält 30 und Seite 19 enthält 19 stabile numerische Datensätze.
+  Damit sind 559 aktuelle Mitglieder in der Quelle belegt. Der Hub liest
+  bislang nur eine Seite. MATOOL merkt sich die zuletzt geöffnete Seite in der
+  Sitzung; deshalb muss ein Vollabruf ausdrücklich mit `offset=0` beginnen.
 - **Benötigte Daten:** Benutzer stellt eine read-only HAR-Aufnahme bereit, in
   der ein Schüler geöffnet und seine Detaildaten geladen werden.
 - **Arbeitsschritte:**
+  - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
+        personenbezogener Daten erfassen: 19 Seiten / 559 Mitglieder.
+  - [x] Mehr als 500 stabile Mitglieder-Listendatensätze über mehrere Seiten
+        synthetisch lesen und auf Vollständigkeit prüfen.
+  - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
+        und doppelte stabile IDs im Test sicher ablehnen.
   - [ ] Vollständige Schülerliste und Pagination lesen.
   - [ ] Schülerdetail-Endpunkt und alle freigegebenen Felder abbilden.
   - [ ] Stabile Schüler-ID speichern.
@@ -984,3 +1018,8 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | REL-00 | GitHub-, CI- und Cloudflare-Verbindungsstand geprüft; korrekte Buildwerte festgelegt | Repository-Verbindung besteht, automatischer erfolgreicher Deploy noch offen |
 | 19.08.2026 | REL-00 | Automatisches GitHub-Deployment nach Staging vollständig verifiziert | Build `7e180f43`, Commit `38a916a`, Worker-Version `67f5c688`, Health ok und Startseite 200 |
 | 19.08.2026 | DATA-01/DATA-03/DQ-03 | Benutzer meldet weniger Interessenten und Mitglieder im Hub als sichtbar in MATOOL | Verbindlichen 1:1-Bestandsabgleich und idempotenten Kontrolllauf als offene Pflichtschritte ergänzt; Umsetzung und Verifikation offen |
+| 19.08.2026 | BASE | Verbindliche Pflege- und Meldepflicht für diese GitHub-Todo-Liste ergänzt | Maßgebliche Datei, Aktualisierungszeitpunkte, Abhakregel, Erhalt und Ergänzung von Todos sowie Pflichtangaben je Update festgeschrieben |
+| 19.08.2026 | DATA-01/DATA-03 | MATOOL-Pagination und Quellmengen im angemeldeten Nur-Lese-Zugriff geprüft | Interessenten: 117 Seiten / 3.493 Datensätze; Mitglieder: 19 Seiten / 559 Datensätze; Implementierung und D1-Abgleich bleiben offen |
+| 19.08.2026 | DATA-01/DATA-03 | Mehrseiten-Abruf lokal implementiert und gezielt geprüft | 35/35 Client-Tests sowie Worker- und Test-Typprüfung bestanden; Live-Deployment und D1-Abgleich bleiben offen |
+| 19.08.2026 | DATA-01/DATA-03/RUN-03 | Vollständige lokale Projektprüfung und unabhängiges Patch-Review | 236/236 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden; vor Deployment müssen zwei Fail-closed-Korrekturen erfolgen, Gesamtlaufzeit bleibt unter RUN-03 offen |
+| 19.08.2026 | DATA-01/DATA-03 | Beide Fail-closed-Reviewbefunde korrigiert und gesamte Prüfung wiederholt | Fehlende Seitennavigation und jede doppelte stabile ID führen zum Fehler; Seitenlimit 250; 238/238 Worker-/Core-Tests und 19/19 Zapier-Tests bestanden |
