@@ -1,6 +1,6 @@
 # Spezifikation: Datenabgleich MATOOL und Middleware
 
-Version 1.0 · Stand 24. August 2026 · Status: Entwurf zur Freigabe
+Version 1.1 · Stand 24. August 2026 · Status: Entwurf zur Freigabe
 
 Gestaltete Fassung: https://claude.ai/code/artifact/a64132f1-9414-488b-bdd3-77be62f105a8
 
@@ -19,24 +19,27 @@ ausschliesslich in Zapier.
 
 Zwei urspruenglich formulierte Ziele sind mit MATOOL nicht erreichbar.
 
-### 2.1 Echtzeit ist nicht moeglich
+### 2.1 Echtzeit im Wortsinn ist nicht erreichbar
 
-MATOOL hat keine API, keine Webhooks, keinen Ereigniskanal. Aenderungen sind
-nur durch wiederholtes Abfragen erkennbar. Die kleinste Verzoegerung ist damit
-das Abfrageintervall, festgelegt auf eine Stunde.
+MATOOL hat keine API, keine Webhooks, keinen Ereigniskanal. Ohne Zutun des
+Anbieters bleibt nur wiederholtes Abfragen.
 
-### 2.2 Rueckschreiben wird nicht umgesetzt
+Statt einer nicht einloesbaren Zusage legt Abschnitt 15 ein gestuftes
+Verfahren mit verbindlichem Verzoegerungsbudget fest: Bestandsaenderungen
+innerhalb von fuenf Minuten, vollstaendiger Abgleich stuendlich,
+Sofortpruefung auf Anforderung.
+
+### 2.2 Rueckschreiben ist moeglich, aber bedingt
 
 Ein Schreibweg existiert (POST auf `/index.php?show=interessenten` mit
-`todo=2` und allen 32 Feldern), wird aber bewusst nicht nachgebildet:
+`todo=2` und allen 32 Feldern). Er uebertraegt alle Felder auf einmal, MATOOL
+kennt keine Versionskennung und keine Sperre, und ein fehlerhafter Vorgang ist
+dort nicht zurueckzunehmen.
 
-- Der Aufruf uebertraegt alle Felder; eine gleichzeitige Aenderung im Buero
-  wuerde stillschweigend ueberschrieben.
-- MATOOL bietet keine Versionskennung und keine Sperre zur Konflikterkennung.
-- Der Aufruf ist nicht wiederholungssicher.
-- Fehlerhafte Schreibvorgaenge sind nicht zurueckzunehmen.
-
-**Der Abgleich ist einseitig: MATOOL fuehrt, die Datenbank ist die Kopie.**
+Das schliesst die Rueckrichtung nicht aus, verlangt aber ein Verfahren, das
+den fehlenden Schutz auf unserer Seite nachbildet. Es ist in Abschnitt 14
+vollstaendig festgelegt. Bis zur schriftlichen Freigabe bleibt der Betrieb
+einseitig: **MATOOL fuehrt, die Datenbank ist die Kopie.**
 
 ## 3. Ist-Stand (gemessen 24.08.2026)
 
@@ -202,6 +205,9 @@ Fehlerklasse. Keine Namen, keine Kontaktdaten, keine Rohantworten.
 | M6 | Beobachteter Regelbetrieb, ein Arbeitstag | geplant |
 | M7 | Zapier verbunden, Testabruf ohne Kontakt | geplant |
 | M8 | Produktionsumgebung | geplant |
+| M9 | Schnellbahn und Sofortpruefung, Abschnitt 15 | geplant |
+| M10 | Rueckrichtung im Trockenlauf, Abschnitt 14 | Freigabe noetig |
+| M11 | Rueckrichtung scharf | Freigabe noetig |
 
 M2 bis M4 sind unabhaengig und koennen parallel laufen. M6 setzt M3 voraus.
 
@@ -231,3 +237,128 @@ Klartext, einschliesslich Bankverbindungen. Das ist fuer die Testphase
 bewusst so eingestellt. Vor dem Betrieb mit echten Mitgliederdaten sind
 erforderlich: `PUBLIC_DASHBOARD_PLAINTEXT` auf `false`, Cloudflare Access
 einrichten, getrennte Produktionsdatenbank, MATOOL-Passwort rotieren.
+
+## 14. Rueckrichtung: Datenbank nach MATOOL
+
+Vollstaendiger Entwurf des Schreibwegs. Umsetzbar, aber erst nach
+schriftlicher Freigabe zu aktivieren.
+
+### 14.1 Voraussetzungen
+
+1. Schriftliche Freigabe, welche Felder die Middleware fuehren darf. Ohne
+   Eintrag in dieser Liste wird ein Feld nie geschrieben.
+2. Erprobung in einem Testmandanten oder ausserhalb der Buerozeiten.
+3. Trockenlauf ueber mindestens eine Woche: Auftraege werden vollstaendig
+   vorbereitet und protokolliert, aber nicht gesendet.
+
+### 14.2 Ablauf je Schreibvorgang
+
+1. Auftrag entsteht aus Zapier oder Dashboard, mit `base_hash`
+2. Detailmaske frisch lesen, `before_hash` bilden
+3. `before_hash` ungleich `base_hash` bedeutet Abbruch, Auftrag pausiert
+4. Vorher-Abbild des vollstaendigen Formulars sichern
+5. Freigegebene Felder ersetzen, alle uebrigen aus dem frisch gelesenen
+   Formular uebernehmen
+6. Senden mit `todo=2`
+7. Erneut lesen, `after_hash` bilden
+8. Nur die beabsichtigten Felder veraendert bedeutet Erfolg, sonst Ruecknahme
+
+Schritt 5 ist der Kern: Weil MATOOL alle Felder verlangt, stammen die nicht
+gefuehrten Felder aus dem unmittelbar zuvor gelesenen Formular. Eine fremde
+Aenderung kann so nur im Zeitraum zwischen Lesen und Senden verloren gehen,
+nicht seit dem letzten Abgleich.
+
+### 14.3 Wiederholungssicherheit
+
+Jeder Auftrag traegt `intent_id` und `base_hash`. Ein bereits angewandter
+Auftrag wird nie erneut gesendet. Bei unklarem Ausgang, etwa einer verlorenen
+Antwort, entscheidet die Nachpruefung aus Schritt 7. Es wird niemals blind
+wiederholt.
+
+### 14.4 Konfliktaufloesung
+
+| Fall | Aufloesung |
+|---|---|
+| Feld ausserhalb der Freigabeliste | MATOOL gewinnt immer |
+| Freigegebenes Feld, `base_hash` passt | Auftrag wird angewandt |
+| Datensatz zwischenzeitlich geaendert | Abbruch, Klaerungsliste, Mensch entscheidet |
+| Zwei Auftraege fuer dieselbe Person | Nacheinander, zweiter prueft gegen neuen Stand |
+| Datensatz in MATOOL geloescht | Auftrag verfaellt als obsolete |
+
+### 14.5 Schema
+
+    -- Migration 0006
+    CREATE TABLE write_intents (
+      intent_id     TEXT PRIMARY KEY,
+      area          TEXT NOT NULL,
+      source_id     TEXT NOT NULL,
+      base_hash     TEXT NOT NULL,
+      fields_json   TEXT NOT NULL,
+      before_json   TEXT,
+      status        TEXT NOT NULL,
+      origin        TEXT NOT NULL,
+      created_at    TEXT NOT NULL,
+      applied_at    TEXT,
+      verified      INTEGER NOT NULL DEFAULT 0,
+      error_code    TEXT
+    );
+    CREATE INDEX idx_write_intents_offen
+      ON write_intents (status, created_at);
+
+### 14.6 Ruecknahme
+
+Das Vorher-Abbild enthaelt das vollstaendige Formular. Eine Ruecknahme ist ein
+erneuter Schreibvorgang mit genau diesem Inhalt und durchlaeuft dieselben
+Schritte, ist also ebenso konfliktgeschuetzt wie der urspruengliche Vorgang.
+
+### 14.7 Verbleibendes Risiko
+
+Zwischen der Nachpruefung in Schritt 2 und dem Senden in Schritt 6 liegt rund
+eine Sekunde. Eine Bearbeitung genau in diesem Fenster geht verloren. Das
+Verfahren verkleinert das Risiko auf diese Sekunde, beseitigt es aber nicht.
+MATOOL bietet keine Sperre. Diese Einschraenkung ist Teil der
+Freigabeentscheidung.
+
+## 15. Verzoegerungsbudget und Loescherkennung
+
+Ersatz fuer die nicht erreichbare Echtzeit: ein gestuftes Verfahren mit
+zugesicherten Obergrenzen statt einer unbestimmten Zusage.
+
+### 15.1 Stufen
+
+| Stufe | Takt | Umfang | Kosten je Lauf |
+|---|---|---|---|
+| Schnellbahn | 5 Minuten | Erste Listenseite und Gesamtzahl | 2 Anfragen |
+| Ausloeser | bei Abweichung | Vollstaendiger Listenlauf des Bereichs | ca. 20 Anfragen |
+| Vollabgleich | stuendlich | Beide Bereiche, Listen und Details | mehrere hundert |
+| Sofortpruefung | auf Anforderung | Einzelne Person | 3 Anfragen |
+
+### 15.2 Zugesicherte Obergrenzen
+
+| Ereignis in MATOOL | Sichtbar in der Datenbank | Erkennungsweg |
+|---|---|---|
+| Neue Person angelegt | 5 Minuten | Gesamtzahl steigt, Ausloeser greift |
+| Person geloescht | 5 Minuten erkannt, gefuehrt nach zweitem vollstaendigen Lauf | Gesamtzahl sinkt |
+| Feld geaendert, Person bleibt | 60 Minuten | Vollabgleich, Hashvergleich |
+| Einzelne Person auf Anforderung | 10 Sekunden | Sofortpruefung |
+
+Die Schnellbahn erkennt Mengenaenderungen zuverlaessig, weil MATOOL die
+Gesamtzahl selbst ausweist. Eine reine Feldaenderung ohne Mengenaenderung
+bleibt bis zum naechsten Vollabgleich unentdeckt; dafuer gibt es ohne
+Anbieterunterstuetzung keinen guenstigeren Weg.
+
+### 15.3 Was echte Zustellung ermoeglichen wuerde
+
+Alle drei Wege liegen beim Anbieter und sind vertraglich zu klaeren. Die
+Middleware ist so gebaut, dass jeder davon ohne Umbau ergaenzt werden kann.
+
+1. Webhook aus MATOOL auf einen Endpunkt der Middleware. Der bestehende
+   Ereignisweg zu Zapier bliebe unveraendert, nur die Quelle wechselt vom
+   Abfragen zum Empfangen.
+2. Lesender Datenbankzugang oder Replikat. Damit entfiele das Blaettern;
+   Aenderungen waeren ueber Zeitstempel direkt abfragbar.
+3. Exportschnittstelle mit Aenderungsdatum. Ein Abruf der Form "alle
+   Datensaetze geaendert seit X" wuerde den Vollabgleich auf Sekunden
+   verkuerzen.
+
+Bis dahin gelten die Obergrenzen aus 15.2 als vereinbarte Leistung.
