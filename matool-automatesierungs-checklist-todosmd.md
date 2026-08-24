@@ -578,10 +578,10 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 
 ### TODO DATA-01 – Interessenten und alle Interessenten-Details
 
-- [ ] **Status:** offen
+- [x] **Status:** erledigt
 - **Priorität:** kritisch
-- **Befund:** Liste enthält gemischte generische Zeilen; live werden nur vier
-  Details pro Lauf gelesen.
+- **Historischer Befund:** Die Liste enthielt gemischte generische Zeilen und
+  es wurden nur vier Details pro Lauf gelesen. Dieser Fehler ist behoben.
 - **Live-Nachweis vom 19.08.2026:** Bei den unveränderten Standardfiltern
   (`Status`, `Schule`, `Quelle`, `Leistung` und `Monat` jeweils `alle`) zeigt
   MATOOL 117 Seiten. Die Seiten verwenden `offset` in 30er-Schritten; Seite 1
@@ -601,11 +601,13 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   MATOOL-IDs und 0 doppelten IDs**. Die letzte Seite enthält 11 Datensätze.
   Der sortierte ID-Bestand wurde ohne Ausgabe personenbezogener Daten als
   SHA-256-Digest `c24197dfd07575213b6aedd49a3ee8759d8dcde8527744e741001892d26776bf`
-  festgehalten. Der Hub-Ausgangsstand beträgt 1.218 gespeicherte
-  Interessenten; die 1:1-D1-Abnahme bleibt bis zum vollständigen Import offen.
-- **Benötigte Daten:** vollständiger read-only HAR/HTML, falls die vorhandene
-  Aufnahme nicht alle Listen-/Paginationfälle enthält; unabhängige
-  MATOOL-Anzahl.
+  festgehalten. Der Hub-Ausgangsstand betrug 1.218 gespeicherte Interessenten.
+  Beim Beginn des produktiven Workflows war in MATOOL ein weiterer Datensatz
+  hinzugekommen. Der initiale und der abschließende Vollabruf des Workflows
+  ergaben deshalb jeweils **3.492 eindeutige stabile MATOOL-IDs**.
+- **Erhaltene Daten:** Die vorhandenen HAR-/HTML-Belege, die vollständigen
+  117-Seiten-Liveabrufe und der unabhängige D1-ID-Abgleich reichen für die
+  abgeschlossene Abnahme dieses Datenbereichs aus.
 - **Pflichtfelder:** Datum, Anrede, Vorname, Nachname, Straße, PLZ, Ort,
   Telefon, Handy, E-Mail, Quelle, Kontakt, Kontaktart, Schule, Leistung,
   Probetraining 1/2 mit Datum/Zeit/Klasse, Status, Anmerkung und Werbequelle.
@@ -615,26 +617,45 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [x] Quellmenge am 24.08.2026 erneut vollständig erfassen und alle stabilen
         IDs auf Eindeutigkeit prüfen: 117 Seiten / 3.491 eindeutige IDs /
         0 Quellduplikate.
-  - [ ] Liste und interne stabile ID vollständig lesen.
-  - [ ] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
+  - [x] Liste und interne stabile ID vollständig lesen.
+  - [x] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
   - [x] Pagination und mehr als 100/500 Datensätze synthetisch testen.
   - [x] Fehlende Seitenmarkierung, ungültige Seitenlinks, Folgeseitenfehler
         und doppelte stabile IDs im Test sicher ablehnen.
   - [x] Echte verschachtelte Listenstruktur nachbilden und äußere stabile ID
         mit den inneren Tabellenfeldern genau einmal zusammenführen.
-  - [ ] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
-  - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
+  - [x] Alle Screenshot-/HAR-Felder eindeutig zuordnen.
+  - [x] Mit identischen Filtern für Standort, Status und Suche die sichtbare
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
         D1-Bestand abgleichen; jede Abweichung bis auf stabile MATOOL-ID-Ebene
         erklären und beheben.
-- **Abnahme:** Gemeinsame DATA-Abgleichtabelle vollständig bestanden;
-  Lillis vorhandener Testdatensatz enthält unter anderem die erwartete E-Mail
-  und Telefonnummer, ohne diese Werte in Logs auszugeben. Zusätzlich stimmen
-  sichtbarer MATOOL-Bestand, vollständiger Abruf und aktiver D1-Bestand bei
-  identischen Filtern 1:1 überein; ein zweiter unveränderter Vollabruf erzeugt
-  weder fehlende noch doppelte Interessenten.
+- **Abnahme:** Bestanden. Sichtbarer MATOOL-Bestand, vollständiger Abruf und
+  aktiver D1-Bestand stimmen mit **3.492 eindeutigen IDs** 1:1 überein. Der
+  abschließende unveränderte Vollabruf ergab weder fehlende noch doppelte
+  Interessenten. Lillis aktueller Datensatz ist genau einmal vorhanden und die
+  zentralen Felder Name, E-Mail, Handy, Datum und Status sind gefüllt. Die
+  konkreten E-Mail-/Handywerte des historischen Screenshots vom 10.08.2026
+  kommen im aktuellen MATOOL-Bestand nicht mehr vor; maßgeblich und gespeichert
+  sind deshalb die aktuellen MATOOL-Werte.
 - **Aufwand:** 4–8 Stunden nach Vorliegen aller Aufnahmen.
-- **Nachweis:** _noch einzutragen_
+- **Nachweis:** Cloudflare-Workflowstatus `succeeded`: Liste 3.492, Details
+  3.492, abgeschlossen 3.492, fehlend 0, zusätzlich 0, veraltet 0, Fehler 0.
+  D1 enthält jeweils 3.492 eindeutige Listen- und Detail-IDs; strukturelle
+  Primärschlüsselprüfung und Quellprüfung ergaben 0 Duplikate. 3.447 zuvor
+  fehlende Detailprofile wurden neu angelegt, ein bestehendes Detailprofil
+  wurde inhaltlich aktualisiert und fünf verwaiste Detailprofile entfernt.
+  Implementierung in `14a7e5d`, Startkorrektur in `5f73b0d`; 246/246 Tests
+  sowie Worker- und Test-Typecheck bestanden.
+
+| DATA-01-Liveabgleich vom 24.08.2026 | Anzahl |
+| --- | ---: |
+| HUB-Bestand vor Beginn | 1.218 |
+| MATOOL-IDs im finalen Vollabruf | 3.492 |
+| eindeutige Listen-IDs in D1 | 3.492 |
+| eindeutige Detail-IDs in D1 | 3.492 |
+| fehlende / zusätzliche / veraltete | 0 / 0 / 0 |
+| Duplikate / Datensatzfehler | 0 / 0 |
+| Differenz MATOOL zu HUB | 0 |
 
 ### TODO DATA-02 – Klassen, Kurse und Stunden
 
@@ -1039,12 +1060,12 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | Entscheidungen | 2 | 5 | in Arbeit |
 | Staging-Release | 1 | 3 | in Arbeit |
 | Laufstabilität | 0 | 3 | offen |
-| MATOOL-Datenbereiche | 0 | 7 | offen |
+| MATOOL-Datenbereiche | 1 | 7 | in Arbeit |
 | Datenqualität | 0 | 3 | offen |
 | Zapier | 0 | 2 | offen |
 | Hub/Zugriff | 0 | 2 | offen |
 | Produktion/Freigabe | 0 | 3 | offen |
-| **Gesamt** | **3** | **28** | **V1 nicht freigegeben** |
+| **Gesamt** | **4** | **28** | **V1 nicht freigegeben** |
 
 ## Änderungsverlauf dieses Dokuments
 
@@ -1068,3 +1089,4 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | RUN-03 | Realen Paid-Lauf gegen die Laufzeitgrenze geprüft | `sync_0ff56284…` war nach 15:31 Minuten noch nicht abgeschlossen und hatte Mitglieder noch nicht begonnen; fortsetzbare Aufteilung/Gesamtdeadline bleibt offen |
 | 19.08.2026 | DATA-01/DATA-03/DQ-02 | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |
 | 24.08.2026 | DATA-01 | Vollständigen fortsetzbaren Interessentenabgleich implementiert und lokal verifiziert | Exakter Listen-Ersatz, 100er-Detailbatches, Retry/Backoff, Wiederaufnahme und finales ID-Paritätsgate; 246/246 Tests und beide Typechecks bestanden; Deployment und Live-Differenz 0 bleiben offen |
+| 24.08.2026 | DATA-01 | Vollständigen Live-Abgleich MATOOL gegen D1 abgeschlossen | Workflow `succeeded`; 3.492 eindeutige Listen- und Detail-IDs, 0 fehlend, 0 zusätzlich, 0 veraltet, 0 Duplikate, 0 Fehler und Differenz 0; DATA-01 abgehakt |
