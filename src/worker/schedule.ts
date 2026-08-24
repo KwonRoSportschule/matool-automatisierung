@@ -1,14 +1,22 @@
 import { toAppError } from "../core/app-error";
 import {
   MatoolClient,
-  MATOOL_KLASSEN_PAYLOAD_FIELDS
+  MATOOL_KLASSEN_PAYLOAD_FIELDS,
+  type MatoolCredentials,
+  type MatoolSafeAreaRecord
 } from "../matool/client";
 import type { Env } from "./env";
-import { startOrResumeInteressentenSyncWorkflow } from "./interessenten-sync-workflow";
 import {
-  persistMatoolSnapshotRun,
-  recordMatoolSnapshotFailure
-} from "./matool-store";
+  acquireExactSyncLease,
+  assertExactSourceBaseline,
+  persistFencedExactSnapshotRun,
+  readMatchingExactSource,
+  releaseExactSyncLease,
+  renewExactSyncLease,
+  type ExactSyncLease
+} from "./exact-sync-safety";
+import { startOrResumeInteressentenSyncWorkflow } from "./interessenten-sync-workflow";
+import { recordMatoolSnapshotFailure } from "./matool-store";
 import { processZapierOutbox } from "./outbox";
 import { getProcessMode } from "./repository";
 import { evaluateBerlinScheduleWindow } from "./schedule-window";
@@ -43,6 +51,18 @@ const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
   (area) =>
     area !== "interessenten" && area !== "interessenten_details"
 );
+
+// Nur Bereiche mit belegter vollstaendiger Pagination und stabiler
+// Quellidentitaet duerfen den aktuellen D1-Bestand ersetzen. Weitere
+// Bereiche werden erst nach ihrem eigenen exakten Collector freigeschaltet.
+const EXACT_CURRENT_SET_AREAS = new Set([
+  "archiv",
+  "artikel",
+  "klassen",
+  "lager",
+  "newsletter",
+  "schueler"
+]);
 
 /**
  * Entspricht der maximalen Zahl von Interessenten, die der Extraktor aus
@@ -292,101 +312,176 @@ export async function collectMatoolSnapshots(
     trigger
   });
 
-  // Ein Client für den gesamten Lauf: genau eine Anmeldung, eine Session.
-  // Der Mindestabstand zwischen zwei Anfragen ist notwendig, weil MATOOL
-  // schnelle Anfragefolgen ab dem vierten Bereich mit Verbindungsabbruechen
-  // beantwortet. Wartezeit kostet Wall-Time, aber keine CPU-Zeit.
-  const client = new MatoolClient(env.MATOOL_BASE_URL, undefined, {
-    maxRequestCount: MATOOL_MAX_REQUESTS_PER_RUN,
-    minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
-  });
-  try {
-    for (const area of directAreas) {
-    const runId = `snapshot_${area}_${crypto.randomUUID()}`;
-    const startedAt = new Date().toISOString();
+  const credentials = {
+    email: env.MATOOL_EMAIL,
+    password: env.MATOOL_PASSWORD
+  } satisfies MatoolCredentials;
+  const leaseOwner = `direct_${crypto.randomUUID()}`;
+  let lease: ExactSyncLease | null = null;
+
+  if (directAreas.length > 0) {
     try {
-      const credentials = {
-        email: env.MATOOL_EMAIL,
-        password: env.MATOOL_PASSWORD
-      };
-      // MATOOL rendert die Interessentenliste nicht als eine Tabelle,
-      // sondern je Datensatz als eigene Tabellengruppe. Der strikte
-      // Extraktor erwartet Kopf und Daten in derselben Tabelle und fand
-      // deshalb null Zeilen. Der generische Extraktor kommt damit zurecht
-      // und leitet die stabile ID aus dem Interessenten-Link ab.
-      const records = (
-        area === "klassen"
-          ? await client.extractKlassen(credentials, {
-              maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN
-            })
-          : await client.extractSafeArea(credentials, area)
-      ).records;
-      const finishedAt = new Date().toISOString();
-      const result = await persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields:
-          area === "klassen"
-            ? MATOOL_KLASSEN_PAYLOAD_FIELDS
-            : snapshotPayloadFields(records),
-        area,
-        finishedAt,
-        observedAt: finishedAt,
-        records,
-        runId,
-        syncId,
-        startedAt
-      });
-      summary.succeeded += 1;
-      summary.storedTotal += result.storedCount;
-      summary.areas.push({
-        area,
-        status: "succeeded",
-        storedCount: result.storedCount
-      });
-      console.info(
-        JSON.stringify({
-          area,
-          event: "matool_snapshot_succeeded",
-          scheduledTime: new Date(scheduledTime).toISOString(),
-          storedCount: result.storedCount
-        })
-      );
+      lease = await acquireExactSyncLease(env.DB, leaseOwner);
     } catch (error) {
-      const finishedAt = new Date().toISOString();
       const errorCode = toAppError(error).code;
-      summary.failed += 1;
-      summary.areas.push({ area, errorCode, status: "failed" });
-      try {
-        await recordMatoolSnapshotFailure(env.DB, {
+      summary.failed = directAreas.length;
+      summary.areas.push(
+        ...directAreas.map((area) => ({
           area,
           errorCode,
-          finishedAt,
-          runId,
-          syncId,
-          startedAt
-        });
-      } catch {
-        console.error(
-          JSON.stringify({
-            area,
-            errorCode: "matool_snapshot_failure_not_recorded",
-            event: "matool_snapshot_failed",
-            scheduledTime: new Date(scheduledTime).toISOString()
-          })
-        );
-        continue;
-      }
+          status: "failed" as const
+        }))
+      );
       console.error(
         JSON.stringify({
-          area,
           errorCode,
-          event: "matool_snapshot_failed",
-          scheduledTime: new Date(scheduledTime).toISOString()
+          event: "matool_direct_sync_lease_not_acquired",
+          scheduledTime: new Date(scheduledTime).toISOString(),
+          syncId
         })
       );
     }
+  }
+
+  if (lease) {
+    let activeLease = lease;
+    // Nicht-exakte Bereiche teilen weiterhin eine Session. Die sechs
+    // Current-Set-Bereiche erzeugen dagegen pro Kontrollabruf einen eigenen
+    // Client und damit nachweislich zwei frische MATOOL-Sessions.
+    const sharedClient = createDirectMatoolClient(env);
+    try {
+      for (const [areaIndex, area] of directAreas.entries()) {
+        const runId = `snapshot_${area}_${crypto.randomUUID()}`;
+        const areaStartedAt = new Date().toISOString();
+        try {
+          activeLease = await renewExactSyncLease(env.DB, activeLease);
+          const records = EXACT_CURRENT_SET_AREAS.has(area)
+            ? await readMatchingExactSource(
+                () => exactAreaSession(env, credentials, area),
+                async () => {
+                  activeLease = await renewExactSyncLease(
+                    env.DB,
+                    activeLease
+                  );
+                }
+              )
+            : await readDirectArea(sharedClient, credentials, area);
+          if (EXACT_CURRENT_SET_AREAS.has(area)) {
+            await assertExactSourceBaseline(env.DB, area, records.length);
+          }
+          activeLease = await renewExactSyncLease(env.DB, activeLease);
+
+          const finishedAt = new Date().toISOString();
+          const result = await persistFencedExactSnapshotRun(
+            env.DB,
+            activeLease,
+            {
+              allowedPayloadFields:
+                area === "klassen"
+                  ? MATOOL_KLASSEN_PAYLOAD_FIELDS
+                  : snapshotPayloadFields(records),
+              area,
+              finishedAt,
+              observedAt: finishedAt,
+              records,
+              ...(EXACT_CURRENT_SET_AREAS.has(area)
+                ? { replaceCurrentSet: true }
+                : {}),
+              runId,
+              syncId,
+              startedAt: areaStartedAt
+            }
+          );
+          summary.succeeded += 1;
+          summary.storedTotal += result.storedCount;
+          summary.areas.push({
+            area,
+            status: "succeeded",
+            storedCount: result.storedCount
+          });
+          console.info(
+            JSON.stringify({
+              area,
+              event: "matool_snapshot_succeeded",
+              scheduledTime: new Date(scheduledTime).toISOString(),
+              storedCount: result.storedCount
+            })
+          );
+        } catch (error) {
+          const finishedAt = new Date().toISOString();
+          const errorCode = toAppError(error).code;
+          summary.failed += 1;
+          summary.areas.push({ area, errorCode, status: "failed" });
+          try {
+            await recordMatoolSnapshotFailure(env.DB, {
+              area,
+              errorCode,
+              finishedAt,
+              runId,
+              syncId,
+              startedAt: areaStartedAt
+            });
+          } catch {
+            console.error(
+              JSON.stringify({
+                area,
+                errorCode: "matool_snapshot_failure_not_recorded",
+                event: "matool_snapshot_failed",
+                scheduledTime: new Date(scheduledTime).toISOString()
+              })
+            );
+          }
+          console.error(
+            JSON.stringify({
+              area,
+              errorCode,
+              event: "matool_snapshot_failed",
+              scheduledTime: new Date(scheduledTime).toISOString()
+            })
+          );
+
+          try {
+            activeLease = await renewExactSyncLease(env.DB, activeLease);
+          } catch (leaseError) {
+            const leaseErrorCode = toAppError(leaseError).code;
+            const remainingAreas = directAreas.slice(areaIndex + 1);
+            summary.failed += remainingAreas.length;
+            summary.areas.push(
+              ...remainingAreas.map((remainingArea) => ({
+                area: remainingArea,
+                errorCode: leaseErrorCode,
+                status: "failed" as const
+              }))
+            );
+            console.error(
+              JSON.stringify({
+                errorCode: leaseErrorCode,
+                event: "matool_direct_sync_lease_lost",
+                scheduledTime: new Date(scheduledTime).toISOString(),
+                syncId
+              })
+            );
+            break;
+          }
+        }
+      }
+    } finally {
+      sharedClient.clearSession();
+      try {
+        await releaseExactSyncLease(env.DB, activeLease);
+      } catch {
+        // Die Lease bleibt begrenzt gueltig und ist danach automatisch
+        // uebernehmbar; ein fremder Owner wird durch Token-Pruefung nie
+        // geloescht.
+        console.error(
+          JSON.stringify({
+            errorCode: "matool_exact_sync_lease_release_failed",
+            event: "matool_direct_sync_lease_release_failed",
+            syncId
+          })
+        );
+      }
     }
-  } finally {
-    client.clearSession();
   }
 
   await finishMatoolSyncRun(env.DB, syncId, new Date().toISOString(), {
@@ -418,4 +513,37 @@ export async function collectMatoolSnapshots(
   }
 
   return summary;
+}
+
+function createDirectMatoolClient(env: Env): MatoolClient {
+  return new MatoolClient(env.MATOOL_BASE_URL, undefined, {
+    maxRequestCount: MATOOL_MAX_REQUESTS_PER_RUN,
+    minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
+  });
+}
+
+function exactAreaSession(
+  env: Env,
+  credentials: MatoolCredentials,
+  area: string
+) {
+  const client = createDirectMatoolClient(env);
+  return {
+    clear: () => client.clearSession(),
+    read: () => readDirectArea(client, credentials, area)
+  };
+}
+
+async function readDirectArea(
+  client: MatoolClient,
+  credentials: MatoolCredentials,
+  area: string
+): Promise<MatoolSafeAreaRecord[]> {
+  return (
+    area === "klassen"
+      ? await client.extractKlassen(credentials, {
+          maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN
+        })
+      : await client.extractSafeArea(credentials, area)
+  ).records;
 }
