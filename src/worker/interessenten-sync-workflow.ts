@@ -388,8 +388,26 @@ export async function startOrResumeInteressentenSyncWorkflow(
     current?.status === "running"
       ? workflowInstanceIdFromJobId(current.jobId)
       : workflowInstanceIdForTime(requestedAt);
-  let instance = await env.INTERESSENTEN_SYNC_WORKFLOW.get(instanceId);
-  let instanceStatus = await instance.status();
+  let instance: WorkflowInstance;
+  let instanceStatus: Awaited<ReturnType<WorkflowInstance["status"]>>;
+  try {
+    instance = await env.INTERESSENTEN_SYNC_WORKFLOW.get(instanceId);
+    instanceStatus = await instance.status();
+  } catch {
+    try {
+      instance = await env.INTERESSENTEN_SYNC_WORKFLOW.create({
+        id: instanceId,
+        params: {
+          requestedAt: new Date(requestedAt).toISOString(),
+          trigger
+        }
+      });
+      instanceStatus = await instance.status();
+    } catch {
+      instance = await env.INTERESSENTEN_SYNC_WORKFLOW.get(instanceId);
+      instanceStatus = await instance.status();
+    }
+  }
 
   if (instanceStatus.status === "unknown") {
     try {
