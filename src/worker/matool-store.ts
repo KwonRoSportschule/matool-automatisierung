@@ -1,6 +1,8 @@
 import { AppError } from "../core/app-error";
+import { ensureInteressentenSyncSchema } from "./interessenten-sync-store";
 
 const MAX_RECORDS_PER_RUN = 20_000;
+const INTERESSENTEN_AREA = "interessenten";
 const MAX_PAYLOAD_FIELDS = 80;
 const MAX_PAYLOAD_BYTES = 16_384;
 const MAX_PAYLOAD_STRING_LENGTH = 2_000;
@@ -19,9 +21,22 @@ export interface PersistMatoolSnapshotRunInput {
   finishedAt: string;
   observedAt: string;
   records: readonly MatoolSnapshotRecord[];
+  /**
+   * Ersetzt den aktuellen Interessentenbestand exakt durch diesen
+   * vollstaendigen Lauf. Der Opt-in ist nur fuer `interessenten` erlaubt und
+   * loescht veraltete Zeilen im selben atomaren D1-Batch wie die Upserts.
+   */
+  replaceCurrentSet?: boolean;
   runId: string;
   syncId?: string;
   startedAt: string;
+}
+
+export interface MatoolSnapshotRunResult {
+  createdCount: number;
+  staleRemovedCount: number;
+  storedCount: number;
+  updatedCount: number;
 }
 
 export interface RecordMatoolSnapshotFailureInput {
@@ -38,13 +53,19 @@ export interface RecordMatoolSnapshotFailureInput {
 export async function persistMatoolSnapshotRun(
   db: D1Database,
   input: PersistMatoolSnapshotRunInput
-): Promise<{ storedCount: number }> {
+): Promise<MatoolSnapshotRunResult> {
   validateRunIdentity(input);
   if (input.syncId) {
     validateIdentifier(input.syncId, 128);
   }
   validateTimestamp(input.observedAt);
   if (input.records.length > MAX_RECORDS_PER_RUN) {
+    throw invalidSnapshotInput();
+  }
+  if (
+    input.replaceCurrentSet === true &&
+    (input.area !== "interessenten" || input.records.length === 0)
+  ) {
     throw invalidSnapshotInput();
   }
 
@@ -76,6 +97,22 @@ export async function persistMatoolSnapshotRun(
     });
   }
 
+  // Große Bereiche wie schueler überschreiten eine einzelne D1-Anweisung.
+  // Die Snapshots werden deshalb in Blöcke unterhalb des Limits zerlegt.
+  const chunks = chunkSnapshots(snapshots);
+
+  if (input.replaceCurrentSet === true) {
+    await ensureInteressentenSyncSchema(db);
+    const existing = await readIdempotentCompleteListResult(
+      db,
+      input,
+      chunks
+    );
+    if (existing) {
+      return existing;
+    }
+  }
+
   const runStatement = db
     .prepare(
       `INSERT INTO matool_snapshot_runs (
@@ -93,10 +130,6 @@ export async function persistMatoolSnapshotRun(
       input.syncId ?? null
     );
 
-  // Große Bereiche wie schueler überschreiten eine einzelne D1-Anweisung.
-  // Die Snapshots werden deshalb in Blöcke unterhalb des Limits zerlegt.
-  const chunks = chunkSnapshots(snapshots);
-
   try {
     // D1 fuehrt ein batch atomar und in Reihenfolge aus. Jeder Change-SELECT
     // muss dabei den vorherigen Snapshot sehen; erst danach folgt der Upsert.
@@ -109,11 +142,85 @@ export async function persistMatoolSnapshotRun(
         buildSnapshotStatement(db, input, chunk)
       );
     }
-    await db.batch(statements);
+    if (input.replaceCurrentSet === true) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO matool_snapshot_run_results (
+               run_id, created_count, updated_count, stale_removed_count
+             )
+             SELECT
+               ?,
+               COUNT(*) FILTER (WHERE change_kind = 'created'),
+               COUNT(*) FILTER (WHERE change_kind = 'updated'),
+               (
+                 SELECT COUNT(*)
+                 FROM matool_snapshots
+                 WHERE area = 'interessenten'
+                   AND last_run_id <> ?
+               )
+             FROM matool_snapshot_changes
+             WHERE run_id = ?`
+          )
+          .bind(input.runId, input.runId, input.runId),
+        db
+          .prepare(
+            `DELETE FROM matool_snapshots
+             WHERE area = 'interessenten'
+               AND last_run_id <> ?`
+          )
+          .bind(input.runId)
+      );
+    }
+    const changeCountsIndex = statements.push(
+      input.replaceCurrentSet === true
+        ? db
+            .prepare(
+              `SELECT created_count, updated_count, stale_removed_count
+               FROM matool_snapshot_run_results
+               WHERE run_id = ?`
+            )
+            .bind(input.runId)
+        : db
+            .prepare(
+              `SELECT
+                 COUNT(*) FILTER (WHERE change_kind = 'created') AS created_count,
+                 COUNT(*) FILTER (WHERE change_kind = 'updated') AS updated_count,
+                 0 AS stale_removed_count
+               FROM matool_snapshot_changes
+               WHERE run_id = ?`
+            )
+            .bind(input.runId)
+    ) - 1;
+    const results = await db.batch<SnapshotChangeCountsRow>(statements);
+    const changeCounts = results[changeCountsIndex]?.results[0];
+    if (!changeCounts) {
+      throw snapshotPersistenceError();
+    }
+    return {
+      createdCount: requireStoredCount(changeCounts.created_count),
+      staleRemovedCount: requireStoredCount(
+        changeCounts.stale_removed_count
+      ),
+      storedCount: snapshots.length,
+      updatedCount: requireStoredCount(changeCounts.updated_count)
+    };
   } catch {
     throw snapshotPersistenceError();
   }
-  return { storedCount: snapshots.length };
+}
+
+interface SnapshotChangeCountsRow {
+  created_count: number;
+  stale_removed_count: number;
+  updated_count: number;
+}
+
+function requireStoredCount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw snapshotPersistenceError();
+  }
+  return value;
 }
 
 interface PreparedSnapshot {
@@ -121,6 +228,108 @@ interface PreparedSnapshot {
   payloadJson: string;
   sourceId: string;
   zapierEventId: string;
+}
+
+interface ExistingCompleteListRow extends SnapshotChangeCountsRow {
+  area: string;
+  current_count: number;
+  current_run_count: number;
+  fetched_count: number;
+  status: string;
+  success_count: number;
+}
+
+interface MatchingSnapshotCountRow {
+  matching_count: number;
+}
+
+async function readIdempotentCompleteListResult(
+  db: D1Database,
+  input: PersistMatoolSnapshotRunInput,
+  chunks: readonly (readonly PreparedSnapshot[])[]
+): Promise<MatoolSnapshotRunResult | null> {
+  try {
+    const existing = await db
+      .prepare(
+        `SELECT
+           runs.area,
+           runs.status,
+           runs.fetched_count,
+           runs.success_count,
+           results.created_count,
+           results.updated_count,
+           results.stale_removed_count,
+           (
+             SELECT COUNT(*)
+             FROM matool_snapshots
+             WHERE area = 'interessenten'
+           ) AS current_count,
+           (
+             SELECT COUNT(*)
+             FROM matool_snapshots
+             WHERE area = 'interessenten'
+               AND last_run_id = ?
+           ) AS current_run_count
+         FROM matool_snapshot_run_results AS results
+         INNER JOIN matool_snapshot_runs AS runs
+           ON runs.run_id = results.run_id
+         WHERE results.run_id = ?`
+      )
+      .bind(input.runId, input.runId)
+      .first<ExistingCompleteListRow>();
+    if (!existing) {
+      return null;
+    }
+
+    const expectedCount = input.records.length;
+    if (
+      existing.area !== INTERESSENTEN_AREA ||
+      existing.status !== "succeeded" ||
+      requireStoredCount(existing.fetched_count) !== expectedCount ||
+      requireStoredCount(existing.success_count) !== expectedCount ||
+      requireStoredCount(existing.current_count) !== expectedCount ||
+      requireStoredCount(existing.current_run_count) !== expectedCount
+    ) {
+      throw snapshotPersistenceError();
+    }
+
+    const matches = await db.batch<MatchingSnapshotCountRow>(
+      chunks.map((chunk) =>
+        db
+          .prepare(
+            `SELECT COUNT(*) AS matching_count
+             FROM json_each(?) AS incoming
+             INNER JOIN matool_snapshots AS stored
+               ON stored.area = 'interessenten'
+              AND stored.source_id = json_extract(incoming.value, '$.sourceId')
+              AND stored.content_hash = json_extract(incoming.value, '$.contentHash')
+              AND stored.last_run_id = ?
+             WHERE json_type(incoming.value) = 'object'`
+          )
+          .bind(JSON.stringify(chunk), input.runId)
+      )
+    );
+    const matchingCount = matches.reduce(
+      (total, result) =>
+        total + requireStoredCount(result.results[0]?.matching_count),
+      0
+    );
+    if (matchingCount !== expectedCount) {
+      throw snapshotPersistenceError();
+    }
+
+    return {
+      createdCount: requireStoredCount(existing.created_count),
+      staleRemovedCount: requireStoredCount(existing.stale_removed_count),
+      storedCount: expectedCount,
+      updatedCount: requireStoredCount(existing.updated_count)
+    };
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw snapshotPersistenceError();
+  }
 }
 
 function chunkSnapshots(

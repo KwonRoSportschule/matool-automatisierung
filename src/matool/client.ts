@@ -23,6 +23,8 @@ const PAGINATED_SAFE_AREAS = new Set(["interessenten", "schueler"]);
 const MAX_INTERESSENTEN_DETAIL_RECORDS = 500;
 const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
+const MAX_INTERESSENTEN_STATUS_ATTEMPTS = 3;
+const MAX_INTERESSENTEN_RETRY_AFTER_MS = 5_000;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 const SAFE_MATOOL_AREAS = [
   "archiv",
@@ -45,6 +47,13 @@ const INTERESSENTEN_HEADERS = [
   "Vorname",
   "Name",
   "Status"
+] as const;
+const INTERESSENTEN_SAFE_AREA_FIELDS = [
+  "nr",
+  "datum",
+  "vorname",
+  "name",
+  "status"
 ] as const;
 export const MATOOL_KLASSEN_PAYLOAD_FIELDS = [
   "alter_ende",
@@ -203,12 +212,15 @@ export class MatoolClient {
     requireCredentials(credentials);
     await this.login(credentials);
 
-    const response = await this.request("/index.php?show=interessenten", {
-      headers: {
-        Accept: "text/html,application/xhtml+xml"
-      },
-      method: "GET"
-    });
+    const response = await this.requestInteressentenWithStatusRetry(
+      "/index.php?show=interessenten",
+      {
+        headers: {
+          Accept: "text/html,application/xhtml+xml"
+        },
+        method: "GET"
+      }
+    );
 
     if (!response.ok) {
       await response.body?.cancel();
@@ -342,12 +354,15 @@ export class MatoolClient {
     requireCredentials(credentials);
     await this.login(credentials);
 
-    const response = await this.request("/index.php?show=interessenten", {
-      headers: {
-        Accept: "text/html,application/xhtml+xml"
-      },
-      method: "GET"
-    });
+    const response = await this.requestInteressentenWithStatusRetry(
+      "/index.php?show=interessenten",
+      {
+        headers: {
+          Accept: "text/html,application/xhtml+xml"
+        },
+        method: "GET"
+      }
+    );
 
     if (!response.ok) {
       await response.body?.cancel();
@@ -463,13 +478,15 @@ export class MatoolClient {
       query.set("offset", String(offset));
     }
 
-    const response = await this.request(
-      `/index.php?${query.toString()}`,
-      {
-        headers: { Accept: "text/html,application/xhtml+xml" },
-        method: "GET"
-      }
-    );
+    const path = `/index.php?${query.toString()}`;
+    const init = {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+      method: "GET"
+    } satisfies RequestInit;
+    const response =
+      area === "interessenten"
+        ? await this.requestInteressentenWithStatusRetry(path, init)
+        : await this.request(path, init);
     if (!response.ok) {
       await response.body?.cancel();
       throw new AppError(
@@ -559,10 +576,13 @@ export class MatoolClient {
   }
 
   private async fetchInteressentenPage(): Promise<Uint8Array> {
-    const response = await this.request("/index.php?show=interessenten", {
-      headers: { Accept: "text/html,application/xhtml+xml" },
-      method: "GET"
-    });
+    const response = await this.requestInteressentenWithStatusRetry(
+      "/index.php?show=interessenten",
+      {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+        method: "GET"
+      }
+    );
     if (!response.ok) {
       await response.body?.cancel();
       throw new AppError(
@@ -587,7 +607,7 @@ export class MatoolClient {
     interessentId: string
   ): Promise<{ bodyBytes: number; record: MatoolSafeAreaRecord }> {
     requireInteressentId(interessentId);
-    const response = await this.request(
+    const response = await this.requestInteressentenWithStatusRetry(
       "/json/statistik_daten.php",
       {
         body: new URLSearchParams({ id: interessentId }),
@@ -925,6 +945,60 @@ export class MatoolClient {
       "MATOOL hat zu viele Redirects geliefert."
     );
   }
+
+  private async requestInteressentenWithStatusRetry(
+    path: string,
+    init: RequestInit
+  ): Promise<Response> {
+    for (
+      let attempt = 1;
+      attempt <= MAX_INTERESSENTEN_STATUS_ATTEMPTS;
+      attempt += 1
+    ) {
+      const response = await this.request(path, init);
+      if (
+        !isRetryableInteressentenStatus(response.status) ||
+        attempt === MAX_INTERESSENTEN_STATUS_ATTEMPTS
+      ) {
+        return response;
+      }
+
+      const retryAfterMs = parseInteressentenRetryAfter(
+        response.headers.get("Retry-After")
+      );
+      await response.body?.cancel();
+      if (retryAfterMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+      }
+    }
+
+    throw new Error("unreachable Interessenten retry state");
+  }
+}
+
+function isRetryableInteressentenStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+function parseInteressentenRetryAfter(value: string | null): number {
+  const retryAfter = value?.trim() ?? "";
+  if (/^\d+$/u.test(retryAfter)) {
+    const seconds = Number(retryAfter);
+    return Math.min(
+      MAX_INTERESSENTEN_RETRY_AFTER_MS,
+      Number.isFinite(seconds)
+        ? seconds * 1_000
+        : MAX_INTERESSENTEN_RETRY_AFTER_MS
+    );
+  }
+  const retryAt = Date.parse(retryAfter);
+  if (!Number.isFinite(retryAt)) {
+    return 0;
+  }
+  return Math.min(
+    MAX_INTERESSENTEN_RETRY_AFTER_MS,
+    Math.max(0, retryAt - Date.now())
+  );
 }
 
 function normalizeMaxRequestCount(value: number | undefined): number {
@@ -1135,6 +1209,7 @@ interface SafeAreaRowCapture {
   hrefIds: Array<{ id: string; key: string }>;
   linkCount: number;
   onclickIds: string[];
+  parentRow: SafeAreaRowCapture | undefined;
   stableListIds: string[];
   tableIndex: number;
   tdCount: number;
@@ -1288,6 +1363,9 @@ export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
   "werbung",
   "werbung_bezeichnung"
 ] as const;
+const MATOOL_INTERESSENT_DETAIL_FIELD_SET = new Set<string>(
+  MATOOL_INTERESSENT_DETAIL_FIELDS
+);
 
 /** Liest die internen MATOOL-Kennungen der Listenzeilen. */
 async function extractInteressentenDetailHandles(
@@ -1375,6 +1453,13 @@ function parseInteressentDetailResponse(
   }
 
   const source = candidate as Record<string, unknown>;
+  const keys = Object.keys(source);
+  if (
+    keys.length !== MATOOL_INTERESSENT_DETAIL_FIELDS.length ||
+    keys.some((key) => !MATOOL_INTERESSENT_DETAIL_FIELD_SET.has(key))
+  ) {
+    throw interessentDetailSchemaError();
+  }
   const id = normalizeInteressentDetailValue(source["id"], false);
   if (!id || id !== expectedSourceId || !/^\d{1,32}$/u.test(id)) {
     throw interessentDetailSchemaError();
@@ -1540,6 +1625,7 @@ async function extractSafeAreaPage(
           hrefIds: [],
           linkCount: 0,
           onclickIds: [],
+          parentRow: strictListArea ? rowStack.at(-1) : undefined,
           stableListIds: [],
           tableIndex: tableStack.at(-1) ?? -1,
           tdCount: 0,
@@ -1743,8 +1829,16 @@ async function extractSafeAreaPage(
     explicitId?: string;
     payload: Record<string, string | number>;
   }> = [];
+  if (area === "interessenten") {
+    prepared.push(
+      ...prepareInteressentenSafeAreaRows(
+        rows,
+        headerNamesByColumnCount
+      )
+    );
+  }
   const seen = new Set<string>();
-  for (const row of rows) {
+  for (const row of area === "interessenten" ? [] : rows) {
     // Kopfzeilen sind keine Datensaetze.
     if (row.header || row.cells.length === 0 || row.tdCount === 0) {
       continue;
@@ -1803,6 +1897,142 @@ async function extractSafeAreaPage(
     }))
   );
   return { pagination, records };
+}
+
+/**
+ * MATOOL trennt jede sichtbare Interessentenzeile von ihrer technischen
+ * ID-Zeile. Die ID-Zeile folgt direkt danach und enthaelt zusaetzliche,
+ * verschachtelte Detailtabellen, die nicht Teil des Listen-Payloads sind.
+ */
+function prepareInteressentenSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): Array<{
+  explicitId: string;
+  payload: Record<string, string | number>;
+}> {
+  const matchingHeaders = rows.filter(
+    (row) =>
+      row.header &&
+      row.tdCount === INTERESSENTEN_SAFE_AREA_FIELDS.length &&
+      row.thCount === 0 &&
+      sameStrings(
+        toSafeAreaFieldNames(row.cells.map(normalizeSafeAreaCell)) ?? [],
+        INTERESSENTEN_SAFE_AREA_FIELDS
+      )
+  );
+  const headerNames = headerNamesByColumnCount.get(
+    INTERESSENTEN_SAFE_AREA_FIELDS.length
+  );
+  if (
+    matchingHeaders.length !== 1 ||
+    !headerNames ||
+    !sameStrings(headerNames, INTERESSENTEN_SAFE_AREA_FIELDS)
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+
+  const identifierRowIndexes: number[] = [];
+  for (const [index, row] of rows.entries()) {
+    if (row.stableListIds.length === 0) {
+      continue;
+    }
+    if (
+      row.header ||
+      row.stableListIds.length !== 1 ||
+      row.tdCount !== 2 ||
+      row.thCount !== 0 ||
+      row.cells.length !== 2 ||
+      isNestedUnderInteressentenIdentifierRow(row)
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    const previous = rows[index - 1];
+    if (!previous || !isInteressentenSafeAreaDataRow(previous)) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    identifierRowIndexes.push(index);
+  }
+  if (identifierRowIndexes.length === 0) {
+    throw paginatedSafeAreaSchemaError();
+  }
+
+  const records: Array<{
+    explicitId: string;
+    payload: Record<string, string | number>;
+  }> = [];
+  const seenSourceIds = new Set<string>();
+  let dataRowCount = 0;
+  for (const [index, row] of rows.entries()) {
+    if (!isInteressentenSafeAreaDataRow(row)) {
+      continue;
+    }
+    dataRowCount += 1;
+    const identifierRow = rows[index + 1];
+    if (
+      !identifierRow ||
+      identifierRow.stableListIds.length !== 1 ||
+      identifierRow.tdCount !== 2 ||
+      identifierRow.thCount !== 0 ||
+      identifierRow.cells.length !== 2 ||
+      isNestedUnderInteressentenIdentifierRow(identifierRow)
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    const explicitId = identifierRow.stableListIds[0];
+    if (!explicitId || seenSourceIds.has(explicitId)) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    seenSourceIds.add(explicitId);
+
+    const cells = row.cells.map(normalizeSafeAreaCell);
+    const payload: Record<string, string | number> = {
+      columnCount: cells.length,
+      tableIndex: row.tableIndex
+    };
+    cells.forEach((cell, cellIndex) => {
+      const field = INTERESSENTEN_SAFE_AREA_FIELDS[cellIndex];
+      if (!field) {
+        throw paginatedSafeAreaSchemaError();
+      }
+      payload[field] = cell;
+    });
+    records.push({ explicitId, payload });
+  }
+
+  if (
+    dataRowCount !== identifierRowIndexes.length ||
+    records.length !== dataRowCount
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  return records;
+}
+
+function isInteressentenSafeAreaDataRow(
+  row: SafeAreaRowCapture
+): boolean {
+  return (
+    !row.header &&
+    row.stableListIds.length === 0 &&
+    row.tdCount === INTERESSENTEN_SAFE_AREA_FIELDS.length &&
+    row.thCount === 0 &&
+    row.cells.length === INTERESSENTEN_SAFE_AREA_FIELDS.length &&
+    !isNestedUnderInteressentenIdentifierRow(row)
+  );
+}
+
+function isNestedUnderInteressentenIdentifierRow(
+  row: SafeAreaRowCapture
+): boolean {
+  let parent = row.parentRow;
+  while (parent) {
+    if (parent.stableListIds.length > 0) {
+      return true;
+    }
+    parent = parent.parentRow;
+  }
+  return false;
 }
 
 interface NormalizedSafeAreaPagination {

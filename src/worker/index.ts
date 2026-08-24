@@ -26,6 +26,10 @@ import {
 } from "./dashboard-repository";
 import type { Env } from "./env";
 import {
+  getInteressentenSyncPublicStatus,
+  startOrResumeInteressentenSyncWorkflow
+} from "./interessenten-sync-workflow";
+import {
   getAdminStatus,
   listAreaSnapshots,
   listRuns
@@ -36,6 +40,8 @@ import {
   handleScheduledInvocation
 } from "./schedule";
 import { handleZapierApiRequest } from "./zapier-api";
+
+export { InteressentenSyncWorkflow } from "./interessenten-sync-workflow";
 
 const worker = {
   async fetch(
@@ -203,6 +209,44 @@ async function handleApiRequest(
     });
   }
 
+  if (url.pathname === "/api/admin/v1/matool/interessenten/sync") {
+    if (request.method === "GET") {
+      return jsonResponse({
+        schemaVersion: 1,
+        sync: await getInteressentenSyncPublicStatus(env)
+      });
+    }
+    if (request.method !== "POST") {
+      methodNotAllowed(["GET", "POST"]);
+    }
+    await requireValidCsrfRequest(request, identity, env);
+    if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+      throw new AppError(
+        "matool_not_configured",
+        409,
+        "Die MATOOL-Verbindung ist noch nicht eingerichtet."
+      );
+    }
+    if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
+      throw new AppError(
+        "matool_runs_not_confirmed",
+        409,
+        "Read-only-Echtdatenlaeufe sind noch nicht freigegeben."
+      );
+    }
+    return jsonResponse(
+      {
+        schemaVersion: 1,
+        sync: await startOrResumeInteressentenSyncWorkflow(
+          env,
+          Date.now(),
+          "manual"
+        )
+      },
+      { status: 202 }
+    );
+  }
+
   if (url.pathname === "/api/admin/v1/sync/dry-run") {
     await requireValidCsrfRequest(request, identity, env);
 
@@ -324,9 +368,16 @@ async function handleApiRequest(
       );
     }
 
-    const result = await collectMatoolSnapshots(env, Date.now());
+    const requestedAt = Date.now();
+    const interessenten = await startOrResumeInteressentenSyncWorkflow(
+      env,
+      requestedAt,
+      "manual"
+    );
+    const result = await collectMatoolSnapshots(env, requestedAt);
     return jsonResponse({
       schemaVersion: 1,
+      interessenten,
       sync: result
     });
   }

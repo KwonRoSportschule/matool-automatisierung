@@ -638,6 +638,13 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   stabile ID befindet sich in der äußeren Tabellenzeile, die Listendaten in
   einer verschachtelten inneren Tabelle; der Parser verlor diese Zuordnung.
   Der Punkt bleibt bis zu Fix und erneutem 1:1-Live-Abgleich offen.
+- **Aktueller Quellnachweis vom 24.08.2026:** Der angemeldete Nur-Lese-Abruf
+  ergab 117 Seiten mit **3.491 Datensätzen, 3.491 eindeutigen stabilen
+  MATOOL-IDs und 0 doppelten IDs**. Die letzte Seite enthält 11 Datensätze.
+  Der sortierte ID-Bestand wurde ohne Ausgabe personenbezogener Daten als
+  SHA-256-Digest `c24197dfd07575213b6aedd49a3ee8759d8dcde8527744e741001892d26776bf`
+  festgehalten. Der Hub-Ausgangsstand beträgt 1.218 gespeicherte
+  Interessenten; die 1:1-D1-Abnahme bleibt bis zum vollständigen Import offen.
 - **Benötigte Daten:** vollständiger read-only HAR/HTML, falls die vorhandene
   Aufnahme nicht alle Listen-/Paginationfälle enthält; unabhängige
   MATOOL-Anzahl.
@@ -648,6 +655,10 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
     
         personenbezogener Daten erfassen: 117 Seiten / 3.493 Interessenten.
+  - [x] Quellmenge am 24.08.2026 erneut vollständig erfassen und alle stabilen
+
+        IDs auf Eindeutigkeit prüfen: 117 Seiten / 3.491 eindeutige IDs /
+        0 Quellduplikate.
   - [ ] Liste und interne stabile ID vollständig lesen.
   - [ ] Alle Detaildatensätze über den belegten read-only-Endpunkt lesen.
   - [x] Pagination und mehr als 100/500 Datensätze synthetisch testen.
@@ -1131,5 +1142,4 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | DATA-01/DQ-02          | Ersten Live-Mehrseitenabruf gegen MATOOL und D1 geprüft                                      | Lauf `sync_0ff56284…` verarbeitete 117 Seiten, speicherte aber fälschlich 0 von 3.493 Interessenten als Erfolg; Parser-Zuordnung für verschachtelte Tabellen und erneuter Live-Abgleich offen                    |
 | 19.08.2026 | RUN-03                 | Realen Paid-Lauf gegen die Laufzeitgrenze geprüft                                            | `sync_0ff56284…` war nach 15:31 Minuten noch nicht abgeschlossen und hatte Mitglieder noch nicht begonnen; fortsetzbare Aufteilung/Gesamtdeadline bleibt offen                                                   |
 | 19.08.2026 | DATA-01/DATA-03/DQ-02  | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert                          | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |
-
-
+| 24.08.2026 | DATA-01                 | Vollständigen fortsetzbaren Interessentenabgleich implementiert und lokal verifiziert         | Exakter Listen-Ersatz, 100er-Detailbatches, Retry/Backoff, Wiederaufnahme und finales ID-Paritätsgate; 246/246 Tests und beide Typechecks bestanden; Deployment und Live-Differenz 0 bleiben offen               |

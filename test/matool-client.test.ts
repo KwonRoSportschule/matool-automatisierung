@@ -159,6 +159,10 @@ function paginatedListPage(input: {
     input.area === "schueler"
       ? ["NR.", "VORNAME", "NAME", "VERTRAG"]
       : ["Nr.", "Datum", "Vorname", "Name", "Status"];
+  const rows =
+    input.area === "interessenten"
+      ? input.rows
+      : `<table>${input.rows}</table>`;
   return `
     <html><body>
       <table>
@@ -166,7 +170,7 @@ function paginatedListPage(input: {
           ${headers.map((header) => `<td>${header}</td>`).join("")}
         </tr>
       </table>
-      <table>${input.rows}</table>
+      ${rows}
       <nav>${pagination}</nav>
       <input name="offset" value="0">
     </body></html>
@@ -179,6 +183,49 @@ function schuelerRow(sourceId: string, number: number): string {
       <td>${number}</td><td>Vorname ${number}</td><td>Name ${number}</td>
     </tr>
   `;
+}
+
+type PaginatedInteressentInput = {
+  createdDate: string;
+  displayNumber: string;
+  firstName: string;
+  lastName: string;
+  sourceId: string;
+  status: string;
+};
+
+function paginatedInteressentDataRow(
+  input: PaginatedInteressentInput
+): string {
+  return `
+    <tr>
+      <td>${input.displayNumber}</td>
+      <td>${input.createdDate}</td>
+      <td>${input.firstName}</td>
+      <td>${input.lastName}</td>
+      <td>${input.status}</td>
+    </tr>
+  `;
+}
+
+function paginatedInteressentIdentifierRow(sourceId: string): string {
+  return `
+    <tr>
+      <td><img alt="" onclick="formular_fuellen(${sourceId})"></td>
+      <td>
+        <table>
+          <tr><td>PRIVATE-HIDDEN-DETAIL-A-${sourceId}</td></tr>
+          <tr><td>PRIVATE-HIDDEN-DETAIL-B-${sourceId}</td></tr>
+        </table>
+      </td>
+    </tr>
+  `;
+}
+
+function paginatedInteressentRows(
+  input: PaginatedInteressentInput
+): string {
+  return `<table>${paginatedInteressentDataRow(input)}</table><table>${paginatedInteressentIdentifierRow(input.sourceId)}</table>`;
 }
 
 function nestedStrictListRow(
@@ -650,7 +697,19 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         status: 200
       }),
       new Response(
-        "<html><body><h1>Interessenten</h1><table><tr onclick=\"formular_fuellen(900001)\"><td>Synthetic</td></tr></table><span class=\"pagination_selected\">1</span></body></html>",
+        paginatedListPage({
+          area: "interessenten",
+          currentOffset: 0,
+          offsets: [0],
+          rows: paginatedInteressentRows({
+            createdDate: "01.08.2026",
+            displayNumber: "100",
+            firstName: "Synthetic",
+            lastName: "Lead",
+            sourceId: "900001",
+            status: "Neu"
+          })
+        }),
         {
           headers: { "Content-Type": "text/html; charset=utf-8" },
           status: 200
@@ -705,6 +764,137 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ).rejects.toThrow(AppError);
     expect(versuche).toBe(2);
     expect(client.requestCount).toBe(2);
+  });
+
+  it("wiederholt Interessentenlisten bei 429 und 5xx hoechstens dreimal", async () => {
+    const cancelledStatuses: number[] = [];
+    const retryResponse = (status: number): Response =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelledStatuses.push(status);
+          },
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("retry"));
+          }
+        }),
+        {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Retry-After": "0"
+          },
+          status
+        }
+      );
+    const successfulPage = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0],
+      rows: paginatedInteressentRows({
+        createdDate: "01.08.2026",
+        displayNumber: "100",
+        firstName: "Vorname",
+        lastName: "Name",
+        sourceId: "900001",
+        status: "Neu"
+      })
+    });
+    const responses = [
+      new Response("<html><body>Session</body></html>", { status: 200 }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+      retryResponse(429),
+      retryResponse(503),
+      new Response(successfulPage, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+        status: 200
+      })
+    ];
+    let listRequests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL) => {
+        if (String(input).includes("show=interessenten")) {
+          listRequests += 1;
+        }
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "interessenten"
+      )
+    ).resolves.toMatchObject({ rowCount: 1 });
+    expect(listRequests).toBe(3);
+    expect(cancelledStatuses).toEqual([429, 503]);
+  });
+
+  it("stoppt Interessentendetail-Retries nach dem dritten HTTP-Fehler", async () => {
+    const cancelledStatuses: number[] = [];
+    const retryResponse = (status: number): Response =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelledStatuses.push(status);
+          },
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("retry"));
+          }
+        }),
+        { headers: { "Retry-After": "0" }, status }
+      );
+    const responses = [
+      new Response("<html><body>Session</body></html>", { status: 200 }),
+      new Response(null, {
+        headers: { Location: "/index.php" },
+        status: 302
+      }),
+      new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+      retryResponse(500),
+      retryResponse(429),
+      retryResponse(503)
+    ];
+    let detailRequests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL) => {
+        if (String(input).includes("/json/statistik_daten.php")) {
+          detailRequests += 1;
+        }
+        const response = responses.shift();
+        if (!response) {
+          throw new Error("unexpected synthetic request");
+        }
+        return response;
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractInteressentDetail(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "700001"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_interessent_detail_failed",
+      status: 502
+    });
+    expect(detailRequests).toBe(3);
+    expect(cancelledStatuses).toEqual([500, 429, 503]);
   });
 
   it("verwendet fuer den Retry ein frisches Timeout-Signal", async () => {
@@ -836,8 +1026,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         status: "Termin",
         text: "Zeile 1\nZeile 2",
         werbung: "0",
-        werbung_bezeichnung: "Ohne",
-        unknown_private_field: "SHOULD_NOT_LEAK"
+        werbung_bezeichnung: "Ohne"
       }
     ]);
     const calls: Array<{ body: string; method: string; url: string }> = [];
@@ -898,9 +1087,6 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       werbung_bezeichnung: "Ohne"
     });
 
-    // Unbekannte Antwortfelder werden trotz erfolgreichem Abruf verworfen.
-    const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain("SHOULD_NOT_LEAK");
     expect(Object.keys(result.records[0]?.payload ?? {}).sort()).toEqual(
       [...MATOOL_INTERESSENT_DETAIL_FIELDS].sort()
     );
@@ -1028,7 +1214,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
-  it("verwirft unvollstaendige oder ID-fremde Detailantworten vollstaendig", async () => {
+  it("verwirft unvollstaendige, unbekannte oder ID-fremde Detailantworten vollstaendig", async () => {
     const complete = Object.fromEntries(
       MATOOL_INTERESSENT_DETAIL_FIELDS.map((field) => [field, ""])
     );
@@ -1037,8 +1223,14 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     delete incomplete.email;
     const mismatched = { ...complete, id: "700002" };
     const oversized = { ...complete, text: "x".repeat(2_001) };
+    const unknown = { ...complete, unknown_private_field: "unexpected" };
 
-    for (const responsePayload of [incomplete, mismatched, oversized]) {
+    for (const responsePayload of [
+      incomplete,
+      mismatched,
+      oversized,
+      unknown
+    ]) {
       const responses = [
         new Response("<html><body>Session</body></html>", { status: 200 }),
         new Response(null, {
@@ -1074,20 +1266,20 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
-  it("erkennt MATOOLs Kopfzeile an der Klasse master_tab_tr_head", async () => {
-    const page = `
-      <html><body><h1>Interessenten</h1>
-        <table>
-          <tr class="master_tab_tr_head"><td>Nr.</td><td>Datum</td><td>Vorname</td><td>Name</td><td>Status</td></tr>
-        </table>
-        <table>
-          <tr onclick="formular_fuellen(5304)">
-            <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
-          </tr>
-        </table>
-        <span class="pagination_selected">1</span>
-      </body></html>
-    `;
+  it("verknuepft die sichtbare Interessentenzeile mit der folgenden stabilen ID-Zeile", async () => {
+    const page = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0],
+      rows: paginatedInteressentRows({
+        createdDate: "11.07.2026",
+        displayNumber: "5304",
+        firstName: "Laura",
+        lastName: "Beispiel",
+        sourceId: "900001",
+        status: "Termin"
+      })
+    });
     const result = await clientForInteressentenPage(page).extractSafeArea(
       {
         email: "service-account@example.invalid",
@@ -1107,18 +1299,69 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       columnCount: 5,
       tableIndex: 1
     });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE-HIDDEN-DETAIL");
+  });
+
+  it("verwirft fehlende, mehrdeutige und verwaiste Interessenten-ID-Zeilen", async () => {
+    const first = {
+      createdDate: "01.08.2026",
+      displayNumber: "100",
+      firstName: "Vorname",
+      lastName: "Name",
+      sourceId: "900001",
+      status: "Neu"
+    };
+    const second = {
+      ...first,
+      displayNumber: "101",
+      sourceId: "900002"
+    };
+    const ambiguousIdentifierRow = paginatedInteressentIdentifierRow(
+      first.sourceId
+    ).replace(
+      `<img alt="" onclick="formular_fuellen(${first.sourceId})">`,
+      `<img alt="" onclick="formular_fuellen(${first.sourceId})"><button onclick="formular_fuellen(900099)">Mehrdeutig</button>`
+    );
+    const invalidRows = [
+      `${paginatedInteressentRows(first)}<table>${paginatedInteressentDataRow(second)}</table><table><tr><td>Control ohne ID</td><td></td></tr></table>`,
+      `<table>${paginatedInteressentDataRow(first)}</table><table>${ambiguousIdentifierRow}</table>`,
+      `${paginatedInteressentRows(first)}<table>${paginatedInteressentIdentifierRow(second.sourceId)}</table>`
+    ];
+
+    for (const rows of invalidRows) {
+      const body = paginatedListPage({
+        area: "interessenten",
+        currentOffset: 0,
+        offsets: [0],
+        rows
+      });
+      const pages = new Map([
+        ["/index.php?show=interessenten&offset=0", { body }]
+      ]);
+      await expect(
+        clientForPaginatedPages(pages).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "interessenten"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_paginated_list_schema_mismatch",
+        status: 502
+      });
+    }
   });
 
   it("benennt Spalten nach der Kopfzeile, auch wenn sie in einer eigenen Tabelle steht", async () => {
     const page = `
-      <html><body><h1>Interessenten</h1>
+      <html><body><h1>Artikel</h1>
         <table><tr><th>Nr.</th><th>Datum</th><th>Vorname</th><th>Name</th><th>Status</th></tr></table>
         <table>
           <tr onclick="formular_fuellen(5304)">
             <td>5304</td><td>11.07.2026</td><td>Laura</td><td>Beispiel</td><td>Termin</td>
           </tr>
         </table>
-        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1126,7 +1369,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         email: "service-account@example.invalid",
         password: "synthetic-password"
       },
-      "interessenten"
+      "artikel"
     );
 
     expect(result.records[0]?.payload).toEqual({
@@ -1142,13 +1385,12 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
 
   it("behaelt die Nummerierung, wenn zwei Kopfzeilen derselben Breite widersprechen", async () => {
     const page = `
-      <html><body><h1>Interessenten</h1>
+      <html><body><h1>Artikel</h1>
         <table><tr><th>Nr.</th><th>Datum</th></tr></table>
         <table><tr><th>Kurs</th><th>Raum</th></tr></table>
         <table>
           <tr onclick="formular_fuellen(4711)"><td>4711</td><td>01.01.2026</td></tr>
         </table>
-        <span class="pagination_selected">1</span>
       </body></html>
     `;
     const result = await clientForInteressentenPage(page).extractSafeArea(
@@ -1156,7 +1398,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         email: "service-account@example.invalid",
         password: "synthetic-password"
       },
-      "interessenten"
+      "artikel"
     );
 
     expect(result.records[0]?.payload).toMatchObject({
@@ -1167,23 +1409,23 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
 
   it("speichert in Interessentenlisten nur Zeilen mit stabilen IDs", async () => {
     const longCell = "x".repeat(700);
-    const page = `
-      <html><body><h1>Interessenten</h1>
-        <table>
-          <tr><th>Name</th><th>Details</th><th>Zahlung</th></tr>
-          <tr onclick="formular_fuellen(900001)">
-            <td>Alice<script>PRIVATE-SCRIPT</script>
-              <input value="PRIVATE-INPUT"><img alt="PRIVATE-IMAGE">
-            </td>
-            <td><a href="/index.php?show=interessenten&amp;interessent=900001">Oeffnen</a></td>
-            <td>DE89 3704 0044 0532 0130 00</td>
-          </tr>
-          <tr><td><a href="/index.php?show=interessenten&amp;page=2">Weiter</a></td></tr>
-          <tr><td>${longCell}</td><td>Ohne technische ID</td></tr>
-        </table>
-        <span class="pagination_selected">1</span>
-      </body></html>
-    `;
+    const page = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0],
+      rows:
+        paginatedInteressentRows({
+          createdDate: "01.08.2026",
+          displayNumber: "100",
+          firstName:
+            "Alice<script>PRIVATE-SCRIPT</script><input value=\"PRIVATE-INPUT\"><img alt=\"PRIVATE-IMAGE\">",
+          lastName: "Beispiel",
+          sourceId: "900001",
+          status: "DE89 3704 0044 0532 0130 00"
+        }) +
+        `<table><tr><td><a href="/index.php?show=interessenten&amp;page=2">Weiter</a></td></tr>
+         <tr><td>${longCell}</td><td>Nur Layout</td></tr></table>`
+    });
     const result = await clientForInteressentenPage(page).extractSafeArea(
       {
         email: "service-account@example.invalid",
@@ -1197,15 +1439,16 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       bodyBytes: new TextEncoder().encode(page).byteLength,
       rowCount: 1
     });
-    // Die Spaltennamen stammen aus der Kopfzeile der Tabelle.
     expect(result.records[0]).toEqual({
       sourceId: "900001",
       payload: {
-        name: "Alice",
-        details: "Oeffnen",
-        zahlung: "",
-        columnCount: 3,
-        tableIndex: 0
+        nr: "100",
+        datum: "01.08.2026",
+        vorname: "Alice",
+        name: "Beispiel",
+        status: "",
+        columnCount: 5,
+        tableIndex: 1
       }
     });
     expect(result.records.every(({ sourceId }) => /^\d+$/u.test(sourceId))).toBe(
@@ -1216,15 +1459,19 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       "PRIVATE-SCRIPT",
       "PRIVATE-INPUT",
       "PRIVATE-IMAGE",
-      "DE89"
+      "DE89",
+      "PRIVATE-HIDDEN-DETAIL"
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
   });
 
   it("verwirft eine strikte Liste ohne ausgewaehlte erste Seite", async () => {
-    const body = interessentenPage(
-      interessentRow({
+    const body = paginatedListPage({
+      area: "interessenten",
+      currentOffset: 0,
+      offsets: [0],
+      rows: paginatedInteressentRows({
         createdDate: "01.08.2026",
         displayNumber: "100",
         firstName: "Vorname",
@@ -1232,7 +1479,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         sourceId: "900001",
         status: "Neu"
       })
-    );
+    }).replace('class="pagination_selected"', 'class="not_selected"');
     const pages = new Map([
       ["/index.php?show=interessenten&offset=0", { body }]
     ]);
@@ -1255,20 +1502,33 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     const requests: string[] = [];
     const pages = new Map<string, { body: string }>();
     let expectedBodyBytes = 0;
+    const expectedSourceIds: string[] = [];
+    let recordIndex = 0;
     for (const [index, offset] of offsets.entries()) {
+      const pageSize = offset === offsets.at(-1) ? 11 : 30;
+      const rows = Array.from({ length: pageSize }, () => {
+        const current = recordIndex;
+        recordIndex += 1;
+        const sourceId = String(900_001 + current);
+        expectedSourceIds.push(sourceId);
+        return paginatedInteressentRows({
+          createdDate: `0${index + 1}.08.2026`,
+          displayNumber: String(100 + current),
+          firstName: `Vorname ${current}`,
+          lastName: `Name ${current}`,
+          sourceId,
+          status: "Neu"
+        });
+      }).join("");
       const body = paginatedListPage({
         area: "interessenten",
         currentOffset: offset,
         offsets,
         rows:
-          interessentRow({
-            createdDate: `0${index + 1}.08.2026`,
-            displayNumber: String(100 + index),
-            firstName: `Vorname ${index}`,
-            lastName: `Name ${index}`,
-            sourceId: String(900_001 + index),
-            status: "Neu"
-          }) + (offset === 0 ? "<tr><td>Layout ohne ID</td></tr>" : "")
+          rows +
+          (offset === 0
+            ? "<table><tr><td>Layout ohne ID</td></tr></table>"
+            : "")
       });
       expectedBodyBytes += new TextEncoder().encode(body).byteLength;
       pages.set(`/index.php?show=interessenten&offset=${offset}`, { body });
@@ -1285,11 +1545,10 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       "interessenten"
     );
 
-    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
-      "900001",
-      "900002",
-      "900003"
-    ]);
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(
+      expectedSourceIds
+    );
+    expect(result.rowCount).toBe(71);
     expect(result.bodyBytes).toBe(expectedBodyBytes);
     expect(requests.slice(-3)).toEqual([
       "/index.php?show=interessenten&offset=0",
@@ -1298,12 +1557,9 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ]);
   });
 
-  it.each([
-    { area: "interessenten" as const, ids: ["910001", "910002"] },
-    { area: "schueler" as const, ids: ["710001", "710002"] }
-  ])(
-    "ordnet verschachtelte $area-Daten der aeusseren stabilen ID zu",
-    async ({ area, ids }) => {
+  it("laesst die bestehende verschachtelte Schuelerzuordnung unveraendert", async () => {
+      const area = "schueler" as const;
+      const ids = ["710001", "710002"];
       const offsets = [0, 30];
       const pages = new Map<string, { body: string }>();
       for (const [index, offset] of offsets.entries()) {
@@ -1333,15 +1589,13 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
 
       expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
       expect(result.records).toHaveLength(2);
-      const textField = area === "schueler" ? "c02" : "c01";
-      expect(result.records[0]?.payload[textField]).toBe(
+      expect(result.records[0]?.payload.c02).toBe(
         "Synthetic-1 A Synthetic-1 B"
       );
-      expect(result.records[1]?.payload[textField]).toBe(
+      expect(result.records[1]?.payload.c02).toBe(
         "Synthetic-2 A Synthetic-2 B"
       );
-    }
-  );
+  });
 
   it("liest eine Schuelerliste mit mehr als 500 stabilen Datensaetzen vollstaendig", async () => {
     const offsets = Array.from({ length: 17 }, (_, index) => index * 30);
@@ -1386,7 +1640,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
           area: "interessenten",
           currentOffset: offset,
           offsets,
-          rows: "<tr><td>Nur Layout ohne stabile ID</td></tr>"
+          rows: "<table><tr><td>Nur Layout ohne stabile ID</td></tr></table>"
         })
       });
     }
@@ -1412,7 +1666,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       area: "interessenten",
       currentOffset: 0,
       offsets: [0, 30],
-      rows: interessentRow({
+      rows: paginatedInteressentRows({
         createdDate: "01.08.2026",
         displayNumber: "100",
         firstName: "Vorname",
@@ -1449,7 +1703,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
             area: "interessenten",
             currentOffset: 0,
             offsets,
-            rows: interessentRow({
+            rows: paginatedInteressentRows({
               createdDate: "01.08.2026",
               displayNumber: "100",
               firstName: "Vorname",
@@ -1477,7 +1731,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
   it("verwirft identische Duplikate ueber Seitengrenzen", async () => {
     const offsets = [0, 30];
     const duplicate = (status: string): string =>
-      interessentRow({
+      paginatedInteressentRows({
         createdDate: "01.08.2026",
         displayNumber: "100",
         firstName: "Vorname",
@@ -1524,7 +1778,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
   });
 
   it("verwirft identische Duplikate innerhalb einer Seite", async () => {
-    const row = interessentRow({
+    const row = paginatedInteressentRows({
       createdDate: "01.08.2026",
       displayNumber: "100",
       firstName: "Vorname",

@@ -1,6 +1,7 @@
 export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  INTERESSENTEN_SYNC_WORKFLOW: Workflow<InteressentenSyncWorkflowParams>;
 
   APP_ENV: "local" | "test" | "staging" | "production";
   ACCESS_AUD: string;
@@ -27,4 +28,9 @@ export interface Env {
 
   ZAPIER_SERVICE_TOKEN?: string;
   ZAPIER_WEBHOOK_SIGNING_SECRET?: string;
+}
+
+export interface InteressentenSyncWorkflowParams {
+  requestedAt: string;
+  trigger: "manual" | "scheduled";
 }

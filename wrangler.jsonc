@@ -34,6 +34,13 @@
       "migrations_dir": "migrations"
     }
   ],
+  "workflows": [
+    {
+      "binding": "INTERESSENTEN_SYNC_WORKFLOW",
+      "name": "matool-interessenten-sync-local",
+      "class_name": "InteressentenSyncWorkflow"
+    }
+  ],
   "env": {
     "staging": {
       "name": "matool-middleware-staging",
@@ -56,6 +63,13 @@
           "database_name": "matool-middleware-staging",
           "database_id": "4e002f53-31da-4212-bb46-c38ce05a36e2",
           "migrations_dir": "migrations"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "INTERESSENTEN_SYNC_WORKFLOW",
+          "name": "matool-interessenten-sync-staging",
+          "class_name": "InteressentenSyncWorkflow"
         }
       ],
       // Hinweis: "limits": { "cpu_ms": ... } benoetigt Workers Paid.
@@ -90,6 +104,13 @@
           "database_name": "matool-middleware-production",
           "database_id": "00000000-0000-0000-0000-000000000000",
           "migrations_dir": "migrations"
+        }
+      ],
+      "workflows": [
+        {
+          "binding": "INTERESSENTEN_SYNC_WORKFLOW",
+          "name": "matool-interessenten-sync-production",
+          "class_name": "InteressentenSyncWorkflow"
         }
       ],
       "triggers": {

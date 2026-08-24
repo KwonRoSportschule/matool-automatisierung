@@ -4,6 +4,7 @@ import {
   MATOOL_KLASSEN_PAYLOAD_FIELDS
 } from "../matool/client";
 import type { Env } from "./env";
+import { startOrResumeInteressentenSyncWorkflow } from "./interessenten-sync-workflow";
 import {
   persistMatoolSnapshotRun,
   recordMatoolSnapshotFailure
@@ -37,6 +38,11 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "berichte",
   "karte"
 ] as const;
+
+const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
+  (area) =>
+    area !== "interessenten" && area !== "interessenten_details"
+);
 
 /**
  * Entspricht der maximalen Zahl von Interessenten, die der Extraktor aus
@@ -204,10 +210,26 @@ export async function handleScheduledInvocation(
     return;
   }
 
+  const interessenten = await startOrResumeInteressentenSyncWorkflow(
+    env,
+    controller.scheduledTime,
+    "scheduled"
+  );
+  console.info(
+    JSON.stringify({
+      event: "matool_interessenten_workflow_started_or_resumed",
+      completedDetails: interessenten.completedDetails,
+      detailCount: interessenten.detailCount,
+      listCount: interessenten.listCount,
+      missingDetails: interessenten.missingDetails,
+      status: interessenten.status
+    })
+  );
+
   await collectMatoolSnapshots(
     env,
     controller.scheduledTime,
-    MATOOL_SNAPSHOT_AREAS,
+    MATOOL_DIRECT_SNAPSHOT_AREAS,
     "scheduled"
   );
 
@@ -244,9 +266,13 @@ export async function handleScheduledInvocation(
 export async function collectMatoolSnapshots(
   env: Env,
   scheduledTime: number,
-  areas: readonly string[] = MATOOL_SNAPSHOT_AREAS,
+  areas: readonly string[] = MATOOL_DIRECT_SNAPSHOT_AREAS,
   trigger: MatoolSyncTrigger = "manual"
 ): Promise<CollectSnapshotsResult> {
+  const directAreas = areas.filter(
+    (area) =>
+      area !== "interessenten" && area !== "interessenten_details"
+  );
   const summary: CollectSnapshotsResult = {
     areas: [],
     failed: 0,
@@ -275,7 +301,7 @@ export async function collectMatoolSnapshots(
     minRequestIntervalMs: MATOOL_REQUEST_INTERVAL_MS
   });
   try {
-    for (const area of areas) {
+    for (const area of directAreas) {
     const runId = `snapshot_${area}_${crypto.randomUUID()}`;
     const startedAt = new Date().toISOString();
     try {
@@ -293,18 +319,7 @@ export async function collectMatoolSnapshots(
           ? await client.extractKlassen(credentials, {
               maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN
             })
-          : area === "interessenten_details"
-            ? await (async () => {
-                const sourceIds = await selectInteressentenDetailSourceIds(
-                  env.DB
-                );
-                return client.extractInteressentenDetails(
-                  credentials,
-                  MATOOL_INTERESSENTEN_DETAILS_PER_RUN,
-                  sourceIds.length > 0 ? sourceIds : undefined
-                );
-              })()
-            : await client.extractSafeArea(credentials, area)
+          : await client.extractSafeArea(credentials, area)
       ).records;
       const finishedAt = new Date().toISOString();
       const result = await persistMatoolSnapshotRun(env.DB, {
@@ -378,7 +393,7 @@ export async function collectMatoolSnapshots(
     failed: summary.failed,
     storedTotal: summary.storedTotal,
     succeeded: summary.succeeded,
-    totalAreas: areas.length
+    totalAreas: directAreas.length
   });
 
   if (env.OUTBOUND_DELIVERY_ENABLED === "true") {
