@@ -76,7 +76,7 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
     const timestamp = new Date().toISOString();
     await persistMatoolSnapshotRun(env.DB, {
       allowedPayloadFields: ["value"],
-      area: "artikel",
+      area: "newsletter",
       finishedAt: timestamp,
       observedAt: timestamp,
       records: Array.from({ length: 100 }, (_, index) => ({
@@ -88,12 +88,12 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
     });
 
     await expect(
-      assertExactSourceBaseline(env.DB, "artikel", 79)
+      assertExactSourceBaseline(env.DB, "newsletter", 79)
     ).rejects.toMatchObject({
       code: "matool_exact_source_implausible_shrink"
     });
     await expect(
-      assertExactSourceBaseline(env.DB, "artikel", 80)
+      assertExactSourceBaseline(env.DB, "newsletter", 80)
     ).resolves.toBeUndefined();
   });
 
