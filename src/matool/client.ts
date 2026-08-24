@@ -661,7 +661,8 @@ export class MatoolClient {
       seen.add(sourceId);
 
       const response = await this.request("/json/schueler_daten.php", {
-        body: new URLSearchParams({ id: sourceId, todo: "daten" }),
+        // Aus der HAR-Aufnahme belegt: MATOOL sendet todo leer.
+        body: new URLSearchParams({ id: sourceId, todo: "" }),
         headers: {
           Accept: "application/json,text/javascript,*/*;q=0.01",
           "Content-Type":
@@ -1283,10 +1284,13 @@ function parseSchuelerDetailResponse(
   const source = record as Record<string, unknown>;
   const payload: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(source)) {
-    const field = key.trim().toLowerCase();
+    const field = key.trim();
+    // Alle einfachen Werte uebernehmen, statt Feldnamen zu raten.
+    // Verschachtelte Strukturen wie Dokument-, Historien- oder
+    // Check-in-Listen bleiben dadurch automatisch aussen vor.
     if (
-      SCHUELER_FORBIDDEN_FIELD.test(field) ||
-      !SCHUELER_DETAIL_FIELD_SET.has(field) ||
+      !SAFE_SCHUELER_FIELD_NAME.test(field) ||
+      Object.keys(payload).length >= MAX_SCHUELER_DETAIL_FIELDS ||
       value === null ||
       value === undefined
     ) {
@@ -1446,72 +1450,22 @@ function toSafeAreaFieldName(label: string): string | undefined {
 }
 
 /**
+ * Schranken fuer Mitglieder-Stammdaten. Uebernommen wird jedes einfache
+ * Feld, das MATOOL liefert - einschliesslich der Zahlungs- und Bankdaten,
+ * die ausdruecklich angefordert wurden. Verschachtelte Strukturen wie
+ * Dokument-, Historien- oder Check-in-Listen bleiben aussen vor.
+ *
+ * Hinweis: Das Dashboard ist oeffentlich erreichbar und zeigt in der
+ * Testphase Klartext. Vor echten Mitgliederdaten gehoert
+ * PUBLIC_DASHBOARD_PLAINTEXT auf "false".
+ */
+const SAFE_SCHUELER_FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
+const MAX_SCHUELER_DETAIL_FIELDS = 80;
+
+/**
  * Vollstaendige, HAR-bestaetigte Allowlist fuer die Interessentenmaske.
  * Neue oder unbekannte Antwortfelder werden nicht in Snapshots uebernommen.
  */
-/**
- * Freigegebene Stammdatenfelder eines Mitglieds.
- *
- * Bankverbindung (IBAN, BIC, Konto, BLZ, Mandatsreferenz) ist bewusst
- * NICHT enthalten. Das Dashboard ist oeffentlich erreichbar und zeigt in
- * der Testphase Klartext; Kontodaten gehoeren dort nicht hin. Wird das
- * spaeter benoetigt, sind die Feldnamen hier zu ergaenzen.
- */
-export const MATOOL_SCHUELER_DETAIL_FIELDS = [
-  "id",
-  "anrede",
-  "vorname",
-  "name",
-  "strasse",
-  "plz",
-  "stadt",
-  "ort",
-  "telefon",
-  "handy",
-  "email",
-  "beruf",
-  "geburtstag",
-  "geburtsort",
-  "nationalitaet",
-  "anmeldegebuehr",
-  "kundenart",
-  "vertragdatum",
-  "vertrag",
-  "vertragsbeginn",
-  "vertragsende",
-  "verlaengerung",
-  "kuendigungsfrist",
-  "zahlungsperiode",
-  "beitrag",
-  "anpassen_ab",
-  "turnus",
-  "art",
-  "wert",
-  "max_checkin",
-  "pruefung_inkl",
-  "jahresgebuehr",
-  "faellig_am",
-  "abschluss",
-  "zahlungsart",
-  "bank",
-  "schule",
-  "kennzeichen",
-  "lehrer",
-  "barcode",
-  "sparten",
-  "klasse",
-  "kategorien",
-  "status"
-] as const;
-
-const SCHUELER_DETAIL_FIELD_SET = new Set<string>(
-  MATOOL_SCHUELER_DETAIL_FIELDS
-);
-
-/** Kontodaten werden bewusst nie uebernommen. */
-const SCHUELER_FORBIDDEN_FIELD =
-  /iban|bic|konto|blz|mandat|bankverbindung/iu;
-
 export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
   "id",
   "datum",
@@ -2253,7 +2207,13 @@ function prepareSchuelerSafeAreaRows(
       continue;
     }
     const sourceId = row.stableListIds[0];
-    if (!sourceId || seenSourceIds.has(sourceId)) {
+    // Zeilen ohne stabile Kennung sind keine Datensaetze, sondern Layout
+    // oder Zwischenueberschriften. Sie werden uebersprungen; ein ganzer
+    // Bereich darf daran nicht scheitern.
+    if (!sourceId) {
+      continue;
+    }
+    if (seenSourceIds.has(sourceId)) {
       throw paginatedSafeAreaSchemaError();
     }
     seenSourceIds.add(sourceId);

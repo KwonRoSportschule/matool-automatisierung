@@ -1319,16 +1319,18 @@ export async function listDashboardRecords(
         )
         .all<DashboardSnapshotRow>(),
       env.DB.prepare(
+        // Die Spaltenliste muss Listen- UND Detailfelder umfassen, sonst
+        // faenden sich die zusammengefuehrten Werte in keiner Spalte wieder.
         `SELECT DISTINCT fields.key AS field_key
          FROM matool_snapshots AS snapshots,
               json_each(
                 CASE WHEN json_valid(snapshots.payload_json)
                      THEN snapshots.payload_json ELSE '{}' END
               ) AS fields
-         WHERE snapshots.area = ?
+         WHERE snapshots.area IN (?, ? || '_details')
          ORDER BY field_key`
       )
-        .bind(area)
+        .bind(area, area)
         .all<DashboardColumnKeyRow>()
     ]);
 
