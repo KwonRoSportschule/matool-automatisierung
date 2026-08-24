@@ -678,7 +678,10 @@ export class MatoolClient {
       const responseBody = await readBoundedBody(response);
       bodyBytes += responseBody.byteLength;
       records.push({
-        payload: parseSchuelerDetailResponse(responseBody, sourceId),
+        payload: await parseSchuelerDetailResponse(
+          responseBody,
+          sourceId
+        ),
         sourceId
       });
     }
@@ -1251,6 +1254,132 @@ function parseKlassenResponse(body: Uint8Array): MatoolSafeAreaRecord {
   return { payload, sourceId };
 }
 
+/**
+ * Liest die Werte einer MATOOL-Formularmaske aus. Uebernommen werden
+ * Eingabefelder und die jeweils ausgewaehlte Option; Passwortfelder und
+ * verschachtelte Strukturen bleiben aussen vor.
+ */
+async function extractSchuelerFormPayload(
+  html: string,
+  expectedSourceId: string
+): Promise<Record<string, string | number>> {
+  const payload: Record<string, string | number> = {};
+  let activeSelect: string | undefined;
+
+  const store = (name: string, value: string): void => {
+    const field = name.trim();
+    if (
+      !SAFE_SCHUELER_FIELD_NAME.test(field) ||
+      field.toLowerCase() === "todo" ||
+      Object.keys(payload).length >= MAX_SCHUELER_DETAIL_FIELDS
+    ) {
+      return;
+    }
+    payload[field] = value
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
+  };
+
+  const rewriter = new HTMLRewriter()
+    .on("input[name]", {
+      element(element) {
+        const type =
+          element.getAttribute("type")?.toLowerCase() ?? "text";
+        if (type === "password") {
+          return;
+        }
+        if (
+          (type === "checkbox" || type === "radio") &&
+          element.getAttribute("checked") === null
+        ) {
+          return;
+        }
+        store(
+          element.getAttribute("name") ?? "",
+          element.getAttribute("value") ?? ""
+        );
+      }
+    })
+    .on("textarea[name]", {
+      element(element) {
+        store(element.getAttribute("name") ?? "", "");
+      }
+    })
+    .on("select[name]", {
+      element(element) {
+        activeSelect = element.getAttribute("name")?.trim() ?? undefined;
+        element.onEndTag(() => {
+          activeSelect = undefined;
+        });
+      }
+    })
+    .on("select option[selected]", {
+      element(element) {
+        if (activeSelect) {
+          store(activeSelect, element.getAttribute("value") ?? "");
+        }
+      }
+    });
+
+  await drainBody(
+    rewriter.transform(
+      new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      })
+    ).body
+  );
+
+  if (Object.keys(payload).length === 0) {
+    logSchuelerResponseShape(html, html);
+    throw schuelerSchemaError();
+  }
+  payload["id"] = expectedSourceId;
+  return payload;
+}
+
+/**
+ * Protokolliert ausschliesslich die Form einer unerwarteten Antwort:
+ * Laenge, Typ, Schluesselnamen beziehungsweise vorkommende Markup-Bausteine.
+ * Es werden keine Werte und keine Personendaten ausgegeben.
+ */
+function logSchuelerResponseShape(text: string, parsed: unknown): void {
+  const shape: Record<string, unknown> = {
+    event: "matool_schueler_response_shape",
+    length: text.length,
+    startsWith: text.trimStart().slice(0, 1),
+    parsedType: Array.isArray(parsed) ? "array" : typeof parsed
+  };
+
+  if (parsed && typeof parsed === "object") {
+    const first = Array.isArray(parsed) ? parsed[0] : parsed;
+    shape["keys"] =
+      first && typeof first === "object"
+        ? Object.keys(first as Record<string, unknown>).slice(0, 60)
+        : [];
+  }
+
+  const probe = typeof parsed === "string" ? parsed : text;
+  shape["markup"] = {
+    form: probe.includes("<form"),
+    input: probe.includes("<input"),
+    option: probe.includes("<option"),
+    select: probe.includes("<select"),
+    table: probe.includes("<table"),
+    tr: probe.includes("<tr")
+  };
+  // Feldnamen sind Strukturinformation, keine Personendaten.
+  shape["fieldNames"] = [
+    ...new Set(
+      [...probe.matchAll(/name\s*=\s*["']([A-Za-z][\w-]{0,40})["']/giu)].map(
+        (match) => match[1]
+      )
+    )
+  ].slice(0, 60);
+
+  console.error(JSON.stringify(shape));
+}
+
 function schuelerSchemaError(): AppError {
   return new AppError(
     "matool_schueler_schema_mismatch",
@@ -1265,19 +1394,28 @@ function schuelerSchemaError(): AppError {
  * verschachtelte Strukturen wie Dokument- oder Historienlisten bleiben
  * aussen vor.
  */
-function parseSchuelerDetailResponse(
+async function parseSchuelerDetailResponse(
   body: Uint8Array,
   expectedSourceId: string
-): Record<string, string | number> {
+): Promise<Record<string, string | number>> {
+  const text = new TextDecoder().decode(body);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(body));
+    parsed = JSON.parse(text);
   } catch {
-    throw schuelerSchemaError();
+    // Kein JSON: MATOOL liefert an dieser Stelle teils rohes Markup.
+    parsed = text;
+  }
+
+  // MATOOL verpackt Formularmasken als JSON-codierten HTML-String.
+  // Dann stehen die Werte in den Formularfeldern, nicht in JSON-Feldern.
+  if (typeof parsed === "string") {
+    return extractSchuelerFormPayload(parsed, expectedSourceId);
   }
 
   const record = Array.isArray(parsed) ? parsed[0] : parsed;
   if (!record || typeof record !== "object" || Array.isArray(record)) {
+    logSchuelerResponseShape(text, parsed);
     throw schuelerSchemaError();
   }
 

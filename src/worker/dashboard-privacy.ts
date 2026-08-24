@@ -122,6 +122,57 @@ const INTERESSENT_FIELD_LABELS: Readonly<Record<string, string>> = {
   werbung_formular: "Werbequelle - Formularwert"
 };
 
+/**
+ * Bezeichnungen der Mitglieder-Stammdaten. Die Reihenfolge entspricht dem
+ * MATOOL-Formular: Person, Kontakt, Vertrag, Zahlung, Schule.
+ */
+const SCHUELER_FIELD_LABELS: Readonly<Record<string, string>> = {
+  id: "MATOOL-Mitglieds-ID",
+  nr: "Nr.",
+  anrede: "Anrede",
+  vorname: "Vorname",
+  name: "Nachname",
+  strasse: "Strasse",
+  plz: "PLZ",
+  stadt: "Stadt",
+  ort: "Ort",
+  telefon: "Telefon",
+  handy: "Handy",
+  email: "E-Mail",
+  beruf: "Beruf",
+  geburtstag: "Geburtstag",
+  geburtsort: "Geburtsort",
+  nationalitaet: "Nationalitaet",
+  anmeldegebuehr: "Anmeldegebuehr",
+  kundenart: "Kundenart",
+  vertragdatum: "Vertragsdatum",
+  vertrag: "Vertrag",
+  vertragsbeginn: "Vertragsbeginn",
+  vertragsende: "Vertragsende",
+  verlaengerung: "Verlaengerung",
+  kuendigungsfrist: "Kuendigungsfrist",
+  zahlungsperiode: "Zahlungsperiode",
+  beitrag: "Beitrag",
+  jahresgebuehr: "Jahresgebuehr",
+  faellig_am: "Faellig am",
+  abschluss: "Abschluss",
+  zahlungsart: "Zahlungsart",
+  bank: "Bank",
+  blz: "BLZ",
+  konto: "Konto",
+  iban: "IBAN",
+  bic: "BIC",
+  mandatsref: "Mandatsreferenz",
+  kontoinhaber: "Kontoinhaber",
+  schule: "Schule",
+  kennzeichen: "Kennzeichen",
+  lehrer: "Lehrer",
+  barcode: "Barcode",
+  sparten: "Sparten",
+  kategorien: "Kategorien",
+  memo: "Memo"
+};
+
 const GENERIC_SAFE_FIELDS = new Set(["columnCount", "tableIndex", "status"]);
 
 const PII_FIELD_PATTERN =
@@ -249,6 +300,12 @@ function fieldLabel(area: string, key: string): string {
     return CLASS_FIELD_LABELS[key];
   }
   if (
+    (area === "schueler" || area === "schueler_details") &&
+    SCHUELER_FIELD_LABELS[key]
+  ) {
+    return SCHUELER_FIELD_LABELS[key];
+  }
+  if (
     (area === "interessenten" || area === "interessenten_details") &&
     INTERESSENT_FIELD_LABELS[key]
   ) {
@@ -272,6 +329,12 @@ function fieldOrder(area: string, key: string): number {
     const keys = Object.keys(CLASS_FIELD_LABELS);
     const index = keys.indexOf(key);
     return index === -1 ? 1_000 : index;
+  }
+  if (area === "schueler" || area === "schueler_details") {
+    const index = Object.keys(SCHUELER_FIELD_LABELS).indexOf(key);
+    if (index !== -1) {
+      return index;
+    }
   }
   if (area === "interessenten" || area === "interessenten_details") {
     const keys = Object.keys(INTERESSENT_FIELD_LABELS);

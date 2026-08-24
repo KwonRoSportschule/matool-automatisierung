@@ -80,4 +80,69 @@ describe("MATOOL-Mitglieder-Stammdaten", () => {
     );
     expect(detailCall?.body).toBe("id=29345&todo=");
   });
+
+  it("liest auch eine als JSON-String verpackte Formularmaske", async () => {
+    const maske = `
+      <form>
+        <input type="hidden" name="id" value="29345">
+        <input type="hidden" name="todo" value="2">
+        <input name="vorname" value="Natalia">
+        <input name="name" value="Gambardella">
+        <input name="email" value="ganat@freenet.de">
+        <input name="iban" value="DE66 5001 0517 5423 0283 50">
+        <input name="bic" value="INGDDEFFXXX">
+        <input name="beitrag" value="60,00">
+        <input type="password" name="pass" value="GEHEIM">
+        <select name="zahlungsart">
+          <option value="Bar">Bar</option>
+          <option value="Lastschrift" selected>Lastschrift</option>
+        </select>
+      </form>`;
+
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/index.php") && init?.method === "POST") {
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        if (url.includes("schueler_daten.php")) {
+          // MATOOL verpackt die Maske als JSON-codierten String.
+          return new Response(JSON.stringify(maske), {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+            status: 200
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    const result = await client.extractSchuelerDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      ["29345"]
+    );
+
+    expect(result.records[0]?.payload).toMatchObject({
+      beitrag: "60,00",
+      bic: "INGDDEFFXXX",
+      email: "ganat@freenet.de",
+      iban: "DE66 5001 0517 5423 0283 50",
+      id: "29345",
+      name: "Gambardella",
+      vorname: "Natalia",
+      zahlungsart: "Lastschrift"
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("GEHEIM");
+    expect(serialized).not.toContain('"todo"');
+  });
 });
