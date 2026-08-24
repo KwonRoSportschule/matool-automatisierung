@@ -1,0 +1,2 @@
+- [Project charter and four-phase data integration](project_charter.md) — MATOOL complete 1:1 hub with DATA-01 (Interessenten) done at 3.492/3.492 ID parity; four schema mismatches to fix
+- [User role and context](user_role.md) — KwonRo Sportschule administration; public repo; strict data privacy; verbindliche Arbeitsreihenfolge

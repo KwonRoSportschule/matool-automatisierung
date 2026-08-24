@@ -168,6 +168,7 @@ export async function getDashboardOverview(
                 MAX(last_seen_at) AS last_seen_at,
                 MAX(last_changed_at) AS last_changed_at
          FROM matool_snapshots
+         WHERE area IN ('interessenten', 'schueler')
          GROUP BY area`
       ).all<AreaCountRow>(),
       env.DB.prepare(latestAreaRunSql(false)).all<AreaRunRow>(),
@@ -791,9 +792,12 @@ function buildFunctionCatalogue(
     },
     {
       key: "generic_area_extraction",
-      name: "Generischer Bereichsabruf",
-      description: "Liest die elf weiteren freigegebenen MATOOL-Bereiche tabellenbasiert und ohne Schreibzugriff.",
-      areas: MATOOL_SNAPSHOT_AREAS.filter((area) => area !== "klassen"),
+      name: "Mitgliederabruf",
+      description:
+        "Liest die Mitgliederliste und ihre Stammdaten ohne Schreibzugriff.",
+      areas: MATOOL_SNAPSHOT_AREAS.filter((area) =>
+        area.startsWith("schueler")
+      ),
       state: matoolReady ? "enabled" : "unavailable",
       execution: "automatic_and_manual",
       lastRunAt: lastSync?.started_at ?? null,
@@ -926,7 +930,14 @@ interface DashboardActivityRow {
   technical_code: string | null;
 }
 
-const DASHBOARD_AREA_SET = new Set<string>(MATOOL_SNAPSHOT_AREAS);
+/**
+ * Fachlich zaehlen nur Interessenten und Mitglieder. Detailbereiche sind
+ * kein eigener Datensatz mehr, sondern werden beim Lesen in ihren
+ * Hauptdatensatz hineingemischt; sie erscheinen deshalb nicht als Bereich.
+ */
+export const DASHBOARD_VISIBLE_AREAS = ["interessenten", "schueler"] as const;
+
+const DASHBOARD_AREA_SET = new Set<string>(DASHBOARD_VISIBLE_AREAS);
 const DASHBOARD_ACTIVITY_KINDS = new Set([
   "automation",
   "data",
@@ -1244,10 +1255,16 @@ export async function listDashboardRecords(
     lastSeenAt: "record.last_seen_at",
     recordRef: "record.public_id"
   }[query.sort];
+  // Ein Interessent oder Mitglied ist fachlich EIN Datensatz. Listen- und
+  // Detailfelder werden deshalb beim Lesen zusammengefuehrt; die Details
+  // gewinnen bei gleichnamigen Feldern, weil sie aus dem Formular stammen.
   const recordsCte = `WITH dashboard_records AS (
     SELECT
       snapshots.public_id,
-      snapshots.payload_json,
+      json_patch(
+        snapshots.payload_json,
+        COALESCE(details.payload_json, '{}')
+      ) AS payload_json,
       snapshots.first_seen_at,
       snapshots.last_seen_at,
       COALESCE(snapshots.last_changed_at, snapshots.first_seen_at) AS last_changed_at,
@@ -1268,6 +1285,9 @@ export async function listDashboardRecords(
         LIMIT 1
       ), 'created') AS change_kind
     FROM matool_snapshots AS snapshots
+    LEFT JOIN matool_snapshots AS details
+      ON details.area = snapshots.area || '_details'
+     AND details.source_id = snapshots.source_id
     WHERE snapshots.area = ?
       AND snapshots.public_id IS NOT NULL
   )`;
@@ -1378,7 +1398,10 @@ export async function getDashboardRecord(
       env.DB.prepare(
         `SELECT
            snapshots.public_id,
-           snapshots.payload_json,
+           json_patch(
+             snapshots.payload_json,
+             COALESCE(details.payload_json, '{}')
+           ) AS payload_json,
            snapshots.first_seen_at,
            snapshots.last_seen_at,
            COALESCE(snapshots.last_changed_at, snapshots.first_seen_at) AS last_changed_at,
@@ -1405,6 +1428,9 @@ export async function getDashboardRecord(
          FROM matool_snapshots AS snapshots
          LEFT JOIN matool_snapshot_runs AS last_run
            ON last_run.run_id = snapshots.last_run_id
+         LEFT JOIN matool_snapshots AS details
+           ON details.area = snapshots.area || '_details'
+          AND details.source_id = snapshots.source_id
          WHERE snapshots.area = ?
            AND snapshots.public_id = ?
          LIMIT 1`

@@ -23,20 +23,14 @@ import { processSnapshotZapierDeliveries } from "./snapshot-delivery";
 // Interessenten und ihre Details haben fachlich Vorrang. Der Klassenabruf
 // folgt danach, damit beide anfragestarken Bereiche in stabiler Reihenfolge
 // vollstaendig verarbeitet werden.
+// Fachlich benoetigt werden ausschliesslich Interessenten und Mitglieder.
+// Die uebrigen MATOOL-Ansichten wurden abgeschaltet: Sie lieferten keinen
+// Mehrwert, verbrauchten aber den groessten Teil des Anfragebudgets.
 export const MATOOL_SNAPSHOT_AREAS = [
   "interessenten",
   "interessenten_details",
-  "klassen",
   "schueler",
-  "checkin",
-  "pruefungen",
-  "artikel",
-  "lager",
-  "newsletter",
-  "archiv",
-  "telemetrie",
-  "berichte",
-  "karte"
+  "schueler_details"
 ] as const;
 
 const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
@@ -56,6 +50,13 @@ export const MATOOL_INTERESSENTEN_DETAILS_PER_RUN = 500;
  * MATOOL-Klassenliste annimmt. Der Paid-Lauf liest sie ohne Rotation.
  */
 export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
+
+/**
+ * Mitglieder-Stammdaten je Lauf. Jeder Datensatz kostet genau einen
+ * schlanken JSON-Abruf, deshalb ist der gesamte Bestand nach wenigen
+ * Laeufen vollstaendig und bleibt danach aktuell.
+ */
+export const MATOOL_SCHUELER_DETAILS_PER_RUN = 300;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
@@ -148,6 +149,39 @@ export async function selectInteressentenDetailSourceIds(
        LIMIT ?`
     )
     .bind(MATOOL_INTERESSENTEN_DETAILS_PER_RUN)
+    .all<InteressentenDetailCandidateRow>();
+
+  return candidates.results
+    .map((row) => row.source_id)
+    .filter((sourceId) => /^\d{1,32}$/u.test(sourceId));
+}
+
+/**
+ * Waehlt die Mitglieder aus, deren Stammdaten als naechstes gelesen werden.
+ * Noch nicht angereicherte Mitglieder kommen zuerst, danach die am
+ * laengsten nicht aktualisierten. So bleibt jeder Lauf klein und der
+ * Bestand wird ueber die stuendlichen Laeufe vollstaendig.
+ */
+export async function selectSchuelerDetailSourceIds(
+  db: D1Database
+): Promise<string[]> {
+  const candidates = await db
+    .prepare(
+      `SELECT liste.source_id
+       FROM matool_snapshots AS liste
+       LEFT JOIN matool_snapshots AS details
+         ON details.area = 'schueler_details'
+        AND details.source_id = liste.source_id
+       WHERE liste.area = 'schueler'
+         AND length(liste.source_id) BETWEEN 1 AND 32
+         AND liste.source_id NOT GLOB '*[^0-9]*'
+       ORDER BY
+         CASE WHEN details.source_id IS NULL THEN 0 ELSE 1 END ASC,
+         COALESCE(details.last_seen_at, liste.first_seen_at) ASC,
+         liste.source_id ASC
+       LIMIT ?`
+    )
+    .bind(MATOOL_SCHUELER_DETAILS_PER_RUN)
     .all<InteressentenDetailCandidateRow>();
 
   return candidates.results
@@ -319,7 +353,12 @@ export async function collectMatoolSnapshots(
           ? await client.extractKlassen(credentials, {
               maxRecords: MATOOL_KLASSEN_RECORDS_PER_RUN
             })
-          : await client.extractSafeArea(credentials, area)
+          : area === "schueler_details"
+            ? await client.extractSchuelerDetails(
+                credentials,
+                await selectSchuelerDetailSourceIds(env.DB)
+              )
+            : await client.extractSafeArea(credentials, area)
       ).records;
       const finishedAt = new Date().toISOString();
       const result = await persistMatoolSnapshotRun(env.DB, {

@@ -14,10 +14,10 @@ describe("Dashboard-Abfrageparameter", () => {
     ).toBe(7);
     expect(
       parseDashboardRecordQuery(
-        new URL("https://hub.invalid/dashboard?area=klassen")
+        new URL("https://hub.invalid/dashboard?area=schueler")
       )
     ).toEqual({
-      area: "klassen",
+      area: "schueler",
       change: "all",
       direction: "desc",
       page: 1,
@@ -31,11 +31,11 @@ describe("Dashboard-Abfrageparameter", () => {
     expect(
       parseDashboardRecordQuery(
         new URL(
-          "https://hub.invalid/dashboard?area=klassen&page=2&pageSize=50&sort=firstSeenAt&direction=asc&change=updated&q=Montag"
+          "https://hub.invalid/dashboard?area=schueler&page=2&pageSize=50&sort=firstSeenAt&direction=asc&change=updated&q=Montag"
         )
       )
     ).toMatchObject({
-      area: "klassen",
+      area: "schueler",
       change: "updated",
       direction: "asc",
       page: 2,
@@ -59,13 +59,13 @@ describe("Dashboard-Abfrageparameter", () => {
   });
 
   it.each([
-    "area=klassen&page=1x",
-    "area=klassen&pageSize=11",
+    "area=schueler&page=1x",
+    "area=schueler&pageSize=11",
     "area=unbekannt",
-    "area=klassen&sort=payload_json",
-    "area=klassen&direction=sideways",
-    "area=klassen&q=a&q=b",
-    "area=klassen&q=%00"
+    "area=schueler&sort=payload_json",
+    "area=schueler&direction=sideways",
+    "area=schueler&q=a&q=b",
+    "area=schueler&q=%00"
   ])("weist unsichere Record-Abfrage '%s' ab", (query) => {
     expect(() =>
       parseDashboardRecordQuery(
@@ -100,12 +100,12 @@ describe("Dashboard-Abfrageparameter", () => {
   it("verlangt fuer Details genau einen freigegebenen Bereich", () => {
     expect(
       parseDashboardRecordDetailQuery(
-        new URL("https://hub.invalid/dashboard?area=karte")
+        new URL("https://hub.invalid/dashboard?area=interessenten")
       )
-    ).toBe("karte");
+    ).toBe("interessenten");
     expect(() =>
       parseDashboardRecordDetailQuery(
-        new URL("https://hub.invalid/dashboard?area=karte&raw=true")
+        new URL("https://hub.invalid/dashboard?area=interessenten&raw=true")
       )
     ).toThrowError(expect.objectContaining({ code: "invalid_dashboard_query" }));
   });

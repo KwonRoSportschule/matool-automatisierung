@@ -3,7 +3,7 @@ import type {
   DashboardActivityQuery,
   DashboardRecordQuery
 } from "./dashboard-repository";
-import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
+import { DASHBOARD_VISIBLE_AREAS } from "./dashboard-repository";
 
 const PAGE_SIZES = new Set([10, 25, 50, 100]);
 const OVERVIEW_RANGES = new Set([1, 7, 30, 90]);
@@ -53,7 +53,7 @@ export function parseDashboardActivityQuery(url: URL): DashboardActivityQuery {
   const from = parseDateParameter(url.searchParams, "from");
   const to = parseDateParameter(url.searchParams, "to");
 
-  if (area && !MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+  if (area && !DASHBOARD_VISIBLE_AREAS.includes(area as never)) {
     invalidQuery("Dieser Datenbereich ist nicht freigegeben.");
   }
   if (kind && !ACTIVITY_KINDS.has(kind)) {
@@ -104,7 +104,7 @@ export function parseDashboardRecordQuery(url: URL): DashboardRecordQuery {
   const query = optionalSingle(url.searchParams, "q") ?? "";
   const sort = optionalSingle(url.searchParams, "sort") ?? "lastSeenAt";
 
-  if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+  if (!DASHBOARD_VISIBLE_AREAS.includes(area as never)) {
     invalidQuery("Dieser Datenbereich ist nicht freigegeben.");
   }
   if (!RECORD_CHANGES.has(change)) {
@@ -134,7 +134,7 @@ export function parseDashboardRecordQuery(url: URL): DashboardRecordQuery {
 export function parseDashboardRecordDetailQuery(url: URL): string {
   requireAllowedParameters(url.searchParams, ["area"]);
   const area = requiredSingle(url.searchParams, "area");
-  if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+  if (!DASHBOARD_VISIBLE_AREAS.includes(area as never)) {
     invalidQuery("Dieser Datenbereich ist nicht freigegeben.");
   }
   return area;

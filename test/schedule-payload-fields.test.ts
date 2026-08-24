@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
 import {
   MATOOL_INTERESSENTEN_DETAILS_PER_RUN,
-  MATOOL_KLASSEN_RECORDS_PER_RUN,
   MATOOL_MAX_REQUESTS_PER_RUN,
   MATOOL_SNAPSHOT_AREAS,
   selectInteressentenDetailSourceIds,
@@ -13,13 +12,15 @@ import {
 
 describe("Snapshot-Feldallowlist", () => {
   it("ruft Interessenten und ihre Details vor dem anfragestarken Klassenbereich ab", () => {
-    expect(MATOOL_SNAPSHOT_AREAS.slice(0, 3)).toEqual([
+    // Fachlich benoetigt werden ausschliesslich Interessenten und
+    // Mitglieder; jeweils Liste vor Detailabruf.
+    expect(MATOOL_SNAPSHOT_AREAS).toEqual([
       "interessenten",
       "interessenten_details",
-      "klassen"
+      "schueler",
+      "schueler_details"
     ]);
     expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
-    expect(MATOOL_KLASSEN_RECORDS_PER_RUN).toBe(500);
     expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);
   });
 

@@ -382,7 +382,7 @@ describe("Dashboard-Datenschutz", () => {
     const piiSentinel = `PII-MASKED-${suffix}`;
     await persistMatoolSnapshotRun(env.DB, {
       allowedPayloadFields: ["email", "firstName", "phone", "status"],
-      area: "interessenten_details",
+      area: "interessenten",
       finishedAt: "2099-08-04T10:00:02.000Z",
       observedAt: "2099-08-04T10:00:01.000Z",
       records: [
@@ -409,7 +409,7 @@ describe("Dashboard-Datenschutz", () => {
     const context = createExecutionContext();
     const response = await worker.fetch(
       new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/records?area=interessenten_details&pageSize=100"
+        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/records?area=interessenten&pageSize=100"
       ),
       runtimeEnv,
       context

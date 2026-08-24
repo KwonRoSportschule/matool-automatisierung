@@ -635,6 +635,61 @@ export class MatoolClient {
     };
   }
 
+  /**
+   * Liest die Stammdaten einzelner Mitglieder ueber den JSON-Endpunkt der
+   * Schuelerverwaltung. Das ist derselbe Weg, den MATOOL fuer Klassen
+   * verwendet, und deutlich sparsamer als ein vollstaendiger Seitenabruf.
+   *
+   * Antwortet MATOOL nicht wie erwartet, schlaegt der Abruf fehl, statt
+   * einen Datensatz zu raten.
+   */
+  async extractSchuelerDetails(
+    credentials: MatoolCredentials,
+    sourceIds: readonly string[]
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const records: MatoolSafeAreaRecord[] = [];
+    const seen = new Set<string>();
+    let bodyBytes = 0;
+
+    for (const sourceId of sourceIds) {
+      if (!/^\d{1,32}$/u.test(sourceId) || seen.has(sourceId)) {
+        continue;
+      }
+      seen.add(sourceId);
+
+      const response = await this.request("/json/schueler_daten.php", {
+        body: new URLSearchParams({ id: sourceId, todo: "daten" }),
+        headers: {
+          Accept: "application/json,text/javascript,*/*;q=0.01",
+          "Content-Type":
+            "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        method: "POST"
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw schuelerSchemaError();
+      }
+      const responseBody = await readBoundedBody(response);
+      bodyBytes += responseBody.byteLength;
+      records.push({
+        payload: parseSchuelerDetailResponse(responseBody, sourceId),
+        sourceId
+      });
+    }
+
+    return {
+      area: "schueler",
+      bodyBytes,
+      records,
+      rowCount: records.length
+    };
+  }
+
   async extractKlassen(
     credentials: MatoolCredentials,
     batch: MatoolKlassenBatchOptions = {}
@@ -1195,6 +1250,73 @@ function parseKlassenResponse(body: Uint8Array): MatoolSafeAreaRecord {
   return { payload, sourceId };
 }
 
+function schuelerSchemaError(): AppError {
+  return new AppError(
+    "matool_schueler_schema_mismatch",
+    502,
+    "MATOOL hat die Mitgliederdaten nicht im erwarteten Format geliefert."
+  );
+}
+
+/**
+ * Wertet die JSON-Antwort der Schuelerverwaltung aus. Uebernommen werden
+ * ausschliesslich freigegebene Felder mit einfachen Werten; Kontodaten und
+ * verschachtelte Strukturen wie Dokument- oder Historienlisten bleiben
+ * aussen vor.
+ */
+function parseSchuelerDetailResponse(
+  body: Uint8Array,
+  expectedSourceId: string
+): Record<string, string | number> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw schuelerSchemaError();
+  }
+
+  const record = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw schuelerSchemaError();
+  }
+
+  const source = record as Record<string, unknown>;
+  const payload: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(source)) {
+    const field = key.trim().toLowerCase();
+    if (
+      SCHUELER_FORBIDDEN_FIELD.test(field) ||
+      !SCHUELER_DETAIL_FIELD_SET.has(field) ||
+      value === null ||
+      value === undefined
+    ) {
+      continue;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      payload[field] = value;
+      continue;
+    }
+    if (typeof value === "string" || typeof value === "boolean") {
+      payload[field] = String(value)
+        .replace(/\s+/gu, " ")
+        .trim()
+        .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
+    }
+  }
+
+  // Ohne bestaetigte Identitaet wird nichts uebernommen: sonst koennten
+  // Werte dem falschen Mitglied zugeordnet werden.
+  if (
+    Object.keys(payload).length === 0 ||
+    (payload["id"] !== undefined &&
+      String(payload["id"]) !== expectedSourceId)
+  ) {
+    throw schuelerSchemaError();
+  }
+  payload["id"] = expectedSourceId;
+  return payload;
+}
+
 function klassenSchemaError(): AppError {
   return new AppError(
     "matool_klassen_schema_mismatch",
@@ -1327,6 +1449,69 @@ function toSafeAreaFieldName(label: string): string | undefined {
  * Vollstaendige, HAR-bestaetigte Allowlist fuer die Interessentenmaske.
  * Neue oder unbekannte Antwortfelder werden nicht in Snapshots uebernommen.
  */
+/**
+ * Freigegebene Stammdatenfelder eines Mitglieds.
+ *
+ * Bankverbindung (IBAN, BIC, Konto, BLZ, Mandatsreferenz) ist bewusst
+ * NICHT enthalten. Das Dashboard ist oeffentlich erreichbar und zeigt in
+ * der Testphase Klartext; Kontodaten gehoeren dort nicht hin. Wird das
+ * spaeter benoetigt, sind die Feldnamen hier zu ergaenzen.
+ */
+export const MATOOL_SCHUELER_DETAIL_FIELDS = [
+  "id",
+  "anrede",
+  "vorname",
+  "name",
+  "strasse",
+  "plz",
+  "stadt",
+  "ort",
+  "telefon",
+  "handy",
+  "email",
+  "beruf",
+  "geburtstag",
+  "geburtsort",
+  "nationalitaet",
+  "anmeldegebuehr",
+  "kundenart",
+  "vertragdatum",
+  "vertrag",
+  "vertragsbeginn",
+  "vertragsende",
+  "verlaengerung",
+  "kuendigungsfrist",
+  "zahlungsperiode",
+  "beitrag",
+  "anpassen_ab",
+  "turnus",
+  "art",
+  "wert",
+  "max_checkin",
+  "pruefung_inkl",
+  "jahresgebuehr",
+  "faellig_am",
+  "abschluss",
+  "zahlungsart",
+  "bank",
+  "schule",
+  "kennzeichen",
+  "lehrer",
+  "barcode",
+  "sparten",
+  "klasse",
+  "kategorien",
+  "status"
+] as const;
+
+const SCHUELER_DETAIL_FIELD_SET = new Set<string>(
+  MATOOL_SCHUELER_DETAIL_FIELDS
+);
+
+/** Kontodaten werden bewusst nie uebernommen. */
+const SCHUELER_FORBIDDEN_FIELD =
+  /iban|bic|konto|blz|mandat|bankverbindung/iu;
+
 export const MATOOL_INTERESSENT_DETAIL_FIELDS = [
   "id",
   "datum",
@@ -1836,9 +2021,16 @@ async function extractSafeAreaPage(
         headerNamesByColumnCount
       )
     );
+  } else if (area === "schueler") {
+    prepared.push(
+      ...prepareSchuelerSafeAreaRows(
+        rows,
+        headerNamesByColumnCount
+      )
+    );
   }
   const seen = new Set<string>();
-  for (const row of area === "interessenten" ? [] : rows) {
+  for (const row of area === "interessenten" || area === "schueler" ? [] : rows) {
     // Kopfzeilen sind keine Datensaetze.
     if (row.header || row.cells.length === 0 || row.tdCount === 0) {
       continue;
@@ -2023,6 +2215,68 @@ function isInteressentenSafeAreaDataRow(
 }
 
 function isNestedUnderInteressentenIdentifierRow(
+  row: SafeAreaRowCapture
+): boolean {
+  let parent = row.parentRow;
+  while (parent) {
+    if (parent.stableListIds.length > 0) {
+      return true;
+    }
+    parent = parent.parentRow;
+  }
+  return false;
+}
+
+/**
+ * MATOOL-Schuelerlisten enthalten pro Person eine Zeile mit stabiler ID.
+ * Die folgende Registerzeile und Detail-Zeilen sind strukturelle Elemente,
+ * die nicht als separate Datensaetze gespeichert werden.
+ */
+function prepareSchuelerSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): Array<{
+  explicitId: string;
+  payload: Record<string, string | number>;
+}> {
+  const records: Array<{
+    explicitId: string;
+    payload: Record<string, string | number>;
+  }> = [];
+  const seenSourceIds = new Set<string>();
+
+  for (const row of rows) {
+    if (row.header || row.stableListIds.length !== 1) {
+      continue;
+    }
+    if (isNestedUnderSchuelerRow(row)) {
+      continue;
+    }
+    const sourceId = row.stableListIds[0];
+    if (!sourceId || seenSourceIds.has(sourceId)) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    seenSourceIds.add(sourceId);
+    const cells = row.cells.map(normalizeSafeAreaCell);
+    const payload: Record<string, string | number> = {
+      columnCount: cells.length,
+      tableIndex: row.tableIndex
+    };
+    const headerNames = headerNamesByColumnCount.get(cells.length);
+    cells.forEach((cell, index) => {
+      const fallback = `c${index.toString().padStart(2, "0")}`;
+      payload[headerNames?.[index] ?? fallback] = cell;
+    });
+    records.push({ explicitId: sourceId, payload });
+  }
+
+  if (records.length === 0) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  return records;
+}
+
+function isNestedUnderSchuelerRow(
   row: SafeAreaRowCapture
 ): boolean {
   let parent = row.parentRow;

@@ -337,10 +337,10 @@ describe("Zapier-Service-API", () => {
       payload: { sequence: index },
       sourceId: `telemetry-${seed}-${index}`
     }));
-    await seedSnapshotChanges("telemetrie", changes);
+    await seedSnapshotChanges("schueler", changes);
 
     const firstResponse = await dispatch(
-      serviceRequest("/api/zapier/v1/snapshots?area=telemetrie&limit=100")
+      serviceRequest("/api/zapier/v1/snapshots?area=schueler&limit=100")
     );
     const first = (await firstResponse.json()) as ZapierSnapshotPage;
     expect(firstResponse.status).toBe(200);
@@ -351,7 +351,7 @@ describe("Zapier-Service-API", () => {
 
     const secondResponse = await dispatch(
       serviceRequest(
-        `/api/zapier/v1/snapshots?area=telemetrie&limit=100&cursor=${first.next_cursor}`
+        `/api/zapier/v1/snapshots?area=schueler&limit=100&cursor=${first.next_cursor}`
       )
     );
     const second = (await secondResponse.json()) as ZapierSnapshotPage;
@@ -401,11 +401,11 @@ describe("Zapier-Service-API", () => {
         sourceId: `report-${seed}-${index}`
       }))
     ];
-    await seedSnapshotChanges("berichte", changes);
+    await seedSnapshotChanges("interessenten", changes);
 
     const response = await dispatch(
       serviceRequest(
-        "/api/zapier/v1/snapshots?area=berichte&limit=100&only_changed=true"
+        "/api/zapier/v1/snapshots?area=interessenten&limit=100&only_changed=true"
       )
     );
     const payload = (await response.json()) as ZapierSnapshotPage;
@@ -427,7 +427,7 @@ describe("Zapier-Service-API", () => {
     const secondId = `${seed}${"2".padStart(32, "0")}`;
     const thirdId = `${seed}${"3".padStart(32, "0")}`;
     const repeatedHash = "a".repeat(64);
-    await seedSnapshotChanges("karte", [
+    await seedSnapshotChanges("interessenten_details", [
       {
         changeKind: "created",
         contentHash: repeatedHash,
@@ -460,7 +460,7 @@ describe("Zapier-Service-API", () => {
     ]);
 
     const response = await dispatch(
-      serviceRequest("/api/zapier/v1/snapshots?area=karte&limit=100")
+      serviceRequest("/api/zapier/v1/snapshots?area=interessenten_details&limit=100")
     );
     const payload = (await response.json()) as ZapierSnapshotPage;
 
@@ -492,7 +492,7 @@ describe("Zapier-Service-API", () => {
 
   it("weist einen ungültigen Änderungs-Cursor zurück", async () => {
     const response = await dispatch(
-      serviceRequest("/api/zapier/v1/snapshots?area=karte&cursor=invalid")
+      serviceRequest("/api/zapier/v1/snapshots?area=schueler&cursor=invalid")
     );
 
     expect(response.status).toBe(400);

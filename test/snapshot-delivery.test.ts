@@ -93,7 +93,7 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
         "https://middleware.example.invalid/api/zapier/v1/snapshot-subscriptions",
         {
           body: JSON.stringify({
-            area: "karte",
+            area: "interessenten",
             only_changed: false,
             target_url: zapierTargetUrl()
           }),
@@ -107,7 +107,7 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     const invalidTarget = await dispatch(
       serviceRequest("/api/zapier/v1/snapshot-subscriptions", {
         body: JSON.stringify({
-          area: "karte",
+          area: "interessenten",
           only_changed: false,
           target_url:
             "https://hooks.zapier.com.attacker.invalid/hooks/standard/x"
@@ -118,7 +118,7 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     );
     expect(invalidTarget.status).toBe(400);
 
-    const subscriptionId = await subscribe("karte", zapierTargetUrl());
+    const subscriptionId = await subscribe("interessenten", zapierTargetUrl());
     const disabled = await dispatch(
       serviceRequest(
         `/api/zapier/v1/snapshot-subscriptions/${subscriptionId}`,
@@ -134,9 +134,9 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
 
   it("sendet jedes unveraenderliche Ereignis einzeln und rueckt erst nach 2xx weiter", async () => {
     const targetUrl = zapierTargetUrl();
-    await subscribe("karte", targetUrl);
+    await subscribe("interessenten", targetUrl);
     const sourceId = crypto.randomUUID().replaceAll("-", "");
-    await persistChange("karte", sourceId, "A");
+    await persistChange("interessenten", sourceId, "A");
 
     const requests: Request[] = [];
     const fetchImplementation = vi.fn(async (
@@ -161,7 +161,7 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     expect(requests[0]?.url).toBe(targetUrl);
     expect(requests[0]?.method).toBe("POST");
     await expect(requests[0]?.json()).resolves.toMatchObject({
-      area: "karte",
+      area: "interessenten",
       change_kind: "created",
       content_hash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       id: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -184,9 +184,9 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     ["5xx", async () => new Response(null, { status: 503 })],
     ["Netzfehler", async () => Promise.reject(new Error("offline"))]
   ])("plant bei %s einen verlustfreien Retry", async (_label, response) => {
-    await subscribe("lager", zapierTargetUrl());
+    await subscribe("schueler", zapierTargetUrl());
     await persistChange(
-      "lager",
+      "schueler",
       crypto.randomUUID().replaceAll("-", ""),
       "retry"
     );
@@ -207,9 +207,9 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
   });
 
   it("deaktiviert eine mit 410 entfernte Subscription dauerhaft", async () => {
-    await subscribe("archiv", zapierTargetUrl());
+    await subscribe("schueler", zapierTargetUrl());
     const sourceId = crypto.randomUUID().replaceAll("-", "");
-    await persistChange("archiv", sourceId, "gone");
+    await persistChange("schueler", sourceId, "gone");
     const goneFetch = vi.fn(
       async () => new Response(null, { status: 410 })
     ) as unknown as typeof fetch;
@@ -220,7 +220,7 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     );
     expect(gone).toMatchObject({ disabled: 1, processed: 1 });
 
-    await persistChange("archiv", sourceId, "after-gone");
+    await persistChange("schueler", sourceId, "after-gone");
     const unexpectedFetch = vi.fn(
       async () => new Response(null, { status: 204 })
     ) as unknown as typeof fetch;
