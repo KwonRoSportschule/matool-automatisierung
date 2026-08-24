@@ -173,7 +173,9 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
         oldLease,
         exactInput(blockedRunId, blockedId)
       )
-    ).rejects.toMatchObject({ code: "matool_snapshot_persistence_failed" });
+    ).rejects.toMatchObject({
+      code: "interessenten_sync_store_unavailable"
+    });
 
     const blockedState = await env.DB
       .prepare(
