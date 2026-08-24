@@ -1,6 +1,7 @@
 import { toAppError } from "../core/app-error";
 import {
   MatoolClient,
+  MatoolSchuelerShapeError,
   MATOOL_KLASSEN_PAYLOAD_FIELDS
 } from "../matool/client";
 import type { Env } from "./env";
@@ -394,6 +395,21 @@ export async function collectMatoolSnapshots(
       const errorCode = toAppError(error).code;
       summary.failed += 1;
       summary.areas.push({ area, errorCode, status: "failed" });
+      // Struktur einer unerwarteten Antwort festhalten, damit die Ursache
+      // ohne Logmitschnitt nachvollziehbar ist. Nur Formangaben.
+      if (error instanceof MatoolSchuelerShapeError) {
+        try {
+          await env.DB.prepare(
+            `INSERT INTO matool_response_shapes
+               (shape_id, area, source_id, observed_at, shape_json)
+             VALUES (?, ?, '-', ?, ?)`
+          )
+            .bind(runId, area, finishedAt, error.shape)
+            .run();
+        } catch {
+          // Diagnose ist nachrangig; der Lauf wird davon nicht beeinflusst.
+        }
+      }
       try {
         await recordMatoolSnapshotFailure(env.DB, {
           area,

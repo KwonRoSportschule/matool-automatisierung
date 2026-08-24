@@ -145,4 +145,62 @@ describe("MATOOL-Mitglieder-Stammdaten", () => {
     expect(serialized).not.toContain("GEHEIM");
     expect(serialized).not.toContain('"todo"');
   });
+
+  it("findet die Stammdaten auch in einer verschachtelten Antwort", async () => {
+    const antwort = {
+      status: "ok",
+      data: {
+        schueler: [
+          {
+            id: "29345",
+            vorname: "Natalia",
+            name: "Gambardella",
+            iban: "DE66 5001 0517 5423 0283 50",
+            beitrag: "60,00",
+            dokumente: [{ name: "PRIVATE-DOKUMENT" }]
+          }
+        ]
+      }
+    };
+
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/index.php") && init?.method === "POST") {
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        if (url.includes("schueler_daten.php")) {
+          return new Response(JSON.stringify(antwort), {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+            status: 200
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          headers: { "Content-Type": "text/html" },
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    const result = await client.extractSchuelerDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      ["29345"]
+    );
+
+    expect(result.records[0]?.payload).toMatchObject({
+      beitrag: "60,00",
+      iban: "DE66 5001 0517 5423 0283 50",
+      id: "29345",
+      name: "Gambardella",
+      vorname: "Natalia"
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE-DOKUMENT");
+  });
 });

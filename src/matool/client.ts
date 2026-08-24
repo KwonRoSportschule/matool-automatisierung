@@ -1343,6 +1343,56 @@ async function extractSchuelerFormPayload(
  * Laenge, Typ, Schluesselnamen beziehungsweise vorkommende Markup-Bausteine.
  * Es werden keine Werte und keine Personendaten ausgegeben.
  */
+/** Fehler mit angehaengter Strukturbeschreibung fuer die Diagnose. */
+export class MatoolSchuelerShapeError extends AppError {
+  readonly shape: string;
+  constructor(shape: string) {
+    super(
+      "matool_schueler_schema_mismatch",
+      502,
+      "MATOOL hat die Mitgliederdaten nicht im erwarteten Format geliefert."
+    );
+    this.shape = shape;
+  }
+}
+
+function schuelerShapeError(shape: string): MatoolSchuelerShapeError {
+  return new MatoolSchuelerShapeError(shape);
+}
+
+function describeSchuelerResponseShape(
+  text: string,
+  parsed: unknown
+): string {
+  const shape: Record<string, unknown> = {
+    length: text.length,
+    startsWith: text.trimStart().slice(0, 1),
+    parsedType: Array.isArray(parsed) ? "array" : typeof parsed
+  };
+  if (parsed && typeof parsed === "object") {
+    const first = Array.isArray(parsed) ? parsed[0] : parsed;
+    shape["keys"] =
+      first && typeof first === "object"
+        ? Object.keys(first as Record<string, unknown>).slice(0, 60)
+        : [];
+  }
+  const probe = typeof parsed === "string" ? parsed : text;
+  shape["markup"] = {
+    form: probe.includes("<form"),
+    input: probe.includes("<input"),
+    select: probe.includes("<select"),
+    table: probe.includes("<table")
+  };
+  shape["fieldNames"] = [
+    ...new Set(
+      [...probe.matchAll(/name\s*=\s*["']([A-Za-z][\w-]{0,40})["']/giu)].map(
+        (match) => match[1]
+      )
+    )
+  ].slice(0, 60);
+  return JSON.stringify(shape).slice(0, 3000);
+}
+
 function logSchuelerResponseShape(text: string, parsed: unknown): void {
   const shape: Record<string, unknown> = {
     event: "matool_schueler_response_shape",
@@ -1408,29 +1458,84 @@ async function parseSchuelerDetailResponse(
   }
 
   // MATOOL verpackt Formularmasken als JSON-codierten HTML-String.
-  // Dann stehen die Werte in den Formularfeldern, nicht in JSON-Feldern.
   if (typeof parsed === "string") {
     return extractSchuelerFormPayload(parsed, expectedSourceId);
   }
 
-  const record = Array.isArray(parsed) ? parsed[0] : parsed;
-  if (!record || typeof record !== "object" || Array.isArray(record)) {
+  // Der genaue Aufbau der Antwort ist nicht dokumentiert. Statt ein Format
+  // vorauszusetzen, wird die Ebene gesucht, die Stammdaten traegt: das erste
+  // Objekt mit mindestens drei einfachen Feldern. Das deckt ein flaches
+  // Objekt, ein Array und eine Umhuellung wie { data: { ... } } gleichermassen
+  // ab und bleibt streng, weil ohne Treffer abgebrochen wird.
+  const payload = findSchuelerPayload(parsed);
+  if (!payload) {
+    logSchuelerResponseShape(text, parsed);
+    throw schuelerShapeError(describeSchuelerResponseShape(text, parsed));
+  }
+
+  // Ohne bestaetigte Identitaet wird nichts uebernommen: sonst koennten
+  // Werte dem falschen Mitglied zugeordnet werden.
+  const gemeldeteId = payload["id"];
+  if (gemeldeteId !== undefined && String(gemeldeteId) !== expectedSourceId) {
     logSchuelerResponseShape(text, parsed);
     throw schuelerSchemaError();
   }
+  payload["id"] = expectedSourceId;
+  return payload;
+}
 
-  const source = record as Record<string, unknown>;
+const MIN_SCHUELER_DETAIL_FIELDS = 3;
+const MAX_SCHUELER_SEARCH_DEPTH = 4;
+
+/** Sucht in der Antwort das Objekt, das die Stammdaten traegt. */
+function findSchuelerPayload(
+  value: unknown,
+  depth = 0
+): Record<string, string | number> | undefined {
+  if (depth > MAX_SCHUELER_SEARCH_DEPTH || !value || typeof value !== "object") {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const eintrag of value.slice(0, 20)) {
+      const treffer = findSchuelerPayload(eintrag, depth + 1);
+      if (treffer) {
+        return treffer;
+      }
+    }
+    return undefined;
+  }
+
+  const scalars = collectSchuelerScalars(value as Record<string, unknown>);
+  if (Object.keys(scalars).length >= MIN_SCHUELER_DETAIL_FIELDS) {
+    return scalars;
+  }
+
+  for (const eintrag of Object.values(value as Record<string, unknown>)) {
+    const treffer = findSchuelerPayload(eintrag, depth + 1);
+    if (treffer) {
+      return treffer;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Uebernimmt alle einfachen Werte eines Objekts. Verschachtelte Strukturen
+ * wie Dokument-, Historien- oder Check-in-Listen bleiben aussen vor.
+ */
+function collectSchuelerScalars(
+  source: Record<string, unknown>
+): Record<string, string | number> {
   const payload: Record<string, string | number> = {};
   for (const [key, value] of Object.entries(source)) {
     const field = key.trim();
-    // Alle einfachen Werte uebernehmen, statt Feldnamen zu raten.
-    // Verschachtelte Strukturen wie Dokument-, Historien- oder
-    // Check-in-Listen bleiben dadurch automatisch aussen vor.
     if (
       !SAFE_SCHUELER_FIELD_NAME.test(field) ||
       Object.keys(payload).length >= MAX_SCHUELER_DETAIL_FIELDS ||
       value === null ||
-      value === undefined
+      value === undefined ||
+      value === ""
     ) {
       continue;
     }
@@ -1445,17 +1550,6 @@ async function parseSchuelerDetailResponse(
         .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
     }
   }
-
-  // Ohne bestaetigte Identitaet wird nichts uebernommen: sonst koennten
-  // Werte dem falschen Mitglied zugeordnet werden.
-  if (
-    Object.keys(payload).length === 0 ||
-    (payload["id"] !== undefined &&
-      String(payload["id"]) !== expectedSourceId)
-  ) {
-    throw schuelerSchemaError();
-  }
-  payload["id"] = expectedSourceId;
   return payload;
 }
 
