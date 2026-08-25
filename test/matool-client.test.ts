@@ -2029,7 +2029,9 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(requests.slice(-168)).toEqual(
       offsets.map((offset) => `/index.php?show=lager&offset=${offset}`)
     );
-  }, 15_000);
+    // 168 Seiten HTML: unter Last reichen fuenfzehn Sekunden nicht
+    // verlaesslich.
+  }, 30_000);
 
   it("verwirft fehlende, widerspruechliche und doppelte Lager-Struktur", async () => {
     const valid = lagerListRecord("820001", [

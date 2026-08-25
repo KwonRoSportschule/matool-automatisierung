@@ -77,12 +77,20 @@ export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
 
 /**
  * Mitglieder-Stammdaten je Lauf. Jeder Datensatz kostet drei Abrufe --
- * oeffnen, lesen, schliessen -- und damit rund zwei Sekunden. Bei 100 je
- * Lauf bleibt ein Durchgang unter vier Minuten, und der gesamte Bestand
- * ist im Stundentakt mehrmals taeglich aufgefrischt. Die Auswahl rotiert:
- * zuerst die noch nicht angereicherten, danach die aeltesten.
+ * oeffnen, lesen, schliessen -- und mit der Pause dazwischen rund zwei
+ * Sekunden.
+ *
+ * Der Stundenlauf darf lange arbeiten und nimmt deshalb ein grosses Paket:
+ * der gesamte Bestand ist so nach wenigen Laeufen vollstaendig. Der Knopf im
+ * Dashboard haengt dagegen an einer offenen Web-Anfrage und wurde bei 100
+ * Datensaetzen von Cloudflare abgebrochen; er bekommt ein kleines Paket,
+ * damit er antwortet.
+ *
+ * Die Auswahl rotiert: zuerst die noch nicht angereicherten, danach die am
+ * laengsten nicht aktualisierten.
  */
-export const MATOOL_SCHUELER_DETAILS_PER_RUN = 3;
+export const MATOOL_SCHUELER_DETAILS_PER_RUN = 150;
+export const MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN = 25;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
@@ -188,7 +196,8 @@ export async function selectInteressentenDetailSourceIds(
  * aktualisierte Detaildatensatz.
  */
 export async function selectSchuelerDetailSourceIds(
-  db: D1Database
+  db: D1Database,
+  limit: number = MATOOL_SCHUELER_DETAILS_PER_RUN
 ): Promise<string[]> {
   const candidates = await db
     .prepare(
@@ -206,7 +215,7 @@ export async function selectSchuelerDetailSourceIds(
          liste.source_id ASC
        LIMIT ?`
     )
-    .bind(MATOOL_SCHUELER_DETAILS_PER_RUN)
+    .bind(limit)
     .all<InteressentenDetailCandidateRow>();
 
   return candidates.results
@@ -404,7 +413,18 @@ export async function collectMatoolSnapshots(
                   );
                 }
               )
-            : await readDirectArea(sharedClient, credentials, area, env.DB);
+            : await readDirectArea(
+                sharedClient,
+                credentials,
+                area,
+                env.DB,
+                trigger === "scheduled"
+                  ? MATOOL_SCHUELER_DETAILS_PER_RUN
+                  : MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN,
+                async () => {
+                  activeLease = await renewExactSyncLease(env.DB, activeLease);
+                }
+              );
           if (EXACT_CURRENT_SET_AREAS.has(area)) {
             await assertExactSourceBaseline(env.DB, area, records.length);
           }
@@ -588,7 +608,9 @@ async function readDirectArea(
   client: MatoolClient,
   credentials: MatoolCredentials,
   area: string,
-  db: D1Database
+  db: D1Database,
+  detailLimit: number = MATOOL_SCHUELER_DETAILS_PER_RUN,
+  onProgress?: () => Promise<void>
 ): Promise<MatoolSafeAreaRecord[]> {
   if (area === "klassen") {
     return (
@@ -603,7 +625,8 @@ async function readDirectArea(
     return (
       await client.extractSchuelerDetails(
         credentials,
-        await selectSchuelerDetailSourceIds(db)
+        await selectSchuelerDetailSourceIds(db, detailLimit),
+        onProgress
       )
     ).records;
   }

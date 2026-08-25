@@ -53,6 +53,8 @@ const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
 const MAX_INTERESSENTEN_STATUS_ATTEMPTS = 3;
 const MAX_INTERESSENTEN_RETRY_AFTER_MS = 5_000;
 const MAX_EXACT_DETAIL_RECORDS = 20_000;
+/** Abstand, in dem der Aufrufer ein Lebenszeichen bekommt. */
+const EXACT_DETAIL_PROGRESS_STEP = 10;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 const SAFE_MATOOL_AREAS = [
   "archiv",
@@ -659,15 +661,22 @@ export class MatoolClient {
     };
   }
 
-  /** Liest alle angeforderten Schuelerdetails in stabiler ID-Reihenfolge. */
+  /**
+   * Liest alle angeforderten Schuelerdetails in stabiler ID-Reihenfolge.
+   *
+   * `onProgress` wird zwischendurch aufgerufen. Der Aufrufer haelt damit
+   * seine Sperre am Leben; ohne das galt ein laengerer Lauf nach zwanzig
+   * Minuten als verwaist und blockierte jeden weiteren Versuch.
+   */
   async extractSchuelerDetails(
     credentials: MatoolCredentials,
-    sourceIds: readonly string[]
+    sourceIds: readonly string[],
+    onProgress?: () => Promise<void>
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
     const selectedIds = selectExactDetailIds(sourceIds, "schueler");
     await this.login(credentials);
-    return this.fetchExactDetails("schueler_details", selectedIds);
+    return this.fetchExactDetails("schueler_details", selectedIds, onProgress);
   }
 
   /** Liest alle angeforderten Artikeldetails in stabiler ID-Reihenfolge. */
@@ -683,12 +692,16 @@ export class MatoolClient {
 
   private async fetchExactDetails(
     area: MatoolExactDetailArea,
-    sourceIds: readonly string[]
+    sourceIds: readonly string[],
+    onProgress?: () => Promise<void>
   ): Promise<MatoolSafeAreaResult> {
     const records: MatoolSafeAreaRecord[] = [];
     let bodyBytes = 0;
 
     for (const sourceId of sourceIds) {
+      if (records.length > 0 && records.length % EXACT_DETAIL_PROGRESS_STEP === 0) {
+        await onProgress?.();
+      }
       const isSchueler = area === "schueler_details";
       // MATOOL liefert die Stammdaten nur zu dem Datensatz, der in der
       // Sitzung geoeffnet ist. Ohne das vorherige Oeffnen antwortet
