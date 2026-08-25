@@ -129,13 +129,50 @@ export function formatRangeLabel(days: number): string {
   return days === 1 ? "Letzte 24 Stunden" : `Letzte ${days} Tage`;
 }
 
+/**
+ * Ein Datumsfeld meint den Tag in Berliner Zeit. Der Abstand zu UTC ist nicht
+ * fest -- im Winter eine Stunde, im Sommer zwei. Fest verdrahtet laege der
+ * Zeitfilter deshalb ein halbes Jahr lang um eine Stunde daneben.
+ */
 export function toIsoBoundary(value: string, endOfDay: boolean): string {
-  if (!value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
     return "";
   }
-  const suffix = endOfDay ? "T23:59:59.999+02:00" : "T00:00:00.000+02:00";
-  const date = new Date(`${value}${suffix}`);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+  const wallClock = Date.parse(
+    `${value}${endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"}`
+  );
+  if (Number.isNaN(wallClock)) {
+    return "";
+  }
+  return new Date(wallClock - berlinOffsetMs(wallClock)).toISOString();
+}
+
+const berlinPartFormatter = new Intl.DateTimeFormat("en-CA", {
+  day: "2-digit",
+  hour: "2-digit",
+  hour12: false,
+  minute: "2-digit",
+  month: "2-digit",
+  second: "2-digit",
+  timeZone: "Europe/Berlin",
+  year: "numeric"
+});
+
+/** Abstand der Berliner Zeit zu UTC am gegebenen Zeitpunkt, in Millisekunden. */
+function berlinOffsetMs(instant: number): number {
+  const parts = berlinPartFormatter.formatToParts(new Date(instant));
+  const part = (type: string): number =>
+    Number(parts.find((entry) => entry.type === type)?.value ?? "0");
+  const asIfUtc = Date.UTC(
+    part("year"),
+    part("month") - 1,
+    part("day"),
+    // Manche Laufzeiten melden Mitternacht als Stunde 24.
+    part("hour") % 24,
+    part("minute"),
+    part("second")
+  );
+  return asIfUtc - instant;
 }
 
 export function setTimeText(

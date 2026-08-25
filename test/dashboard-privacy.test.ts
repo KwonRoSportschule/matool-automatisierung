@@ -283,7 +283,21 @@ describe("Dashboard-Datenschutz", () => {
     ]) {
       expect(searchable).not.toContain(key);
     }
-    expect(searchableDashboardFields("interessenten")).toEqual([]);
+    // Maskiert bleibt nur suchbar, was auch angezeigt wird; sonst liesse
+    // sich ein maskierter Wert ueber Treffer/kein Treffer erraten.
+    expect(searchableDashboardFields("interessenten")).toEqual(["status"]);
+    expect(searchableDashboardFields("schueler")).toEqual([]);
+    expect(searchableDashboardFields("newsletter", true)).toEqual([]);
+
+    // Im freigegebenen Klartextbetrieb faellt die Einschraenkung weg.
+    for (const key of ["vorname", "name", "email", "telefon", "ort"]) {
+      expect(searchableDashboardFields("interessenten", true)).toContain(key);
+      expect(searchableDashboardFields("schueler", true)).toContain(key);
+    }
+    // Bankdaten bleiben auch dort aus der Suche heraus.
+    for (const key of ["iban", "bic", "mandatsref", "kontoinhaber"]) {
+      expect(searchableDashboardFields("schueler", true)).not.toContain(key);
+    }
 
     for (const key of searchable) {
       const [definition] = dashboardColumns("klassen", [{ [key]: "test" }]);

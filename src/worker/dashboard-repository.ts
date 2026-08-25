@@ -1219,7 +1219,10 @@ export async function listDashboardRecords(
     throw invalidDashboardQuery();
   }
   const normalizedQuery = requireDashboardSearchQuery(query.query);
-  const searchableFields = searchableDashboardFields(area);
+  const searchableFields = searchableDashboardFields(
+    area,
+    isDashboardPlaintext(env)
+  );
   const conditions: string[] = [];
   const filterBindings: string[] = [];
   if (query.change !== "all") {
@@ -1231,7 +1234,14 @@ export async function listDashboardRecords(
     const searchExpressions = [
       "LOWER(record.public_id) LIKE ? ESCAPE '\\'"
     ];
-    filterBindings.push(pattern);
+    // Die Tabelle zeigt die Referenz als "REC-D1BB1B64". Wer sie von dort
+    // kopiert, suchte sonst nach einem Praefix, den die Kennung selbst gar
+    // nicht enthaelt.
+    filterBindings.push(
+      `%${escapeLikePattern(
+        normalizedQuery.toLowerCase().replace(/^rec-/u, "")
+      )}%`
+    );
     for (const field of searchableFields) {
       searchExpressions.push(
         `LOWER(COALESCE(CAST(json_extract(

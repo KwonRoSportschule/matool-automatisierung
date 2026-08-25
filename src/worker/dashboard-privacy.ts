@@ -247,13 +247,64 @@ export function dashboardValues(
   );
 }
 
-export function searchableDashboardFields(area: string): readonly string[] {
-  if (area !== "klassen") {
+/**
+ * Felder, ueber die die Suche laeuft.
+ *
+ * Die Liste ist bewusst fest verdrahtet: Der Feldname wird in den JSON-Pfad
+ * der Abfrage eingesetzt und darf deshalb nicht aus Nutzereingaben oder aus
+ * dem Bestand stammen. Sie deckt ab, wonach ein Mensch tatsaechlich sucht --
+ * Person, Kontakt, Anschrift, Kennung -- und laesst Bankdaten aus.
+ */
+const SEARCH_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  interessenten: [
+    "id",
+    "vorname",
+    "name",
+    "email",
+    "telefon",
+    "handy",
+    "strasse",
+    "plz",
+    "ort",
+    "status",
+    "quelle",
+    "datum"
+  ],
+  schueler: [
+    "id",
+    "nr",
+    "vorname",
+    "name",
+    "email",
+    "telefon",
+    "handy",
+    "strasse",
+    "plz",
+    "ort",
+    "stadt",
+    "barcode",
+    "kundenart",
+    "vertrag"
+  ]
+};
+
+/**
+ * In der maskierten Ansicht bleibt nur suchbar, was auch angezeigt wird.
+ * Sonst liesse sich ueber Treffer/kein Treffer ein maskierter Wert erraten.
+ * Im freigegebenen Klartextbetrieb entfaellt diese Einschraenkung.
+ */
+export function searchableDashboardFields(
+  area: string,
+  plaintext = false
+): readonly string[] {
+  const fields = area === "klassen" ? [...CLASS_SAFE_FIELDS] : SEARCH_FIELDS[area];
+  if (!fields) {
     return [];
   }
-  return [...CLASS_SAFE_FIELDS].filter(
-    (field) => !isSensitiveDashboardField(area, field)
-  );
+  if (plaintext) {
+    return [...fields];
+  }
+  return fields.filter((field) => !isSensitiveDashboardField(area, field));
 }
 
 export function requireDashboardSourceId(value: string): string {
