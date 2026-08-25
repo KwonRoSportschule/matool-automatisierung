@@ -3,7 +3,8 @@ import { canonicalJson } from "../core/crypto";
 import type { MatoolSafeAreaRecord } from "./client";
 import {
   describeJsonShape,
-  MatoolShapeMismatchError
+  MatoolShapeMismatchError,
+  type JsonShape
 } from "./response-shape";
 
 const MAX_SCHUELER_DETAIL_RESPONSE_BYTES = 2_000_000;
@@ -95,22 +96,50 @@ export function parseSchuelerDetailResponse(
   expectedId: string
 ): MatoolSafeAreaRecord {
   let parsedForDiagnosis: unknown;
+  let jsonGelesen = false;
   try {
     return parseSchuelerDetail(body, expectedId, (parsed) => {
       parsedForDiagnosis = parsed;
+      jsonGelesen = true;
     });
   } catch (error) {
     // Ein blosses "passt nicht" hilft niemandem weiter. Die beobachtete Form
     // wird deshalb mitgegeben -- Typen, Verschachtelung und Feldnamen, aber
     // kein einziger Wert.
-    if (error instanceof AppError && !(error instanceof MatoolShapeMismatchError)) {
+    if (
+      error instanceof AppError &&
+      !(error instanceof MatoolShapeMismatchError)
+    ) {
       throw new MatoolShapeMismatchError(error, {
         area: "schueler_details",
-        json: describeJsonShape(parsedForDiagnosis)
+        json: jsonGelesen
+          ? describeJsonShape(parsedForDiagnosis)
+          : describeUnparsedBody(body)
       });
     }
     throw error;
   }
+}
+
+/**
+ * Laesst sich die Antwort gar nicht als JSON lesen, wird nur festgehalten,
+ * womit sie beginnt und wie gross sie ist. Damit ist unterscheidbar, ob
+ * MATOOL eine Fehlerseite, HTML oder etwas anderes geliefert hat.
+ */
+function describeUnparsedBody(body: Uint8Array): JsonShape {
+  const anfang = new TextDecoder("utf-8", { fatal: false, ignoreBOM: false })
+    .decode(body.slice(0, 16))
+    .trimStart()
+    .slice(0, 1);
+  const art =
+    anfang === "<"
+      ? "beginnt-mit-spitzklammer"
+      : anfang === "{" || anfang === "["
+        ? "beginnt-wie-json"
+        : anfang.length === 0
+          ? "leer"
+          : "anderer-anfang";
+  return { keys: [art], kind: "string", length: body.byteLength };
 }
 
 function parseSchuelerDetail(

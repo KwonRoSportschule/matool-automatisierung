@@ -690,37 +690,22 @@ export class MatoolClient {
 
     for (const sourceId of sourceIds) {
       const isSchueler = area === "schueler_details";
-      const response = await this.requestReadOnlyWithStatusRetry(
-        isSchueler
-          ? "/json/schueler_daten.php"
-          : "/json/artikel_daten.php",
-        {
-          body: isSchueler
-            ? new URLSearchParams({ id: sourceId, todo: "" })
-            : new URLSearchParams({ id: sourceId }),
-          headers: {
-            Accept: "application/json, text/javascript, */*; q=0.01",
-            "Content-Type":
-              "application/x-www-form-urlencoded; charset=UTF-8",
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          method: "POST"
+      // MATOOL liefert die Stammdaten nur zu dem Datensatz, der in der
+      // Sitzung geoeffnet ist. Ohne das vorherige Oeffnen antwortet
+      // schueler_daten.php mit einem leeren Rumpf -- am 25.08.2026 ueber
+      // matool_response_shapes belegt.
+      if (isSchueler) {
+        await this.setSchuelerOpenState(sourceId, "open");
+      }
+      try {
+        bodyBytes += await this.readExactDetail(area, sourceId, records);
+      } finally {
+        if (isSchueler) {
+          // Der geoeffnete Zustand bleibt sonst in der Sitzung stehen und
+          // faerbt den naechsten Abruf ein.
+          await this.setSchuelerOpenState(sourceId, "close");
         }
-      );
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw exactDetailFetchError(area);
       }
-
-      const body = await readBoundedBody(response);
-      const record = isSchueler
-        ? parseSchuelerDetailResponse(body, sourceId)
-        : parseArtikelDetailResponse(body, sourceId);
-      if (record.sourceId !== sourceId) {
-        throw exactDetailFetchError(area);
-      }
-      bodyBytes += body.byteLength;
-      records.push(record);
     }
 
     return {
@@ -729,6 +714,45 @@ export class MatoolClient {
       records,
       rowCount: records.length
     };
+  }
+
+  private async readExactDetail(
+    area: MatoolExactDetailArea,
+    sourceId: string,
+    records: MatoolSafeAreaRecord[]
+  ): Promise<number> {
+    const isSchueler = area === "schueler_details";
+    const response = await this.requestReadOnlyWithStatusRetry(
+      isSchueler
+        ? "/json/schueler_daten.php"
+        : "/json/artikel_daten.php",
+      {
+        body: isSchueler
+          ? new URLSearchParams({ id: sourceId, todo: "" })
+          : new URLSearchParams({ id: sourceId }),
+        headers: {
+          Accept: "application/json, text/javascript, */*; q=0.01",
+          "Content-Type":
+            "application/x-www-form-urlencoded; charset=UTF-8",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        method: "POST"
+      }
+    );
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw exactDetailFetchError(area);
+    }
+
+    const body = await readBoundedBody(response);
+    const record = isSchueler
+      ? parseSchuelerDetailResponse(body, sourceId)
+      : parseArtikelDetailResponse(body, sourceId);
+    if (record.sourceId !== sourceId) {
+      throw exactDetailFetchError(area);
+    }
+    records.push(record);
+    return body.byteLength;
   }
 
   private async fetchSchuelerPage(): Promise<Uint8Array> {

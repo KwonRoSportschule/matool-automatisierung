@@ -76,11 +76,13 @@ export const MATOOL_INTERESSENTEN_DETAILS_PER_RUN = 500;
 export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
 
 /**
- * Mitglieder-Stammdaten je Lauf. Jeder Datensatz kostet genau einen
- * schlanken Abruf; die Auswahl rotiert, sodass zuerst die noch nicht
- * angereicherten und danach die aeltesten Datensaetze an die Reihe kommen.
+ * Mitglieder-Stammdaten je Lauf. Jeder Datensatz kostet drei Abrufe --
+ * oeffnen, lesen, schliessen -- und damit rund zwei Sekunden. Bei 100 je
+ * Lauf bleibt ein Durchgang unter vier Minuten, und der gesamte Bestand
+ * ist im Stundentakt mehrmals taeglich aufgefrischt. Die Auswahl rotiert:
+ * zuerst die noch nicht angereicherten, danach die aeltesten.
  */
-export const MATOOL_SCHUELER_DETAILS_PER_RUN = 300;
+export const MATOOL_SCHUELER_DETAILS_PER_RUN = 3;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
