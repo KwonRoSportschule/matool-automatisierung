@@ -2,10 +2,22 @@ import { AppError } from "../core/app-error";
 import { ensureInteressentenSyncSchema } from "./interessenten-sync-store";
 
 const MAX_RECORDS_PER_RUN = 20_000;
-const INTERESSENTEN_AREA = "interessenten";
+const EXACT_CURRENT_SET_AREAS = new Set([
+  "archiv",
+  "artikel",
+  "interessenten",
+  "klassen",
+  "lager",
+  "newsletter",
+  "schueler"
+]);
 const MAX_PAYLOAD_FIELDS = 80;
-const MAX_PAYLOAD_BYTES = 16_384;
-const MAX_PAYLOAD_STRING_LENGTH = 2_000;
+// Schuelerdetails enthalten 67 Felder sowie vollstaendige Listenwerte. Das
+// alte 16-KiB-Limit verwarf gueltige, vollstaendig gelesene Datensaetze erst
+// beim Persistieren. Die Grenzen bleiben bewusst unter dem D1-Zeilenlimit und
+// unterhalb des Statement-Budgets, erlauben aber die bestaetigten Details.
+const MAX_PAYLOAD_BYTES = 512_000;
+const MAX_PAYLOAD_STRING_LENGTH = 256_000;
 const MAX_SNAPSHOT_BATCH_BYTES = 1_800_000;
 
 export type MatoolSnapshotValue = boolean | number | string | null;
@@ -22,9 +34,9 @@ export interface PersistMatoolSnapshotRunInput {
   observedAt: string;
   records: readonly MatoolSnapshotRecord[];
   /**
-   * Ersetzt den aktuellen Interessentenbestand exakt durch diesen
-   * vollstaendigen Lauf. Der Opt-in ist nur fuer `interessenten` erlaubt und
-   * loescht veraltete Zeilen im selben atomaren D1-Batch wie die Upserts.
+   * Ersetzt den aktuellen Bestand eines statisch freigegebenen Listenbereichs
+   * exakt durch diesen vollstaendigen Lauf. Veraltete Zeilen werden im selben
+   * atomaren D1-Batch wie die Upserts geloescht.
    */
   replaceCurrentSet?: boolean;
   runId: string;
@@ -64,7 +76,7 @@ export async function persistMatoolSnapshotRun(
   }
   if (
     input.replaceCurrentSet === true &&
-    (input.area !== "interessenten" || input.records.length === 0)
+    (!EXACT_CURRENT_SET_AREAS.has(input.area) || input.records.length === 0)
   ) {
     throw invalidSnapshotInput();
   }
@@ -156,20 +168,20 @@ export async function persistMatoolSnapshotRun(
                (
                  SELECT COUNT(*)
                  FROM matool_snapshots
-                 WHERE area = 'interessenten'
+                 WHERE area = ?
                    AND last_run_id <> ?
                )
              FROM matool_snapshot_changes
              WHERE run_id = ?`
           )
-          .bind(input.runId, input.runId, input.runId),
+          .bind(input.runId, input.area, input.runId, input.runId),
         db
           .prepare(
             `DELETE FROM matool_snapshots
-             WHERE area = 'interessenten'
+             WHERE area = ?
                AND last_run_id <> ?`
           )
-          .bind(input.runId)
+          .bind(input.area, input.runId)
       );
     }
     const changeCountsIndex = statements.push(
@@ -262,12 +274,12 @@ async function readIdempotentCompleteListResult(
            (
              SELECT COUNT(*)
              FROM matool_snapshots
-             WHERE area = 'interessenten'
+             WHERE area = ?
            ) AS current_count,
            (
              SELECT COUNT(*)
              FROM matool_snapshots
-             WHERE area = 'interessenten'
+             WHERE area = ?
                AND last_run_id = ?
            ) AS current_run_count
          FROM matool_snapshot_run_results AS results
@@ -275,7 +287,7 @@ async function readIdempotentCompleteListResult(
            ON runs.run_id = results.run_id
          WHERE results.run_id = ?`
       )
-      .bind(input.runId, input.runId)
+      .bind(input.area, input.area, input.runId, input.runId)
       .first<ExistingCompleteListRow>();
     if (!existing) {
       return null;
@@ -283,7 +295,7 @@ async function readIdempotentCompleteListResult(
 
     const expectedCount = input.records.length;
     if (
-      existing.area !== INTERESSENTEN_AREA ||
+      existing.area !== input.area ||
       existing.status !== "succeeded" ||
       requireStoredCount(existing.fetched_count) !== expectedCount ||
       requireStoredCount(existing.success_count) !== expectedCount ||
@@ -300,13 +312,13 @@ async function readIdempotentCompleteListResult(
             `SELECT COUNT(*) AS matching_count
              FROM json_each(?) AS incoming
              INNER JOIN matool_snapshots AS stored
-               ON stored.area = 'interessenten'
+               ON stored.area = ?
               AND stored.source_id = json_extract(incoming.value, '$.sourceId')
               AND stored.content_hash = json_extract(incoming.value, '$.contentHash')
               AND stored.last_run_id = ?
              WHERE json_type(incoming.value) = 'object'`
           )
-          .bind(JSON.stringify(chunk), input.runId)
+          .bind(JSON.stringify(chunk), input.area, input.runId)
       )
     );
     const matchingCount = matches.reduce(

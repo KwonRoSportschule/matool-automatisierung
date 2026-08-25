@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { AppError } from "../src/core/app-error";
+import { sha256Hex } from "../src/core/crypto";
+import { MATOOL_ARTIKEL_DETAIL_PAYLOAD_FIELDS } from "../src/matool/artikel-detail";
 import {
   assertAllowedMatoolUrl,
   MATOOL_INTERESSENT_DETAIL_FIELDS,
   MatoolClient,
   validateMatoolBaseUrl
 } from "../src/matool/client";
+import { MATOOL_SCHUELER_DETAIL_PAYLOAD_FIELDS } from "../src/matool/schueler-detail";
 
 function clientForInteressentenPage(page: string): MatoolClient {
   const responses = [
@@ -70,7 +73,16 @@ function klassenDetailResponse(
         probetraining_kontingent: "2",
         raum: "1",
         schueler_liste_sms: "PRIVATE-SMS-LIST",
-        schuelerliste: [{ private: "PRIVATE-STUDENT" }],
+        schuelerliste: [
+          {
+            alter: "12",
+            austritt: null,
+            bildlink: "PRIVATE-STUDENT-IMAGE",
+            nachname: "PRIVATE-STUDENT-LAST",
+            schueler_nr_schulintern: "PRIVATE-STUDENT-ID",
+            vorname: "PRIVATE-STUDENT-FIRST"
+          }
+        ],
         schule: "1",
         sms30: "0",
         sms30Text: "PRIVATE-SMS-TEXT",
@@ -87,6 +99,36 @@ function klassenDetailResponse(
       status: 200
     }
   );
+}
+
+function schuelerDetailBody(
+  sourceId: string,
+  overrides: Record<string, unknown> = {}
+): string {
+  const record = Object.fromEntries(
+    MATOOL_SCHUELER_DETAIL_PAYLOAD_FIELDS.map((field, index) => [
+      field,
+      `synthetic-${index}`
+    ])
+  );
+  record.schueler_nr = sourceId;
+  Object.assign(record, overrides);
+  return JSON.stringify([record]);
+}
+
+function artikelDetailBody(
+  sourceId: string,
+  overrides: Record<string, unknown> = {}
+): string {
+  const record = Object.fromEntries(
+    MATOOL_ARTIKEL_DETAIL_PAYLOAD_FIELDS.map((field, index) => [
+      field,
+      `synthetic-${index}`
+    ])
+  );
+  record.id = sourceId;
+  Object.assign(record, overrides);
+  return JSON.stringify([record]);
 }
 
 function interessentenPage(
@@ -180,7 +222,9 @@ function paginatedListPage(input: {
 function schuelerRow(sourceId: string, number: number): string {
   return `
     <tr onclick="formular_fuellen(${sourceId},'Synthetic ${sourceId}')">
-      <td>${number}</td><td>Vorname ${number}</td><td>Name ${number}</td>
+      <td>${number}</td><td>Vorname ${number}</td><td>Name ${number}
+        <table><tr><td>Vertrag Synthetic ${number}</td></tr></table>
+      </td>
     </tr>
   `;
 }
@@ -243,8 +287,7 @@ function nestedStrictListRow(
       ${area === "schueler" ? "<td></td>" : ""}
       <td>
         <table>
-          <tr><td>${label} A</td></tr>
-          <tr><td>${label} B</td></tr>
+          <tr><td>${label} A ${label} B</td></tr>
         </table>
       </td>
     </tr>
@@ -291,6 +334,68 @@ function clientForPaginatedPages(
       });
     }) as typeof fetch
   );
+}
+
+type ExactPaginatedListArea = "artikel" | "lager";
+
+function exactPaginationHref(
+  area: ExactPaginatedListArea,
+  offset: number
+): string {
+  return `/index.php?show=${area}&amp;offset=${offset}`;
+}
+
+function exactPaginatedListPage(input: {
+  area: ExactPaginatedListArea;
+  currentOffset: number;
+  headers: readonly string[];
+  offsets: readonly number[];
+  records: string;
+}): string {
+  const pagination = input.offsets
+    .map((offset, index) =>
+      offset === input.currentOffset
+        ? `<span class="pagination_selected">${index + 1}</span>`
+        : `<a class="pagination" href="${exactPaginationHref(input.area, offset)}">${index + 1}</a>`
+    )
+    .join("");
+  return `
+    <html><body>
+      <table><tr class="master_tab_tr_head">
+        ${input.headers.map((header) => `<td>${header}</td>`).join("")}
+      </tr></table>
+      ${input.records}
+      <nav>${pagination}</nav>
+    </body></html>
+  `;
+}
+
+function artikelListRecord(
+  sourceId: string,
+  values: readonly [string, string, string, string, string]
+): string {
+  return `
+    <table><tr>${values.map((value) => `<td>${value}</td>`).join("")}</tr></table>
+    <table><tr>
+      <td><button onclick="formular_fuellen(${sourceId},'none')">Öffnen</button></td>
+      <td><button onclick="formular_fuellen('${sourceId}','clone')">Klonen</button></td>
+      <td><table><tr><td>PRIVATE-ARTICLE-DETAIL-${sourceId}</td></tr></table></td>
+    </tr></table>
+  `;
+}
+
+function lagerListRecord(
+  sourceId: string,
+  values: readonly [string, string, string, string]
+): string {
+  return `
+    <span onclick="detail_toggle(${sourceId})">
+      <table><tr>${values.map((value) => `<td>${value}</td>`).join("")}</tr></table>
+    </span>
+    <div id="lagerbewegung${sourceId}">
+      <table><tr><td>PRIVATE-LAGER-DETAIL-${sourceId}</td></tr></table>
+    </div>
+  `;
 }
 
 describe("MATOOL-Ausgangs-Host-Allowlist", () => {
@@ -1266,6 +1371,310 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
+  it("liest mehrere Schuelerdetails einmal angemeldet in angeforderter Reihenfolge", async () => {
+    const sourceIds = ["710001", "710002"];
+    const detailCalls: RequestInit[] = [];
+    let expectedBodyBytes = 0;
+    let loginPosts = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/json/schueler_daten.php") {
+          if (!init) {
+            throw new Error("missing synthetic request init");
+          }
+          detailCalls.push(init);
+          const id =
+            init.body instanceof URLSearchParams
+              ? init.body.get("id") ?? ""
+              : "";
+          const body = schuelerDetailBody(id, {
+            klassenliste: [{ id: "synthetic-class" }]
+          });
+          expectedBodyBytes += new TextEncoder().encode(body).byteLength;
+          return new Response(body, { status: 200 });
+        }
+        if (url.pathname === "/index.php" && init?.method === "POST") {
+          loginPosts += 1;
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    const result = await client.extractSchuelerDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      sourceIds
+    );
+
+    expect(result).toMatchObject({
+      area: "schueler_details",
+      bodyBytes: expectedBodyBytes,
+      rowCount: 2
+    });
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(sourceIds);
+    expect(loginPosts).toBe(1);
+    expect(detailCalls.map(({ body }) => String(body))).toEqual([
+      "id=710001&todo=",
+      "id=710002&todo="
+    ]);
+    expect(
+      detailCalls.every(({ headers, method }) => {
+        const normalized = new Headers(headers);
+        return (
+          method === "POST" &&
+          normalized.get("Accept") ===
+            "application/json, text/javascript, */*; q=0.01" &&
+          normalized.get("Content-Type") ===
+            "application/x-www-form-urlencoded; charset=UTF-8" &&
+          normalized.get("X-Requested-With") === "XMLHttpRequest"
+        );
+      })
+    ).toBe(true);
+  });
+
+  it("liest mehrere Artikeldetails mit korrektem read-only Body", async () => {
+    const sourceIds = ["810001", "810002"];
+    const detailCalls: RequestInit[] = [];
+    let expectedBodyBytes = 0;
+    let loginPosts = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/json/artikel_daten.php") {
+          if (!init) {
+            throw new Error("missing synthetic request init");
+          }
+          detailCalls.push(init);
+          const id =
+            init.body instanceof URLSearchParams
+              ? init.body.get("id") ?? ""
+              : "";
+          const body = artikelDetailBody(id);
+          expectedBodyBytes += new TextEncoder().encode(body).byteLength;
+          return new Response(body, { status: 200 });
+        }
+        if (url.pathname === "/index.php" && init?.method === "POST") {
+          loginPosts += 1;
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    const result = await client.extractArtikelDetails(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      sourceIds
+    );
+
+    expect(result).toMatchObject({
+      area: "artikel_details",
+      bodyBytes: expectedBodyBytes,
+      rowCount: 2
+    });
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(sourceIds);
+    expect(loginPosts).toBe(1);
+    expect(detailCalls.map(({ body }) => String(body))).toEqual([
+      "id=810001",
+      "id=810002"
+    ]);
+    expect(
+      detailCalls.every(
+        ({ headers }) =>
+          new Headers(headers).get("X-Requested-With") === "XMLHttpRequest"
+      )
+    ).toBe(true);
+  });
+
+  it("bricht Detailpakete bei fremder ID oder falschem Schema ohne Ergebnis ab", async () => {
+    const article = JSON.parse(artikelDetailBody("810001")) as Array<
+      Record<string, unknown>
+    >;
+    delete article[0]?.bezeichnung;
+    const scenarios = [
+      {
+        body: schuelerDetailBody("710099"),
+        code: "matool_schueler_detail_schema_mismatch",
+        endpoint: "/json/schueler_daten.php",
+        kind: "schueler"
+      },
+      {
+        body: JSON.stringify(article),
+        code: "matool_artikel_detail_schema_mismatch",
+        endpoint: "/json/artikel_daten.php",
+        kind: "artikel"
+      }
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const client = new MatoolClient(
+        "https://core.matool.de",
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input));
+          if (url.pathname === scenario.endpoint) {
+            return new Response(scenario.body, { status: 200 });
+          }
+          if (url.pathname === "/index.php" && init?.method === "POST") {
+            return new Response(null, {
+              headers: { Location: "/index.php" },
+              status: 302
+            });
+          }
+          return new Response("<html><body>Angemeldet</body></html>", {
+            status: 200
+          });
+        }) as typeof fetch
+      );
+      const request =
+        scenario.kind === "schueler"
+          ? client.extractSchuelerDetails(
+              {
+                email: "service-account@example.invalid",
+                password: "synthetic-password"
+              },
+              ["710001"]
+            )
+          : client.extractArtikelDetails(
+              {
+                email: "service-account@example.invalid",
+                password: "synthetic-password"
+              },
+              ["810001"]
+            );
+      await expect(request).rejects.toMatchObject({
+        code: scenario.code,
+        status: 502
+      });
+    }
+  });
+
+  it("wiederholt einen 429-Schuelerdetailstatus und liefert danach Erfolg", async () => {
+    let detailRequests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/json/schueler_daten.php") {
+          detailRequests += 1;
+          return detailRequests === 1
+            ? new Response("retry", {
+                headers: { "Retry-After": "0" },
+                status: 429
+              })
+            : new Response(schuelerDetailBody("710001"), { status: 200 });
+        }
+        if (url.pathname === "/index.php" && init?.method === "POST") {
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractSchuelerDetails(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        ["710001"]
+      )
+    ).resolves.toMatchObject({ rowCount: 1 });
+    expect(detailRequests).toBe(2);
+  });
+
+  it("stoppt Artikeldetail-Retries nach drei 5xx-Antworten", async () => {
+    let detailRequests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/json/artikel_daten.php") {
+          detailRequests += 1;
+          return new Response("retry", {
+            headers: { "Retry-After": "0" },
+            status: 503
+          });
+        }
+        if (url.pathname === "/index.php" && init?.method === "POST") {
+          return new Response(null, {
+            headers: { Location: "/index.php" },
+            status: 302
+          });
+        }
+        return new Response("<html><body>Angemeldet</body></html>", {
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractArtikelDetails(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        ["810001"]
+      )
+    ).rejects.toMatchObject({
+      code: "matool_artikel_detail_failed",
+      status: 502
+    });
+    expect(detailRequests).toBe(3);
+  });
+
+  it("blockiert leere, ungueltige, doppelte oder uebergrosse Detail-ID-Pakete vor Login", async () => {
+    let requests = 0;
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async () => {
+        requests += 1;
+        throw new Error("unexpected synthetic request");
+      }) as typeof fetch
+    );
+    const credentials = {
+      email: "service-account@example.invalid",
+      password: "synthetic-password"
+    };
+    const invocations = [
+      () => client.extractSchuelerDetails(credentials, []),
+      () => client.extractSchuelerDetails(credentials, ["not-numeric"]),
+      () => client.extractArtikelDetails(credentials, ["810001", "810001"]),
+      () =>
+        client.extractArtikelDetails(
+          credentials,
+          Array.from({ length: 20_001 }, (_, index) => String(index + 1))
+        )
+    ];
+
+    for (const invoke of invocations) {
+      await expect(invoke()).rejects.toMatchObject({ status: 400 });
+    }
+    expect(requests).toBe(0);
+  });
+
   it("verknuepft die sichtbare Interessentenzeile mit der folgenden stabilen ID-Zeile", async () => {
     const page = paginatedListPage({
       area: "interessenten",
@@ -1353,7 +1762,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
-  it("benennt Spalten nach der Kopfzeile, auch wenn sie in einer eigenen Tabelle steht", async () => {
+  it("benennt generische Spalten nach einer separaten Kopfzeile", async () => {
     const page = `
       <html><body><h1>Artikel</h1>
         <table><tr><th>Nr.</th><th>Datum</th><th>Vorname</th><th>Name</th><th>Status</th></tr></table>
@@ -1369,7 +1778,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         email: "service-account@example.invalid",
         password: "synthetic-password"
       },
-      "artikel"
+      "checkin"
     );
 
     expect(result.records[0]?.payload).toEqual({
@@ -1383,7 +1792,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     });
   });
 
-  it("behaelt die Nummerierung, wenn zwei Kopfzeilen derselben Breite widersprechen", async () => {
+  it("behaelt bei generischen widersprechenden Kopfzeilen die Nummerierung", async () => {
     const page = `
       <html><body><h1>Artikel</h1>
         <table><tr><th>Nr.</th><th>Datum</th></tr></table>
@@ -1398,13 +1807,340 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         email: "service-account@example.invalid",
         password: "synthetic-password"
       },
-      "artikel"
+      "checkin"
     );
 
     expect(result.records[0]?.payload).toMatchObject({
       c00: "4711",
       c01: "01.01.2026"
     });
+  });
+
+  it("liest alle belegten Artikelseiten mit stabiler ID und vollstaendigen Zellen", async () => {
+    const offsets = [0, 25, 50, 75];
+    const pages = new Map<string, { body: string }>();
+    const requests: string[] = [];
+    const longLabel = `Artikel-${"x".repeat(700)}`;
+    for (const [index, offset] of offsets.entries()) {
+      const sourceId = String(810_001 + index);
+      pages.set(`/index.php?show=artikel&offset=${offset}`, {
+        body: exactPaginatedListPage({
+          area: "artikel",
+          currentOffset: offset,
+          headers: ["Nr.", "Bezeichnung", "Kategorie", "Preis", "Status"],
+          offsets,
+          records: artikelListRecord(sourceId, [
+            String(index + 1),
+            index === 0 ? longLabel : `Artikel ${index + 1}`,
+            "Ausrüstung",
+            "19,90",
+            "Aktiv"
+          ])
+        })
+      });
+    }
+
+    const result = await clientForPaginatedPages(
+      pages,
+      requests
+    ).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "artikel"
+    );
+
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "810001",
+      "810002",
+      "810003",
+      "810004"
+    ]);
+    expect(result.records[0]?.payload.bezeichnung).toBe(longLabel);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE-ARTICLE-DETAIL");
+    expect(requests.slice(-4)).toEqual(
+      offsets.map((offset) => `/index.php?show=artikel&offset=${offset}`)
+    );
+  });
+
+  it("verwirft unvollstaendige, widerspruechliche und doppelte Artikel-IDs", async () => {
+    const valid = artikelListRecord("810001", [
+      "1",
+      "Artikel",
+      "Kategorie",
+      "10,00",
+      "Aktiv"
+    ]);
+    const missingClone = valid.replace(
+      `<button onclick="formular_fuellen('810001','clone')">Klonen</button>`,
+      ""
+    );
+    const conflicting = valid.replace(
+      "formular_fuellen('810001','clone')",
+      "formular_fuellen('810002','clone')"
+    );
+    const invalidRecordSets = [
+      missingClone,
+      conflicting,
+      `${valid}${valid}`,
+      "<table><tr><td>Nur Layout</td></tr></table>"
+    ];
+
+    for (const records of invalidRecordSets) {
+      const pages = new Map([
+        [
+          "/index.php?show=artikel&offset=0",
+          {
+            body: exactPaginatedListPage({
+              area: "artikel",
+              currentOffset: 0,
+              headers: ["Nr.", "Bezeichnung", "Kategorie", "Preis", "Status"],
+              offsets: [0],
+              records
+            })
+          }
+        ]
+      ]);
+      await expect(
+        clientForPaginatedPages(pages).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "artikel"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_exact_list_schema_mismatch",
+        status: 502
+      });
+    }
+  });
+
+  it("liest alle 168 belegten Lagerseiten und ignoriert Bewegungsdetails", async () => {
+    const offsets = Array.from({ length: 168 }, (_, index) => index * 25);
+    const pages = new Map<string, { body: string }>();
+    const requests: string[] = [];
+    for (const [index, offset] of offsets.entries()) {
+      const sourceId = String(820_001 + index);
+      pages.set(`/index.php?show=lager&offset=${offset}`, {
+        body: exactPaginatedListPage({
+          area: "lager",
+          currentOffset: offset,
+          headers: ["Artikel", "Bestand", "Einheit", "Ort"],
+          offsets,
+          records: lagerListRecord(sourceId, [
+            `Artikel ${index + 1}`,
+            String(index + 10),
+            "Stück",
+            "Hauptlager"
+          ])
+        })
+      });
+    }
+
+    const result = await clientForPaginatedPages(
+      pages,
+      requests
+    ).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "lager"
+    );
+
+    expect(result.rowCount).toBe(168);
+    expect(result.records[0]?.sourceId).toBe("820001");
+    expect(result.records.at(-1)?.sourceId).toBe("820168");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE-LAGER-DETAIL");
+    expect(requests.slice(-168)).toEqual(
+      offsets.map((offset) => `/index.php?show=lager&offset=${offset}`)
+    );
+  }, 15_000);
+
+  it("verwirft fehlende, widerspruechliche und doppelte Lager-Struktur", async () => {
+    const valid = lagerListRecord("820001", [
+      "Artikel",
+      "10",
+      "Stück",
+      "Hauptlager"
+    ]);
+    const invalidRecordSets = [
+      valid.replace("lagerbewegung820001", "lagerbewegung820002"),
+      valid.slice(0, valid.indexOf('<div id="lagerbewegung820001">')),
+      `${valid}${valid}`,
+      "<table><tr><td>Nur Layout</td></tr></table>"
+    ];
+    for (const records of invalidRecordSets) {
+      const pages = new Map([
+        [
+          "/index.php?show=lager&offset=0",
+          {
+            body: exactPaginatedListPage({
+              area: "lager",
+              currentOffset: 0,
+              headers: ["Artikel", "Bestand", "Einheit", "Ort"],
+              offsets: [0],
+              records
+            })
+          }
+        ]
+      ]);
+      await expect(
+        clientForPaginatedPages(pages).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "lager"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_exact_list_schema_mismatch",
+        status: 502
+      });
+    }
+  });
+
+  it("kanonisiert doppelte Newsletter-Links pro stabiler ID genau einmal", async () => {
+    const longSubject = `Betreff-${"n".repeat(700)}`;
+    const page = `
+      <html><body><table>
+        <tr class="master_tab_tr_head"><td>Betreff</td><td>Datum</td></tr>
+        <tr><td>
+          <a href="/misc/show_newsletter.php?id=830001">${longSubject}</a>
+          <a href="/misc/show_newsletter.php?id=830001">Öffnen</a>
+        </td><td>24.08.2026</td></tr>
+        <tr><td><a href="/misc/show_newsletter.php?id=830002">Zweiter</a></td><td>23.08.2026</td></tr>
+        <tr><td>Erklärter Layout-Hinweis</td></tr>
+      </table></body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "newsletter"
+    );
+
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "830001",
+      "830002"
+    ]);
+    expect(String(result.records[0]?.payload.betreff)).toContain(longSubject);
+  });
+
+  it("verwirft Newsletter-Zeilen ohne eindeutige stabile ID", async () => {
+    const invalidRows = [
+      "<tr><td>Sichtbarer Betreff</td><td>24.08.2026</td></tr>",
+      '<tr><td><a href="/misc/show_newsletter.php?id=830001">A</a><a href="/misc/show_newsletter.php?id=830002">B</a></td><td>24.08.2026</td></tr>',
+      '<tr><td><a href="/misc/show_newsletter.php?id=830001">A</a></td><td>24.08.2026</td></tr><tr><td><a href="/misc/show_newsletter.php?id=830001">A</a></td><td>24.08.2026</td></tr>',
+      ""
+    ];
+    for (const rows of invalidRows) {
+      const page = `<html><body><table><tr class="master_tab_tr_head"><td>Betreff</td><td>Datum</td></tr>${rows}</table></body></html>`;
+      await expect(
+        clientForInteressentenPage(page).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "newsletter"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_exact_list_schema_mismatch",
+        status: 502
+      });
+    }
+  });
+
+  it("hasht den Archivpfad als Store-kompatible ID und behaelt ihn im Payload", async () => {
+    const longName = `Datei-${"a".repeat(700)}`;
+    const page = `
+      <html><body><table>
+        <tr class="master_tab_tr_head"><td>Datei</td><td>Typ</td><td>Datum</td><td>Download</td></tr>
+        <tr><td>${longName}</td><td>PDF</td><td>24.08.2026</td><td><a href="/archiv/tenant-a/report-1.pdf">Download</a></td></tr>
+        <tr><td>Zweite Datei</td><td>CSV</td><td>23.08.2026</td><td><a href="archiv/tenant-a/report-2.csv">Download</a></td></tr>
+      </table></body></html>
+    `;
+    const result = await clientForInteressentenPage(page).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      "archiv"
+    );
+
+    const paths = [
+      "archiv/tenant-a/report-1.pdf",
+      "archiv/tenant-a/report-2.csv"
+    ];
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(
+      await Promise.all(paths.map((path) => sha256Hex(path)))
+    );
+    expect(
+      result.records.every(({ sourceId }) => /^[a-f0-9]{64}$/u.test(sourceId))
+    ).toBe(true);
+    expect(result.records.map(({ payload }) => payload.archiv_pfad)).toEqual(
+      paths
+    );
+    expect(result.records[0]?.payload.datei).toBe(longName);
+  });
+
+  it("verwirft Archiv-Zeilen ohne eindeutigen Downloadpfad", async () => {
+    const valid = '<tr><td>Datei</td><td>PDF</td><td>24.08.2026</td><td><a href="/archiv/tenant-a/report.pdf">Download</a></td></tr>';
+    const invalidRows = [
+      "<tr><td>Datei</td><td>PDF</td><td>24.08.2026</td><td>Kein Link</td></tr>",
+      '<tr><td>Datei</td><td>PDF</td><td>24.08.2026</td><td><a href="/archiv/tenant-a/a.pdf">A</a><a href="/archiv/tenant-a/b.pdf">B</a></td></tr>',
+      `${valid}${valid}`,
+      ""
+    ];
+    for (const rows of invalidRows) {
+      const page = `<html><body><table><tr class="master_tab_tr_head"><td>Datei</td><td>Typ</td><td>Datum</td><td>Download</td></tr>${rows}</table></body></html>`;
+      await expect(
+        clientForInteressentenPage(page).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "archiv"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_exact_list_schema_mismatch",
+        status: 502
+      });
+    }
+  });
+
+  it("verwirft nicht unterstuetzte Pagination bei Newsletter und Archiv", async () => {
+    const scenarios = [
+      {
+        area: "newsletter",
+        row: '<tr><td><a href="/misc/show_newsletter.php?id=830001">Synthetisch</a></td><td>24.08.2026</td></tr>',
+        headers: "<td>Betreff</td><td>Datum</td>"
+      },
+      {
+        area: "archiv",
+        row: '<tr><td>Datei</td><td>PDF</td><td>24.08.2026</td><td><a href="/archiv/tenant-a/report.pdf">Download</a></td></tr>',
+        headers: "<td>Datei</td><td>Typ</td><td>Datum</td><td>Download</td>"
+      }
+    ] as const;
+
+    for (const { area, headers, row } of scenarios) {
+      const page = `<html><body><table><tr class="master_tab_tr_head">${headers}</tr>${row}</table><a class="pagination" href="/index.php?show=${area}&offset=30">2</a></body></html>`;
+      await expect(
+        clientForInteressentenPage(page).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          area
+        )
+      ).rejects.toMatchObject({
+        code: "matool_exact_list_schema_mismatch",
+        status: 502
+      });
+    }
   });
 
   it("speichert in Interessentenlisten nur Zeilen mit stabilen IDs", async () => {
@@ -1557,7 +2293,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ]);
   });
 
-  it("laesst die bestehende verschachtelte Schuelerzuordnung unveraendert", async () => {
+  it("ordnet die verschachtelte Vertragszelle den vier bestaetigten Schuelerfeldern zu", async () => {
       const area = "schueler" as const;
       const ids = ["710001", "710002"];
       const offsets = [0, 30];
@@ -1570,11 +2306,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
             area,
             currentOffset: offset,
             offsets,
-            rows: nestedStrictListRow(
-              area,
-              sourceId,
-              `Synthetic-${index + 1}`
-            )
+            rows: schuelerRow(sourceId, index + 1)
           })
         });
       }
@@ -1589,12 +2321,18 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
 
       expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
       expect(result.records).toHaveLength(2);
-      expect(result.records[0]?.payload.c02).toBe(
-        "Synthetic-1 A Synthetic-1 B"
-      );
-      expect(result.records[1]?.payload.c02).toBe(
-        "Synthetic-2 A Synthetic-2 B"
-      );
+      expect(result.records[0]?.payload).toMatchObject({
+        name: "Name 1",
+        nr: "1",
+        vertrag: "Vertrag Synthetic 1",
+        vorname: "Vorname 1"
+      });
+      expect(result.records[1]?.payload).toMatchObject({
+        name: "Name 2",
+        nr: "2",
+        vertrag: "Vertrag Synthetic 2",
+        vorname: "Vorname 2"
+      });
   });
 
   it("liest eine Schuelerliste mit mehr als 500 stabilen Datensaetzen vollstaendig", async () => {
@@ -1631,6 +2369,40 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(result.records.at(-1)?.sourceId).toBe("700500");
   });
 
+  it("verwirft jede Abweichung von der live bestaetigten Schuelerzeile", async () => {
+    const invalidRows = [
+      `<tr onclick="formular_fuellen(710001)"><td>1</td><td>Vorname</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
+      `<tr onclick="formular_fuellen(710001,'Synthetic')"><td>1</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
+      `${schuelerRow("710001", 1)}${schuelerRow("710001", 2)}`,
+      `<tr><td>1</td><td>Vorname</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
+      `<tr onclick="formular_fuellen(710001,'Synthetic')"><td>1</td><td>Vorname</td><td>Name</td></tr>`
+    ];
+
+    for (const rows of invalidRows) {
+      const body = paginatedListPage({
+        area: "schueler",
+        currentOffset: 0,
+        offsets: [0],
+        rows
+      });
+      const pages = new Map([
+        ["/index.php?show=schueler&todo=&offset=0", { body }]
+      ]);
+      await expect(
+        clientForPaginatedPages(pages).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "schueler"
+        )
+      ).rejects.toMatchObject({
+        code: "matool_paginated_list_schema_mismatch",
+        status: 502
+      });
+    }
+  });
+
   it("verwirft eine vollstaendig gelesene paginierte Liste ohne Datensaetze", async () => {
     const offsets = [0, 30];
     const pages = new Map<string, { body: string }>();
@@ -1655,6 +2427,47 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       )
     ).rejects.toMatchObject({
       code: "matool_paginated_list_schema_mismatch"
+    });
+  });
+
+  it("verwirft eine leere Zwischenseite statt sie als vollstaendig zu ersetzen", async () => {
+    const offsets = [0, 30];
+    const pages = new Map<string, { body: string }>([
+      [
+        "/index.php?show=schueler&todo=&offset=0",
+        {
+          body: paginatedListPage({
+            area: "schueler",
+            currentOffset: 0,
+            offsets,
+            rows: schuelerRow("710001", 1)
+          })
+        }
+      ],
+      [
+        "/index.php?show=schueler&todo=&offset=30",
+        {
+          body: paginatedListPage({
+            area: "schueler",
+            currentOffset: 30,
+            offsets,
+            rows: ""
+          })
+        }
+      ]
+    ]);
+
+    await expect(
+      clientForPaginatedPages(pages).extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "schueler"
+      )
+    ).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch",
+      status: 502
     });
   });
 
@@ -1809,16 +2622,14 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     });
   });
 
-  it("liest alle Klassen-Griffe und speichert nur freigegebene Klassendaten mit stabiler Antwort-ID", async () => {
+  it("liest alle Klassen-Griffe und speichert alle bestaetigten Klassendaten mit stabiler Antwort-ID", async () => {
     const requests: Array<{ init?: RequestInit; url: string }> = [];
     const page = `
       <html><body>
         <div id="klassengrafik_90000000001"
              onclick="formular_fuellen('90000000001')"></div>
         <div onclick=" formular_fuellen('90000000002') ; "></div>
-        <div onclick="formular_fuellen('90000000001')"></div>
-        <div onclick="formular_fuellen(90000000003)"></div>
-        <span onclick="formular_fuellen('90000000004')"></span>
+        <div onclick="unrelated_handler('90000000003')"></div>
       </body></html>
     `;
     const responses = [
@@ -1872,15 +2683,14 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       kurzname: "Synthetic",
       wochentag: "1"
     });
-    const serialized = JSON.stringify(result);
-    for (const privateValue of [
-      "PRIVATE-LIVE-LINK",
-      "PRIVATE-SMS-LIST",
-      "PRIVATE-STUDENT",
-      "PRIVATE-SMS-TEXT"
-    ]) {
-      expect(serialized).not.toContain(privateValue);
-    }
+    expect(result.records[0]?.payload).toMatchObject({
+      liveLink: "PRIVATE-LIVE-LINK",
+      schueler_liste_sms: "PRIVATE-SMS-LIST",
+      sms30Text: "PRIVATE-SMS-TEXT"
+    });
+    expect(result.records[0]?.payload.schuelerliste).toContain(
+      "PRIVATE-STUDENT-ID"
+    );
 
     const detailRequests = requests.slice(-2);
     expect(detailRequests.map(({ url }) => url)).toEqual([
@@ -1897,6 +2707,51 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
           "XMLHttpRequest"
       )
     ).toBe(true);
+  });
+
+  it("verwirft mehrdeutige oder ungueltige Klassen-Griffe vor jedem Detailabruf", async () => {
+    for (const page of [
+      `<html><body>
+         <div onclick="formular_fuellen('90000000001')"></div>
+         <div onclick="formular_fuellen('90000000001')"></div>
+       </body></html>`,
+      `<html><body>
+         <span onclick="formular_fuellen('90000000001')"></span>
+       </body></html>`
+    ]) {
+      const responses = [
+        new Response("<html><body>Session</body></html>", { status: 200 }),
+        new Response(null, {
+          headers: { Location: "/index.php" },
+          status: 302
+        }),
+        new Response("<html><body>Angemeldet</body></html>", { status: 200 }),
+        new Response(page, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 200
+        })
+      ];
+      const client = new MatoolClient(
+        "https://core.matool.de",
+        (async () => {
+          const response = responses.shift();
+          if (!response) {
+            throw new Error("unexpected synthetic request");
+          }
+          return response;
+        }) as typeof fetch
+      );
+
+      await expect(
+        client.extractKlassen({
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        })
+      ).rejects.toMatchObject({
+        code: "matool_klassen_schema_mismatch",
+        status: 502
+      });
+    }
   });
 
   it("waehlt ein Klassenpaket mit Offset deterministisch und zyklisch", async () => {

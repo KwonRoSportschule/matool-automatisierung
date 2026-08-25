@@ -1,6 +1,12 @@
 import { AppError } from "../core/app-error";
 import { canonicalJson, sha256Hex } from "../core/crypto";
+import { parseArtikelDetailResponse } from "./artikel-detail";
 import { RunCookieJar } from "./cookie-jar";
+import {
+  MATOOL_KLASSEN_DETAIL_PAYLOAD_FIELDS,
+  parseKlassenDetailResponse
+} from "./klassen-detail";
+import { parseSchuelerDetailResponse } from "./schueler-detail";
 
 const ALLOWED_MATOOL_HOST = "core.matool.de";
 const MAX_PROBE_BYTES = 2_000_000;
@@ -17,7 +23,18 @@ const MAX_SAFE_AREA_RECORDS = 20_000;
 const MAX_SAFE_AREA_PAGES = 250;
 const MAX_SAFE_AREA_CELLS = 64;
 const MAX_SAFE_AREA_CELL_LENGTH = 500;
-const PAGINATED_SAFE_AREAS = new Set(["interessenten", "schueler"]);
+const PAGINATED_SAFE_AREAS = new Set([
+  "artikel",
+  "interessenten",
+  "lager",
+  "schueler"
+]);
+const EXACT_LIST_AREAS = new Set([
+  "archiv",
+  "artikel",
+  "lager",
+  "newsletter"
+]);
 // Detaildaten werden ausschliesslich ueber MATOOLs lesenden JSON-Endpunkt
 // geladen. Die Grenze entspricht der maximal verarbeiteten Listenmenge.
 const MAX_INTERESSENTEN_DETAIL_RECORDS = 500;
@@ -25,6 +42,7 @@ const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
 const MAX_INTERESSENTEN_STATUS_ATTEMPTS = 3;
 const MAX_INTERESSENTEN_RETRY_AFTER_MS = 5_000;
+const MAX_EXACT_DETAIL_RECORDS = 20_000;
 const ALLOWED_DISCOVERY_AREAS = new Set(["interessenten"]);
 const SAFE_MATOOL_AREAS = [
   "archiv",
@@ -55,43 +73,14 @@ const INTERESSENTEN_SAFE_AREA_FIELDS = [
   "name",
   "status"
 ] as const;
-export const MATOOL_KLASSEN_PAYLOAD_FIELDS = [
-  "alter_ende",
-  "alter_start",
-  "benutzer",
-  "beschreibung",
-  "bildDa",
-  "endzeit_h",
-  "endzeit_m",
-  "freiklasse",
-  "id",
-  "id_schulintern",
-  "kapazitaet",
-  "klassenende",
-  "klassenfarbe",
-  "klassenstart",
-  "kurzname",
-  "online",
-  "probetraining_kontingent",
-  "raum",
-  "schule",
-  "sms30",
-  "sparte",
-  "startzeit_h",
-  "startzeit_m",
-  "teilnehmerMax",
-  "wochentag"
+const SCHUELER_SAFE_AREA_FIELDS = [
+  "nr",
+  "vorname",
+  "name",
+  "vertrag"
 ] as const;
-const KLASSEN_EXCLUDED_FIELDS = [
-  "liveLink",
-  "schueler_liste_sms",
-  "schuelerliste",
-  "sms30Text"
-] as const;
-const KLASSEN_RESPONSE_FIELDS = new Set<string>([
-  ...MATOOL_KLASSEN_PAYLOAD_FIELDS,
-  ...KLASSEN_EXCLUDED_FIELDS
-]);
+export const MATOOL_KLASSEN_PAYLOAD_FIELDS =
+  MATOOL_KLASSEN_DETAIL_PAYLOAD_FIELDS;
 
 export interface MatoolCredentials {
   email: string;
@@ -124,7 +113,14 @@ export interface MatoolInteressent {
 
 export type MatoolArea = "interessenten";
 export type MatoolSafeArea = (typeof SAFE_MATOOL_AREAS)[number];
-type MatoolPaginatedSafeArea = "interessenten" | "schueler";
+type MatoolExactDetailArea = "artikel_details" | "schueler_details";
+type MatoolExactDetailKind = "artikel" | "schueler";
+type MatoolPaginatedSafeArea =
+  | "artikel"
+  | "interessenten"
+  | "lager"
+  | "schueler";
+type MatoolExactListArea = "archiv" | "artikel" | "lager" | "newsletter";
 
 export interface MatoolSafeAreaRecord {
   payload: Record<string, boolean | number | string | null>;
@@ -132,7 +128,10 @@ export interface MatoolSafeAreaRecord {
 }
 
 export interface MatoolSafeAreaResult {
-  area: MatoolSafeArea | "interessenten_details";
+  area:
+    | MatoolSafeArea
+    | "interessenten_details"
+    | MatoolExactDetailArea;
   bodyBytes: number;
   records: MatoolSafeAreaRecord[];
   rowCount: number;
@@ -410,6 +409,9 @@ export class MatoolClient {
     // MATOOL merkt sich die zuletzt geoeffnete Seite in der Session.
     // Deshalb muss auch die erste Seite immer explizit offset=0 anfordern.
     const firstPage = await this.fetchSafeAreaPage(area, 0);
+    if (firstPage.records.length === 0) {
+      throw paginatedSafeAreaSchemaError();
+    }
     const pagination = normalizeSafeAreaPagination(
       firstPage.pagination,
       area,
@@ -426,6 +428,9 @@ export class MatoolClient {
         continue;
       }
       const page = await this.fetchSafeAreaPage(area, offset);
+      if (page.records.length === 0) {
+        throw paginatedSafeAreaSchemaError();
+      }
       bodyBytes += page.bodyBytes;
       const pagePagination = normalizeSafeAreaPagination(
         page.pagination,
@@ -458,6 +463,15 @@ export class MatoolClient {
     area: MatoolSafeArea
   ): Promise<MatoolSafeAreaResult> {
     const page = await this.fetchSafeAreaPage(area);
+    if (
+      (area === "archiv" || area === "newsletter") &&
+      page.pagination.detected
+    ) {
+      throw exactListSchemaError();
+    }
+    if (isExactListArea(area) && page.records.length === 0) {
+      throw exactListSchemaError();
+    }
     return {
       area,
       bodyBytes: page.bodyBytes,
@@ -635,59 +649,72 @@ export class MatoolClient {
     };
   }
 
-  /**
-   * Liest die Stammdaten einzelner Mitglieder ueber den JSON-Endpunkt der
-   * Schuelerverwaltung. Das ist derselbe Weg, den MATOOL fuer Klassen
-   * verwendet, und deutlich sparsamer als ein vollstaendiger Seitenabruf.
-   *
-   * Antwortet MATOOL nicht wie erwartet, schlaegt der Abruf fehl, statt
-   * einen Datensatz zu raten.
-   */
+  /** Liest alle angeforderten Schuelerdetails in stabiler ID-Reihenfolge. */
   async extractSchuelerDetails(
     credentials: MatoolCredentials,
     sourceIds: readonly string[]
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
+    const selectedIds = selectExactDetailIds(sourceIds, "schueler");
     await this.login(credentials);
+    return this.fetchExactDetails("schueler_details", selectedIds);
+  }
 
+  /** Liest alle angeforderten Artikeldetails in stabiler ID-Reihenfolge. */
+  async extractArtikelDetails(
+    credentials: MatoolCredentials,
+    sourceIds: readonly string[]
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    const selectedIds = selectExactDetailIds(sourceIds, "artikel");
+    await this.login(credentials);
+    return this.fetchExactDetails("artikel_details", selectedIds);
+  }
+
+  private async fetchExactDetails(
+    area: MatoolExactDetailArea,
+    sourceIds: readonly string[]
+  ): Promise<MatoolSafeAreaResult> {
     const records: MatoolSafeAreaRecord[] = [];
-    const seen = new Set<string>();
     let bodyBytes = 0;
 
     for (const sourceId of sourceIds) {
-      if (!/^\d{1,32}$/u.test(sourceId) || seen.has(sourceId)) {
-        continue;
-      }
-      seen.add(sourceId);
-
-      const response = await this.request("/json/schueler_daten.php", {
-        // Aus der HAR-Aufnahme belegt: MATOOL sendet todo leer.
-        body: new URLSearchParams({ id: sourceId, todo: "" }),
-        headers: {
-          Accept: "application/json,text/javascript,*/*;q=0.01",
-          "Content-Type":
-            "application/x-www-form-urlencoded; charset=UTF-8",
-          "X-Requested-With": "XMLHttpRequest"
-        },
-        method: "POST"
-      });
+      const isSchueler = area === "schueler_details";
+      const response = await this.requestReadOnlyWithStatusRetry(
+        isSchueler
+          ? "/json/schueler_daten.php"
+          : "/json/artikel_daten.php",
+        {
+          body: isSchueler
+            ? new URLSearchParams({ id: sourceId, todo: "" })
+            : new URLSearchParams({ id: sourceId }),
+          headers: {
+            Accept: "application/json, text/javascript, */*; q=0.01",
+            "Content-Type":
+              "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          method: "POST"
+        }
+      );
       if (!response.ok) {
         await response.body?.cancel();
-        throw schuelerSchemaError();
+        throw exactDetailFetchError(area);
       }
-      const responseBody = await readBoundedBody(response);
-      bodyBytes += responseBody.byteLength;
-      records.push({
-        payload: await parseSchuelerDetailResponse(
-          responseBody,
-          sourceId
-        ),
-        sourceId
-      });
+
+      const body = await readBoundedBody(response);
+      const record = isSchueler
+        ? parseSchuelerDetailResponse(body, sourceId)
+        : parseArtikelDetailResponse(body, sourceId);
+      if (record.sourceId !== sourceId) {
+        throw exactDetailFetchError(area);
+      }
+      bodyBytes += body.byteLength;
+      records.push(record);
     }
 
     return {
-      area: "schueler",
+      area,
       bodyBytes,
       records,
       rowCount: records.length
@@ -752,7 +779,10 @@ export class MatoolClient {
       }
       const responseBody = await readBoundedBody(response);
       bodyBytes += responseBody.byteLength;
-      const record = parseKlassenResponse(responseBody);
+      // Der Listen-Griff und die kanonische Antwort-ID koennen in MATOOL
+      // voneinander abweichen. Gespeichert wird deshalb die validierte ID
+      // aus der Detailantwort.
+      const record = parseKlassenDetailResponse(responseBody);
       if (sourceIds.has(record.sourceId)) {
         throw klassenSchemaError();
       }
@@ -1009,6 +1039,13 @@ export class MatoolClient {
     path: string,
     init: RequestInit
   ): Promise<Response> {
+    return this.requestReadOnlyWithStatusRetry(path, init);
+  }
+
+  private async requestReadOnlyWithStatusRetry(
+    path: string,
+    init: RequestInit
+  ): Promise<Response> {
     for (
       let attempt = 1;
       attempt <= MAX_INTERESSENTEN_STATUS_ATTEMPTS;
@@ -1129,6 +1166,8 @@ async function extractKlassenHandles(
   body: Uint8Array,
   contentType: string
 ): Promise<string[]> {
+  let candidateCount = 0;
+  let candidateInvalid = false;
   const handles: string[] = [];
   const seen = new Set<string>();
   let mailFieldDetected = false;
@@ -1136,17 +1175,24 @@ async function extractKlassenHandles(
   let passwordFieldDetected = false;
 
   const transformed = new HTMLRewriter()
-    .on("div[onclick]", {
+    .on("[onclick]", {
       element(element) {
+        const onclick = element.getAttribute("onclick") ?? "";
+        if (!/\bformular_fuellen\s*\(/iu.test(onclick)) {
+          return;
+        }
+        candidateCount += 1;
         const match =
           /^\s*formular_fuellen\(\s*(['"])(\d{1,64})\1\s*\)\s*;?\s*$/u.exec(
-            element.getAttribute("onclick") ?? ""
+            onclick
           );
         const handle = match?.[2];
-        if (!handle) {
+        if (element.tagName.toLowerCase() !== "div" || !handle) {
+          candidateInvalid = true;
           return;
         }
         if (seen.has(handle)) {
+          candidateInvalid = true;
           return;
         }
         seen.add(handle);
@@ -1196,361 +1242,13 @@ async function extractKlassenHandles(
   if (
     handles.length === 0 ||
     handles.length > MAX_KLASSEN_RECORDS ||
+    candidateInvalid ||
+    candidateCount !== handles.length ||
     paginationDetected
   ) {
     throw klassenSchemaError();
   }
   return handles;
-}
-
-function parseKlassenResponse(body: Uint8Array): MatoolSafeAreaRecord {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(body));
-  } catch {
-    throw klassenSchemaError();
-  }
-  if (!Array.isArray(parsed) || parsed.length !== 1) {
-    throw klassenSchemaError();
-  }
-  const candidate = parsed[0];
-  if (
-    !candidate ||
-    typeof candidate !== "object" ||
-    Array.isArray(candidate)
-  ) {
-    throw klassenSchemaError();
-  }
-
-  const source = candidate as Record<string, unknown>;
-  const keys = Object.keys(source);
-  if (
-    keys.length !== KLASSEN_RESPONSE_FIELDS.size ||
-    keys.some((key) => !KLASSEN_RESPONSE_FIELDS.has(key))
-  ) {
-    throw klassenSchemaError();
-  }
-  if (
-    !Array.isArray(source.schuelerliste) ||
-    KLASSEN_EXCLUDED_FIELDS.filter((field) => field !== "schuelerliste").some(
-      (field) => typeof source[field] !== "string"
-    )
-  ) {
-    throw klassenSchemaError();
-  }
-
-  const payload: Record<string, string | null> = {};
-  for (const field of MATOOL_KLASSEN_PAYLOAD_FIELDS) {
-    const value = source[field];
-    if (value !== null && typeof value !== "string") {
-      throw klassenSchemaError();
-    }
-    payload[field] = value;
-  }
-  const sourceId = payload.id;
-  if (typeof sourceId !== "string" || !/^\d{1,64}$/u.test(sourceId)) {
-    throw klassenSchemaError();
-  }
-  return { payload, sourceId };
-}
-
-/**
- * Liest die Werte einer MATOOL-Formularmaske aus. Uebernommen werden
- * Eingabefelder und die jeweils ausgewaehlte Option; Passwortfelder und
- * verschachtelte Strukturen bleiben aussen vor.
- */
-async function extractSchuelerFormPayload(
-  html: string,
-  expectedSourceId: string
-): Promise<Record<string, string | number>> {
-  const payload: Record<string, string | number> = {};
-  let activeSelect: string | undefined;
-
-  const store = (name: string, value: string): void => {
-    const field = name.trim();
-    if (
-      !SAFE_SCHUELER_FIELD_NAME.test(field) ||
-      field.toLowerCase() === "todo" ||
-      Object.keys(payload).length >= MAX_SCHUELER_DETAIL_FIELDS
-    ) {
-      return;
-    }
-    payload[field] = value
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
-  };
-
-  const rewriter = new HTMLRewriter()
-    .on("input[name]", {
-      element(element) {
-        const type =
-          element.getAttribute("type")?.toLowerCase() ?? "text";
-        if (type === "password") {
-          return;
-        }
-        if (
-          (type === "checkbox" || type === "radio") &&
-          element.getAttribute("checked") === null
-        ) {
-          return;
-        }
-        store(
-          element.getAttribute("name") ?? "",
-          element.getAttribute("value") ?? ""
-        );
-      }
-    })
-    .on("textarea[name]", {
-      element(element) {
-        store(element.getAttribute("name") ?? "", "");
-      }
-    })
-    .on("select[name]", {
-      element(element) {
-        activeSelect = element.getAttribute("name")?.trim() ?? undefined;
-        element.onEndTag(() => {
-          activeSelect = undefined;
-        });
-      }
-    })
-    .on("select option[selected]", {
-      element(element) {
-        if (activeSelect) {
-          store(activeSelect, element.getAttribute("value") ?? "");
-        }
-      }
-    });
-
-  await drainBody(
-    rewriter.transform(
-      new Response(html, {
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      })
-    ).body
-  );
-
-  if (Object.keys(payload).length === 0) {
-    logSchuelerResponseShape(html, html);
-    throw schuelerSchemaError();
-  }
-  payload["id"] = expectedSourceId;
-  return payload;
-}
-
-/**
- * Protokolliert ausschliesslich die Form einer unerwarteten Antwort:
- * Laenge, Typ, Schluesselnamen beziehungsweise vorkommende Markup-Bausteine.
- * Es werden keine Werte und keine Personendaten ausgegeben.
- */
-/** Fehler mit angehaengter Strukturbeschreibung fuer die Diagnose. */
-export class MatoolSchuelerShapeError extends AppError {
-  readonly shape: string;
-  constructor(shape: string) {
-    super(
-      "matool_schueler_schema_mismatch",
-      502,
-      "MATOOL hat die Mitgliederdaten nicht im erwarteten Format geliefert."
-    );
-    this.shape = shape;
-  }
-}
-
-function schuelerShapeError(shape: string): MatoolSchuelerShapeError {
-  return new MatoolSchuelerShapeError(shape);
-}
-
-function describeSchuelerResponseShape(
-  text: string,
-  parsed: unknown
-): string {
-  const shape: Record<string, unknown> = {
-    length: text.length,
-    startsWith: text.trimStart().slice(0, 1),
-    parsedType: Array.isArray(parsed) ? "array" : typeof parsed
-  };
-  if (parsed && typeof parsed === "object") {
-    const first = Array.isArray(parsed) ? parsed[0] : parsed;
-    shape["keys"] =
-      first && typeof first === "object"
-        ? Object.keys(first as Record<string, unknown>).slice(0, 60)
-        : [];
-  }
-  const probe = typeof parsed === "string" ? parsed : text;
-  shape["markup"] = {
-    form: probe.includes("<form"),
-    input: probe.includes("<input"),
-    select: probe.includes("<select"),
-    table: probe.includes("<table")
-  };
-  shape["fieldNames"] = [
-    ...new Set(
-      [...probe.matchAll(/name\s*=\s*["']([A-Za-z][\w-]{0,40})["']/giu)].map(
-        (match) => match[1]
-      )
-    )
-  ].slice(0, 60);
-  return JSON.stringify(shape).slice(0, 3000);
-}
-
-function logSchuelerResponseShape(text: string, parsed: unknown): void {
-  const shape: Record<string, unknown> = {
-    event: "matool_schueler_response_shape",
-    length: text.length,
-    startsWith: text.trimStart().slice(0, 1),
-    parsedType: Array.isArray(parsed) ? "array" : typeof parsed
-  };
-
-  if (parsed && typeof parsed === "object") {
-    const first = Array.isArray(parsed) ? parsed[0] : parsed;
-    shape["keys"] =
-      first && typeof first === "object"
-        ? Object.keys(first as Record<string, unknown>).slice(0, 60)
-        : [];
-  }
-
-  const probe = typeof parsed === "string" ? parsed : text;
-  shape["markup"] = {
-    form: probe.includes("<form"),
-    input: probe.includes("<input"),
-    option: probe.includes("<option"),
-    select: probe.includes("<select"),
-    table: probe.includes("<table"),
-    tr: probe.includes("<tr")
-  };
-  // Feldnamen sind Strukturinformation, keine Personendaten.
-  shape["fieldNames"] = [
-    ...new Set(
-      [...probe.matchAll(/name\s*=\s*["']([A-Za-z][\w-]{0,40})["']/giu)].map(
-        (match) => match[1]
-      )
-    )
-  ].slice(0, 60);
-
-  console.error(JSON.stringify(shape));
-}
-
-function schuelerSchemaError(): AppError {
-  return new AppError(
-    "matool_schueler_schema_mismatch",
-    502,
-    "MATOOL hat die Mitgliederdaten nicht im erwarteten Format geliefert."
-  );
-}
-
-/**
- * Wertet die JSON-Antwort der Schuelerverwaltung aus. Uebernommen werden
- * ausschliesslich freigegebene Felder mit einfachen Werten; Kontodaten und
- * verschachtelte Strukturen wie Dokument- oder Historienlisten bleiben
- * aussen vor.
- */
-async function parseSchuelerDetailResponse(
-  body: Uint8Array,
-  expectedSourceId: string
-): Promise<Record<string, string | number>> {
-  const text = new TextDecoder().decode(body);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // Kein JSON: MATOOL liefert an dieser Stelle teils rohes Markup.
-    parsed = text;
-  }
-
-  // MATOOL verpackt Formularmasken als JSON-codierten HTML-String.
-  if (typeof parsed === "string") {
-    return extractSchuelerFormPayload(parsed, expectedSourceId);
-  }
-
-  // Der genaue Aufbau der Antwort ist nicht dokumentiert. Statt ein Format
-  // vorauszusetzen, wird die Ebene gesucht, die Stammdaten traegt: das erste
-  // Objekt mit mindestens drei einfachen Feldern. Das deckt ein flaches
-  // Objekt, ein Array und eine Umhuellung wie { data: { ... } } gleichermassen
-  // ab und bleibt streng, weil ohne Treffer abgebrochen wird.
-  const payload = findSchuelerPayload(parsed);
-  if (!payload) {
-    logSchuelerResponseShape(text, parsed);
-    throw schuelerShapeError(describeSchuelerResponseShape(text, parsed));
-  }
-
-  // Ohne bestaetigte Identitaet wird nichts uebernommen: sonst koennten
-  // Werte dem falschen Mitglied zugeordnet werden.
-  const gemeldeteId = payload["id"];
-  if (gemeldeteId !== undefined && String(gemeldeteId) !== expectedSourceId) {
-    logSchuelerResponseShape(text, parsed);
-    throw schuelerSchemaError();
-  }
-  payload["id"] = expectedSourceId;
-  return payload;
-}
-
-const MIN_SCHUELER_DETAIL_FIELDS = 3;
-const MAX_SCHUELER_SEARCH_DEPTH = 4;
-
-/** Sucht in der Antwort das Objekt, das die Stammdaten traegt. */
-function findSchuelerPayload(
-  value: unknown,
-  depth = 0
-): Record<string, string | number> | undefined {
-  if (depth > MAX_SCHUELER_SEARCH_DEPTH || !value || typeof value !== "object") {
-    return undefined;
-  }
-
-  if (Array.isArray(value)) {
-    for (const eintrag of value.slice(0, 20)) {
-      const treffer = findSchuelerPayload(eintrag, depth + 1);
-      if (treffer) {
-        return treffer;
-      }
-    }
-    return undefined;
-  }
-
-  const scalars = collectSchuelerScalars(value as Record<string, unknown>);
-  if (Object.keys(scalars).length >= MIN_SCHUELER_DETAIL_FIELDS) {
-    return scalars;
-  }
-
-  for (const eintrag of Object.values(value as Record<string, unknown>)) {
-    const treffer = findSchuelerPayload(eintrag, depth + 1);
-    if (treffer) {
-      return treffer;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Uebernimmt alle einfachen Werte eines Objekts. Verschachtelte Strukturen
- * wie Dokument-, Historien- oder Check-in-Listen bleiben aussen vor.
- */
-function collectSchuelerScalars(
-  source: Record<string, unknown>
-): Record<string, string | number> {
-  const payload: Record<string, string | number> = {};
-  for (const [key, value] of Object.entries(source)) {
-    const field = key.trim();
-    if (
-      !SAFE_SCHUELER_FIELD_NAME.test(field) ||
-      Object.keys(payload).length >= MAX_SCHUELER_DETAIL_FIELDS ||
-      value === null ||
-      value === undefined ||
-      value === ""
-    ) {
-      continue;
-    }
-    if (typeof value === "number" && Number.isFinite(value)) {
-      payload[field] = value;
-      continue;
-    }
-    if (typeof value === "string" || typeof value === "boolean") {
-      payload[field] = String(value)
-        .replace(/\s+/gu, " ")
-        .trim()
-        .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
-    }
-  }
-  return payload;
 }
 
 function klassenSchemaError(): AppError {
@@ -1562,12 +1260,24 @@ function klassenSchemaError(): AppError {
 }
 
 interface SafeAreaRowCapture {
+  archivLinkCandidateCount: number;
+  archivLinkIds: string[];
+  archivLinkInvalid: boolean;
+  articleActionCandidateCount: number;
+  articleActionInvalid: boolean;
+  articleActions: Array<{ id: string; mode: "clone" | "none" }>;
   cells: string[];
   header: boolean;
   hrefIds: Array<{ id: string; key: string }>;
+  lagerBlockIndex?: number;
   linkCount: number;
+  newsletterLinkCandidateCount: number;
+  newsletterLinkIds: string[];
+  newsletterLinkInvalid: boolean;
   onclickIds: string[];
   parentRow: SafeAreaRowCapture | undefined;
+  schuelerActionCandidateCount: number;
+  schuelerActionInvalid: boolean;
   stableListIds: string[];
   tableIndex: number;
   tdCount: number;
@@ -1593,6 +1303,12 @@ interface ParsedSafeAreaPage {
 
 interface SafeAreaPageResult extends ParsedSafeAreaPage {
   bodyBytes: number;
+}
+
+interface LagerStructureMarker {
+  blockIndex?: number;
+  id: string;
+  kind: "movement" | "record";
 }
 
 /**
@@ -1680,19 +1396,6 @@ function toSafeAreaFieldName(label: string): string | undefined {
   const name = /^[a-z]/u.test(slug) ? slug : `feld_${slug}`;
   return /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(name) ? name : undefined;
 }
-
-/**
- * Schranken fuer Mitglieder-Stammdaten. Uebernommen wird jedes einfache
- * Feld, das MATOOL liefert - einschliesslich der Zahlungs- und Bankdaten,
- * die ausdruecklich angefordert wurden. Verschachtelte Strukturen wie
- * Dokument-, Historien- oder Check-in-Listen bleiben aussen vor.
- *
- * Hinweis: Das Dashboard ist oeffentlich erreichbar und zeigt in der
- * Testphase Klartext. Vor echten Mitgliederdaten gehoert
- * PUBLIC_DASHBOARD_PLAINTEXT auf "false".
- */
-const SAFE_SCHUELER_FIELD_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
-const MAX_SCHUELER_DETAIL_FIELDS = 80;
 
 /**
  * Vollstaendige, HAR-bestaetigte Allowlist fuer die Interessentenmaske.
@@ -1799,6 +1502,48 @@ function selectRequestedInteressentIds(
   return selected;
 }
 
+function selectExactDetailIds(
+  sourceIds: readonly string[],
+  kind: MatoolExactDetailKind
+): string[] {
+  if (
+    sourceIds.length === 0 ||
+    sourceIds.length > MAX_EXACT_DETAIL_RECORDS
+  ) {
+    throw invalidExactDetailIds(kind);
+  }
+
+  const maximumDigits = kind === "schueler" ? 32 : 64;
+  const numericId = new RegExp(`^\\d{1,${maximumDigits}}$`, "u");
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (const sourceId of sourceIds) {
+    if (!numericId.test(sourceId) || seen.has(sourceId)) {
+      throw invalidExactDetailIds(kind);
+    }
+    seen.add(sourceId);
+    selected.push(sourceId);
+  }
+  return selected;
+}
+
+function invalidExactDetailIds(kind: MatoolExactDetailKind): AppError {
+  return new AppError(
+    `matool_invalid_${kind}_detail_ids`,
+    400,
+    "Die angeforderten MATOOL-Detailkennungen sind ungueltig."
+  );
+}
+
+function exactDetailFetchError(area: MatoolExactDetailArea): AppError {
+  const kind = area === "schueler_details" ? "schueler" : "artikel";
+  return new AppError(
+    `matool_${kind}_detail_failed`,
+    502,
+    "Die angeforderten MATOOL-Details konnten nicht gelesen werden."
+  );
+}
+
 /**
  * Prueft MATOOLs JSON-Detailantwort und kopiert ausschliesslich Felder der
  * bestaetigten Allowlist. Die ID muss mit der angefragten Listen-ID
@@ -1900,7 +1645,9 @@ async function extractSafeAreaPage(
   contentType: string,
   area: MatoolSafeArea
 ): Promise<ParsedSafeAreaPage> {
+  const exactListArea = isExactListArea(area);
   const strictListArea = isPaginatedSafeArea(area);
+  const structuredRows = strictListArea || exactListArea;
   const rows: SafeAreaRowCapture[] = [];
   const pagination: SafeAreaPaginationCapture = {
     detected: false,
@@ -1911,6 +1658,9 @@ async function extractSafeAreaPage(
   const selectedPaginationStack: SafeAreaPaginationMarker[] = [];
   const tableStack: number[] = [];
   const rowStack: SafeAreaRowCapture[] = [];
+  const lagerBlockStack: number[] = [];
+  const lagerMarkers: LagerStructureMarker[] = [];
+  let exactStructureInvalid = false;
   type CellCapture = {
     ignoredDepth: number;
     row: SafeAreaRowCapture;
@@ -1925,7 +1675,7 @@ async function extractSafeAreaPage(
 
   const startCell = (kind: "td" | "th"): CellCapture | undefined => {
     if (!activeRow || activeRow.cells.length >= MAX_SAFE_AREA_CELLS) {
-      if (!strictListArea) {
+      if (!structuredRows) {
         activeCell = undefined;
       }
       return undefined;
@@ -1937,7 +1687,7 @@ async function extractSafeAreaPage(
     }
     const capture = { ignoredDepth: 0, row: activeRow, text: "" };
     activeCell = capture;
-    if (strictListArea) {
+    if (structuredRows) {
       cellStack.push(capture);
     }
     return capture;
@@ -1946,7 +1696,7 @@ async function extractSafeAreaPage(
     if (!capture) {
       return;
     }
-    if (!strictListArea) {
+    if (!structuredRows) {
       if (activeCell === capture) {
         capture.row.cells.push(capture.text);
         activeCell = undefined;
@@ -1959,26 +1709,83 @@ async function extractSafeAreaPage(
     cellStack.pop();
     capture.row.cells.push(capture.text);
     const parent = cellStack.at(-1);
-    if (parent && capture.text.trim().length > 0) {
-      parent.text = appendBounded(
-        parent.text,
-        `${parent.text.trim().length > 0 ? " " : ""}${capture.text}`,
-        MAX_SAFE_AREA_CELL_LENGTH
-      );
+    if (
+      parent &&
+      capture.text.trim().length > 0 &&
+      area !== "schueler"
+    ) {
+      const addition = `${parent.text.trim().length > 0 ? " " : ""}${capture.text}`;
+      parent.text = exactListArea
+        ? `${parent.text}${addition}`
+        : appendBounded(
+            parent.text,
+            addition,
+            MAX_SAFE_AREA_CELL_LENGTH
+          );
     }
     activeCell = parent;
   };
   const appendText = (value: string): void => {
     if (activeCell && activeCell.ignoredDepth === 0) {
-      activeCell.text = appendBounded(
-        activeCell.text,
-        value,
-        MAX_SAFE_AREA_CELL_LENGTH
-      );
+      activeCell.text = exactListArea
+        ? `${activeCell.text}${value}`
+        : appendBounded(
+            activeCell.text,
+            value,
+            MAX_SAFE_AREA_CELL_LENGTH
+          );
     }
   };
 
   const rewriter = new HTMLRewriter()
+    .on("span[onclick]", {
+      element(element) {
+        if (area !== "lager") {
+          return;
+        }
+        const onclick = element.getAttribute("onclick") ?? "";
+        if (!/\bdetail_toggle\s*\(/iu.test(onclick)) {
+          return;
+        }
+        const sourceId = extractLagerDetailToggleId(onclick);
+        if (!sourceId || lagerBlockStack.length > 0) {
+          exactStructureInvalid = true;
+        }
+        const blockIndex = lagerMarkers.length;
+        lagerMarkers.push({
+          blockIndex,
+          id: sourceId ?? "",
+          kind: "record"
+        });
+        lagerBlockStack.push(blockIndex);
+        element.onEndTag(() => {
+          if (lagerBlockStack.at(-1) !== blockIndex) {
+            exactStructureInvalid = true;
+            return;
+          }
+          lagerBlockStack.pop();
+        });
+      }
+    })
+    .on("div[id]", {
+      element(element) {
+        if (area !== "lager") {
+          return;
+        }
+        const rawId = element.getAttribute("id") ?? "";
+        if (!rawId.startsWith("lagerbewegung")) {
+          return;
+        }
+        const match = /^lagerbewegung(\d{1,64})$/u.exec(rawId);
+        if (!match?.[1] || lagerBlockStack.length > 0) {
+          exactStructureInvalid = true;
+        }
+        lagerMarkers.push({
+          id: match?.[1] ?? "",
+          kind: "movement"
+        });
+      }
+    })
     .on("table", {
       element(element) {
         tableStack.push(tableCount);
@@ -1990,32 +1797,47 @@ async function extractSafeAreaPage(
     })
     .on("table tr", {
       element(element) {
+        const lagerBlockIndex = lagerBlockStack.at(-1);
         const row: SafeAreaRowCapture = {
+          archivLinkCandidateCount: 0,
+          archivLinkIds: [],
+          archivLinkInvalid: false,
+          articleActionCandidateCount: 0,
+          articleActionInvalid: false,
+          articleActions: [],
           cells: [],
           header: false,
           hrefIds: [],
+          ...(lagerBlockIndex === undefined ? {} : { lagerBlockIndex }),
           linkCount: 0,
+          newsletterLinkCandidateCount: 0,
+          newsletterLinkIds: [],
+          newsletterLinkInvalid: false,
           onclickIds: [],
-          parentRow: strictListArea ? rowStack.at(-1) : undefined,
+          parentRow: structuredRows ? rowStack.at(-1) : undefined,
+          schuelerActionCandidateCount: 0,
+          schuelerActionInvalid: false,
           stableListIds: [],
           tableIndex: tableStack.at(-1) ?? -1,
           tdCount: 0,
           thCount: 0
         };
         activeRow = row;
-        if (strictListArea) {
+        if (structuredRows) {
           rowStack.push(row);
         }
         rows.push(row);
         element.onEndTag(() => {
-          if (!strictListArea) {
+          if (!structuredRows) {
             if (activeRow === row) {
               activeRow = undefined;
             }
             return;
           }
           if (rowStack.at(-1) !== row) {
-            throw paginatedSafeAreaSchemaError();
+            throw exactListArea
+              ? exactListSchemaError()
+              : paginatedSafeAreaSchemaError();
           }
           rowStack.pop();
           activeRow = rowStack.at(-1);
@@ -2056,6 +1878,24 @@ async function extractSafeAreaPage(
         }
         activeRow.linkCount += 1;
         const href = element.getAttribute("href") ?? "";
+        if (area === "newsletter" && /show_newsletter\.php/iu.test(href)) {
+          activeRow.newsletterLinkCandidateCount += 1;
+          const sourceId = extractNewsletterLinkId(href);
+          if (sourceId) {
+            activeRow.newsletterLinkIds.push(sourceId);
+          } else {
+            activeRow.newsletterLinkInvalid = true;
+          }
+        }
+        if (area === "archiv" && /(?:^|\/)archiv\//iu.test(href)) {
+          activeRow.archivLinkCandidateCount += 1;
+          const sourceId = extractArchivLinkId(href);
+          if (sourceId) {
+            activeRow.archivLinkIds.push(sourceId);
+          } else {
+            activeRow.archivLinkInvalid = true;
+          }
+        }
         let url: URL;
         try {
           url = new URL(
@@ -2079,7 +1919,25 @@ async function extractSafeAreaPage(
           return;
         }
         const onclick = element.getAttribute("onclick") ?? "";
+        if (area === "artikel" && /\bformular_fuellen\s*\(/iu.test(onclick)) {
+          activeRow.articleActionCandidateCount += 1;
+          const action = extractArtikelAction(onclick);
+          if (action) {
+            activeRow.articleActions.push(action);
+          } else {
+            activeRow.articleActionInvalid = true;
+          }
+        }
         const stableListId = extractStableListId(onclick, area);
+        if (
+          area === "schueler" &&
+          /\bformular_fuellen\s*\(/iu.test(onclick)
+        ) {
+          activeRow.schuelerActionCandidateCount += 1;
+          if (!stableListId) {
+            activeRow.schuelerActionInvalid = true;
+          }
+        }
         if (stableListId) {
           activeRow.stableListIds.push(stableListId);
         }
@@ -2190,6 +2048,9 @@ async function extractSafeAreaPage(
       "Die angemeldete MATOOL-Ansicht konnte nicht bestätigt werden."
     );
   }
+  if (exactStructureInvalid) {
+    throw exactListSchemaError();
+  }
 
   // Spaltennamen aus der Kopfzeile ableiten, statt die Zellen nur
   // durchzunummerieren. MATOOL fuehrt die Kopfzeile teils in einer eigenen
@@ -2207,16 +2068,36 @@ async function extractSafeAreaPage(
         headerNamesByColumnCount
       )
     );
-  } else if (area === "schueler") {
+  } else if (area === "artikel") {
     prepared.push(
-      ...prepareSchuelerSafeAreaRows(
+      ...prepareArtikelSafeAreaRows(rows, headerNamesByColumnCount)
+    );
+  } else if (area === "lager") {
+    prepared.push(
+      ...prepareLagerSafeAreaRows(
         rows,
+        lagerMarkers,
         headerNamesByColumnCount
       )
     );
+  } else if (area === "newsletter") {
+    prepared.push(
+      ...prepareNewsletterSafeAreaRows(rows, headerNamesByColumnCount)
+    );
+  } else if (area === "archiv") {
+    prepared.push(
+      ...prepareArchivSafeAreaRows(rows, headerNamesByColumnCount)
+    );
+  } else if (area === "schueler") {
+    prepared.push(
+      ...prepareSchuelerSafeAreaRows(rows, headerNamesByColumnCount)
+    );
   }
   const seen = new Set<string>();
-  for (const row of area === "interessenten" || area === "schueler" ? [] : rows) {
+  for (const row of
+    area === "interessenten" || area === "schueler" || exactListArea
+      ? []
+      : rows) {
     // Kopfzeilen sind keine Datensaetze.
     if (row.header || row.cells.length === 0 || row.tdCount === 0) {
       continue;
@@ -2271,10 +2152,388 @@ async function extractSafeAreaPage(
     prepared.map(async ({ explicitId, payload }) => ({
       payload,
       sourceId:
-        explicitId ?? (await sha256Hex(canonicalJson(payload)))
+        area === "archiv" && explicitId
+          ? await sha256Hex(explicitId)
+          : (explicitId ?? (await sha256Hex(canonicalJson(payload))))
     }))
   );
   return { pagination, records };
+}
+
+type ExactPreparedSafeAreaRow = {
+  explicitId: string;
+  payload: Record<string, string | number>;
+};
+
+function prepareSchuelerSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): ExactPreparedSafeAreaRow[] {
+  const topLevelRows = rows.filter((row) => row.parentRow === undefined);
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+  const headerNames = headerNamesByColumnCount.get(
+    SCHUELER_SAFE_AREA_FIELDS.length
+  );
+  if (
+    !headerNames ||
+    !sameStrings(headerNames, SCHUELER_SAFE_AREA_FIELDS)
+  ) {
+    throw paginatedSafeAreaSchemaError();
+  }
+  const descendantCounts = new Map<SafeAreaRowCapture, number>();
+  for (const candidate of rows) {
+    let parent = candidate.parentRow;
+    while (parent) {
+      descendantCounts.set(parent, (descendantCounts.get(parent) ?? 0) + 1);
+      parent = parent.parentRow;
+    }
+  }
+
+  for (const row of topLevelRows) {
+    if (row.header) {
+      continue;
+    }
+    const cells = row.cells.map(normalizeExactSafeAreaCell);
+    const nestedRows = rows.filter((candidate) => candidate.parentRow === row);
+    const hasAction =
+      row.schuelerActionCandidateCount > 0 ||
+      row.schuelerActionInvalid ||
+      row.stableListIds.length > 0;
+    const hasLiveDataShape =
+      row.tdCount === 3 &&
+      row.thCount === 0 &&
+      cells.length === 3 &&
+      cells.some((cell) => cell.length > 0);
+
+    if (!hasAction) {
+      if (hasLiveDataShape) {
+        throw paginatedSafeAreaSchemaError();
+      }
+      continue;
+    }
+
+    if (
+      !hasLiveDataShape ||
+      (descendantCounts.get(row) ?? 0) !== 1 ||
+      nestedRows.length !== 1 ||
+      nestedRows[0]?.header ||
+      nestedRows[0]?.tdCount !== 1 ||
+      nestedRows[0]?.thCount !== 0 ||
+      nestedRows[0]?.cells.length !== 1 ||
+      row.schuelerActionCandidateCount !== 1 ||
+      row.schuelerActionInvalid ||
+      row.stableListIds.length !== 1
+    ) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    const sourceId = row.stableListIds[0];
+    if (!sourceId || seenSourceIds.has(sourceId)) {
+      throw paginatedSafeAreaSchemaError();
+    }
+    seenSourceIds.add(sourceId);
+    const contract = normalizeExactSafeAreaCell(
+      nestedRows[0]?.cells[0] ?? ""
+    );
+    records.push({
+      explicitId: sourceId,
+      payload: buildExactSafeAreaPayload(
+        row,
+        [...cells, contract],
+        headerNamesByColumnCount
+      )
+    });
+  }
+
+  return records;
+}
+
+function prepareArtikelSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): ExactPreparedSafeAreaRow[] {
+  const topLevelRows = rows.filter((row) => row.parentRow === undefined);
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+
+  for (let index = 0; index < topLevelRows.length; index += 1) {
+    const row = topLevelRows[index];
+    if (!row || row.header) {
+      continue;
+    }
+    const cells = row.cells.map(normalizeExactSafeAreaCell);
+    const hasArticleAction =
+      row.articleActionCandidateCount > 0 ||
+      row.articleActions.length > 0 ||
+      row.articleActionInvalid;
+    const isDataRow =
+      row.tdCount === 5 &&
+      row.thCount === 0 &&
+      cells.length === 5 &&
+      cells.some((cell) => cell.length > 0) &&
+      !hasArticleAction;
+    if (!isDataRow) {
+      if (hasArticleAction) {
+        throw exactListSchemaError();
+      }
+      continue;
+    }
+
+    const identifierRow = topLevelRows[index + 1];
+    const sourceId = identifierRow
+      ? extractArtikelIdentifierRowId(identifierRow)
+      : undefined;
+    if (!identifierRow || !sourceId) {
+      throw exactListSchemaError();
+    }
+    addExactPreparedRecord(
+      records,
+      seenSourceIds,
+      sourceId,
+      buildExactSafeAreaPayload(
+        row,
+        cells,
+        headerNamesByColumnCount
+      )
+    );
+    index += 1;
+  }
+
+  if (records.length === 0) {
+    throw exactListSchemaError();
+  }
+  return records;
+}
+
+function extractArtikelIdentifierRowId(
+  row: SafeAreaRowCapture
+): string | undefined {
+  if (
+    row.parentRow !== undefined ||
+    row.header ||
+    row.tdCount !== 3 ||
+    row.thCount !== 0 ||
+    row.cells.length !== 3 ||
+    row.articleActionCandidateCount !== 2 ||
+    row.articleActionInvalid ||
+    row.articleActions.length !== 2
+  ) {
+    return undefined;
+  }
+  const ids = new Set(row.articleActions.map(({ id }) => id));
+  const modes = new Set(row.articleActions.map(({ mode }) => mode));
+  return ids.size === 1 &&
+    modes.size === 2 &&
+    modes.has("none") &&
+    modes.has("clone")
+    ? ids.values().next().value
+    : undefined;
+}
+
+function prepareLagerSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  markers: readonly LagerStructureMarker[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): ExactPreparedSafeAreaRow[] {
+  if (markers.length === 0 || markers.length % 2 !== 0) {
+    throw exactListSchemaError();
+  }
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+
+  for (let index = 0; index < markers.length; index += 2) {
+    const recordMarker = markers[index];
+    const movementMarker = markers[index + 1];
+    if (
+      !recordMarker ||
+      !movementMarker ||
+      recordMarker.kind !== "record" ||
+      movementMarker.kind !== "movement" ||
+      recordMarker.id.length === 0 ||
+      movementMarker.id !== recordMarker.id ||
+      recordMarker.blockIndex === undefined
+    ) {
+      throw exactListSchemaError();
+    }
+
+    const blockRows = rows.filter(
+      (row) =>
+        row.lagerBlockIndex === recordMarker.blockIndex &&
+        row.parentRow === undefined &&
+        !row.header &&
+        row.cells.map(normalizeExactSafeAreaCell).some((cell) => cell.length > 0)
+    );
+    if (blockRows.length !== 1) {
+      throw exactListSchemaError();
+    }
+    const row = blockRows[0];
+    if (
+      !row ||
+      row.tdCount !== 4 ||
+      row.thCount !== 0 ||
+      row.cells.length !== 4
+    ) {
+      throw exactListSchemaError();
+    }
+    const cells = row.cells.map(normalizeExactSafeAreaCell);
+    addExactPreparedRecord(
+      records,
+      seenSourceIds,
+      recordMarker.id,
+      buildExactSafeAreaPayload(
+        row,
+        cells,
+        headerNamesByColumnCount
+      )
+    );
+  }
+
+  return records;
+}
+
+function prepareNewsletterSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): ExactPreparedSafeAreaRow[] {
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+  for (const row of rows) {
+    if (row.parentRow !== undefined || row.header) {
+      continue;
+    }
+    const cells = row.cells.map(normalizeExactSafeAreaCell);
+    const hasCandidate =
+      row.newsletterLinkCandidateCount > 0 ||
+      row.newsletterLinkIds.length > 0 ||
+      row.newsletterLinkInvalid;
+    const looksLikeData =
+      row.tdCount === 2 &&
+      row.thCount === 0 &&
+      cells.length === 2 &&
+      (hasCandidate || cells.some((cell) => cell.length > 0));
+    if (!looksLikeData) {
+      if (hasCandidate) {
+        throw exactListSchemaError();
+      }
+      continue;
+    }
+    const ids = new Set(row.newsletterLinkIds);
+    if (
+      row.newsletterLinkCandidateCount === 0 ||
+      row.newsletterLinkInvalid ||
+      ids.size !== 1
+    ) {
+      throw exactListSchemaError();
+    }
+    const sourceId = ids.values().next().value;
+    if (!sourceId) {
+      throw exactListSchemaError();
+    }
+    addExactPreparedRecord(
+      records,
+      seenSourceIds,
+      sourceId,
+      buildExactSafeAreaPayload(
+        row,
+        cells,
+        headerNamesByColumnCount
+      )
+    );
+  }
+  if (records.length === 0) {
+    throw exactListSchemaError();
+  }
+  return records;
+}
+
+function prepareArchivSafeAreaRows(
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): ExactPreparedSafeAreaRow[] {
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+  for (const row of rows) {
+    if (row.parentRow !== undefined || row.header) {
+      continue;
+    }
+    const cells = row.cells.map(normalizeExactSafeAreaCell);
+    const hasCandidate =
+      row.archivLinkCandidateCount > 0 ||
+      row.archivLinkIds.length > 0 ||
+      row.archivLinkInvalid;
+    const looksLikeData =
+      row.tdCount === 4 &&
+      row.thCount === 0 &&
+      cells.length === 4 &&
+      (hasCandidate || cells.some((cell) => cell.length > 0));
+    if (!looksLikeData) {
+      if (hasCandidate) {
+        throw exactListSchemaError();
+      }
+      continue;
+    }
+    const ids = new Set(row.archivLinkIds);
+    if (
+      row.archivLinkCandidateCount === 0 ||
+      row.archivLinkInvalid ||
+      ids.size !== 1
+    ) {
+      throw exactListSchemaError();
+    }
+    const sourceId = ids.values().next().value;
+    if (!sourceId) {
+      throw exactListSchemaError();
+    }
+    const payload = buildExactSafeAreaPayload(
+      row,
+      cells,
+      headerNamesByColumnCount
+    );
+    payload.archiv_pfad = sourceId;
+    addExactPreparedRecord(
+      records,
+      seenSourceIds,
+      sourceId,
+      payload
+    );
+  }
+  if (records.length === 0) {
+    throw exactListSchemaError();
+  }
+  return records;
+}
+
+function addExactPreparedRecord(
+  records: ExactPreparedSafeAreaRow[],
+  seenSourceIds: Set<string>,
+  sourceId: string,
+  payload: Record<string, string | number>
+): void {
+  if (
+    seenSourceIds.has(sourceId) ||
+    records.length >= MAX_SAFE_AREA_RECORDS
+  ) {
+    throw exactListSchemaError();
+  }
+  seenSourceIds.add(sourceId);
+  records.push({ explicitId: sourceId, payload });
+}
+
+function buildExactSafeAreaPayload(
+  row: SafeAreaRowCapture,
+  cells: readonly string[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): Record<string, string | number> {
+  const payload: Record<string, string | number> = {
+    columnCount: cells.length,
+    tableIndex: row.tableIndex
+  };
+  const headerNames = headerNamesByColumnCount.get(cells.length);
+  cells.forEach((cell, index) => {
+    const fallback = `c${index.toString().padStart(2, "0")}`;
+    payload[headerNames?.[index] ?? fallback] = cell;
+  });
+  return payload;
 }
 
 /**
@@ -2401,74 +2660,6 @@ function isInteressentenSafeAreaDataRow(
 }
 
 function isNestedUnderInteressentenIdentifierRow(
-  row: SafeAreaRowCapture
-): boolean {
-  let parent = row.parentRow;
-  while (parent) {
-    if (parent.stableListIds.length > 0) {
-      return true;
-    }
-    parent = parent.parentRow;
-  }
-  return false;
-}
-
-/**
- * MATOOL-Schuelerlisten enthalten pro Person eine Zeile mit stabiler ID.
- * Die folgende Registerzeile und Detail-Zeilen sind strukturelle Elemente,
- * die nicht als separate Datensaetze gespeichert werden.
- */
-function prepareSchuelerSafeAreaRows(
-  rows: readonly SafeAreaRowCapture[],
-  headerNamesByColumnCount: ReadonlyMap<number, string[]>
-): Array<{
-  explicitId: string;
-  payload: Record<string, string | number>;
-}> {
-  const records: Array<{
-    explicitId: string;
-    payload: Record<string, string | number>;
-  }> = [];
-  const seenSourceIds = new Set<string>();
-
-  for (const row of rows) {
-    if (row.header || row.stableListIds.length !== 1) {
-      continue;
-    }
-    if (isNestedUnderSchuelerRow(row)) {
-      continue;
-    }
-    const sourceId = row.stableListIds[0];
-    // Zeilen ohne stabile Kennung sind keine Datensaetze, sondern Layout
-    // oder Zwischenueberschriften. Sie werden uebersprungen; ein ganzer
-    // Bereich darf daran nicht scheitern.
-    if (!sourceId) {
-      continue;
-    }
-    if (seenSourceIds.has(sourceId)) {
-      throw paginatedSafeAreaSchemaError();
-    }
-    seenSourceIds.add(sourceId);
-    const cells = row.cells.map(normalizeSafeAreaCell);
-    const payload: Record<string, string | number> = {
-      columnCount: cells.length,
-      tableIndex: row.tableIndex
-    };
-    const headerNames = headerNamesByColumnCount.get(cells.length);
-    cells.forEach((cell, index) => {
-      const fallback = `c${index.toString().padStart(2, "0")}`;
-      payload[headerNames?.[index] ?? fallback] = cell;
-    });
-    records.push({ explicitId: sourceId, payload });
-  }
-
-  if (records.length === 0) {
-    throw paginatedSafeAreaSchemaError();
-  }
-  return records;
-}
-
-function isNestedUnderSchuelerRow(
   row: SafeAreaRowCapture
 ): boolean {
   let parent = row.parentRow;
@@ -2662,7 +2853,7 @@ function extractStableListId(
   onclick: string,
   area: MatoolSafeArea
 ): string | undefined {
-  if (!isPaginatedSafeArea(area)) {
+  if (area !== "interessenten" && area !== "schueler") {
     return undefined;
   }
   const match =
@@ -2676,10 +2867,90 @@ function extractStableListId(
   return match?.[2] ?? match?.[3];
 }
 
+function extractArtikelAction(
+  onclick: string
+): { id: string; mode: "clone" | "none" } | undefined {
+  const match =
+    /^\s*formular_fuellen\(\s*(?:(["'])(\d{1,64})\1|(\d{1,64}))\s*,\s*(["'])(none|clone)\4\s*\)\s*;?\s*$/u.exec(
+      onclick
+    );
+  const id = match?.[2] ?? match?.[3];
+  const mode = match?.[5];
+  return id && (mode === "none" || mode === "clone")
+    ? { id, mode }
+    : undefined;
+}
+
+function extractLagerDetailToggleId(onclick: string): string | undefined {
+  const match =
+    /^\s*detail_toggle\(\s*(?:(["'])(\d{1,64})\1|(\d{1,64}))\s*\)\s*;?\s*$/u.exec(
+      onclick
+    );
+  return match?.[2] ?? match?.[3];
+}
+
+function extractNewsletterLinkId(href: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(
+      href.replace(/&amp;/giu, "&"),
+      "https://core.matool.de/"
+    );
+  } catch {
+    return undefined;
+  }
+  const entries = [...url.searchParams];
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== ALLOWED_MATOOL_HOST ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/misc/show_newsletter.php" ||
+    url.hash ||
+    entries.length !== 1 ||
+    entries[0]?.[0] !== "id"
+  ) {
+    return undefined;
+  }
+  const sourceId = entries[0]?.[1] ?? "";
+  return /^\d{1,64}$/u.test(sourceId) ? sourceId : undefined;
+}
+
+function extractArchivLinkId(href: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(href, "https://core.matool.de/");
+  } catch {
+    return undefined;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== ALLOWED_MATOOL_HOST ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    return undefined;
+  }
+  const match = /^\/archiv\/([^/]+)\/([^/]+)$/u.exec(url.pathname);
+  return match?.[1] && match[2]
+    ? `archiv/${match[1]}/${match[2]}`
+    : undefined;
+}
+
 function isPaginatedSafeArea(
   area: MatoolSafeArea
 ): area is MatoolPaginatedSafeArea {
   return PAGINATED_SAFE_AREAS.has(area);
+}
+
+function isExactListArea(
+  area: MatoolSafeArea
+): area is MatoolExactListArea {
+  return EXACT_LIST_AREAS.has(area);
 }
 
 function paginatedSafeAreaSchemaError(): AppError {
@@ -2687,6 +2958,14 @@ function paginatedSafeAreaSchemaError(): AppError {
     "matool_paginated_list_schema_mismatch",
     502,
     "Die paginierte MATOOL-Liste entspricht nicht dem bestaetigten Schema."
+  );
+}
+
+function exactListSchemaError(): AppError {
+  return new AppError(
+    "matool_exact_list_schema_mismatch",
+    502,
+    "Die MATOOL-Liste entspricht nicht dem bestaetigten exakten Schema."
   );
 }
 
@@ -2732,6 +3011,10 @@ function normalizeSafeAreaCell(value: string): string {
   return /[A-Z]{2}\d{2}(?:[\s-]?[A-Z0-9]){11,30}/iu.test(normalized)
     ? ""
     : normalized;
+}
+
+function normalizeExactSafeAreaCell(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 interface InteressentenRowCapture {
