@@ -31,20 +31,14 @@ import { processSnapshotZapierDeliveries } from "./snapshot-delivery";
 // Interessenten und ihre Details haben fachlich Vorrang. Der Klassenabruf
 // folgt danach, damit beide anfragestarken Bereiche in stabiler Reihenfolge
 // vollstaendig verarbeitet werden.
+// Fachlich benoetigt werden ausschliesslich Interessenten und Mitglieder,
+// jeweils Liste vor Detailabruf. Die uebrigen MATOOL-Ansichten wurden am
+// 24.08.2026 abgeschaltet und ihre Bestaende am 25.08.2026 geloescht.
 export const MATOOL_SNAPSHOT_AREAS = [
   "interessenten",
   "interessenten_details",
-  "klassen",
   "schueler",
-  "checkin",
-  "pruefungen",
-  "artikel",
-  "lager",
-  "newsletter",
-  "archiv",
-  "telemetrie",
-  "berichte",
-  "karte"
+  "schueler_details"
 ] as const;
 
 const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
