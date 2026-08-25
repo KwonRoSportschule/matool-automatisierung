@@ -1,6 +1,10 @@
 import { AppError } from "../core/app-error";
 import { canonicalJson } from "../core/crypto";
 import type { MatoolSafeAreaRecord } from "./client";
+import {
+  describeJsonShape,
+  MatoolShapeMismatchError
+} from "./response-shape";
 
 const MAX_SCHUELER_DETAIL_RESPONSE_BYTES = 2_000_000;
 const MAX_SCHUELER_DETAIL_COMPLEX_VALUE_BYTES = 256_000;
@@ -90,6 +94,30 @@ export function parseSchuelerDetailResponse(
   body: Uint8Array,
   expectedId: string
 ): MatoolSafeAreaRecord {
+  let parsedForDiagnosis: unknown;
+  try {
+    return parseSchuelerDetail(body, expectedId, (parsed) => {
+      parsedForDiagnosis = parsed;
+    });
+  } catch (error) {
+    // Ein blosses "passt nicht" hilft niemandem weiter. Die beobachtete Form
+    // wird deshalb mitgegeben -- Typen, Verschachtelung und Feldnamen, aber
+    // kein einziger Wert.
+    if (error instanceof AppError && !(error instanceof MatoolShapeMismatchError)) {
+      throw new MatoolShapeMismatchError(error, {
+        area: "schueler_details",
+        json: describeJsonShape(parsedForDiagnosis)
+      });
+    }
+    throw error;
+  }
+}
+
+function parseSchuelerDetail(
+  body: Uint8Array,
+  expectedId: string,
+  onParsed: (parsed: unknown) => void
+): MatoolSafeAreaRecord {
   if (
     body.byteLength === 0 ||
     body.byteLength > MAX_SCHUELER_DETAIL_RESPONSE_BYTES ||
@@ -106,6 +134,7 @@ export function parseSchuelerDetailResponse(
   } catch {
     throw schuelerDetailSchemaError();
   }
+  onParsed(parsed);
 
   const candidates = collectSchuelerDetailCandidates(parsed);
   if (candidates.length !== 1) {

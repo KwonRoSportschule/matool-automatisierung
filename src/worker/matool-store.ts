@@ -449,6 +449,38 @@ function buildSnapshotChangeStatement(
     );
 }
 
+/**
+ * Haelt den Aufbau einer unerwarteten MATOOL-Antwort fest.
+ *
+ * Gespeichert werden nur Zaehlwerte und Spaltenueberschriften, keine
+ * Zellwerte. Der Eintrag dient dazu, ein abweichendes Schema zu belegen,
+ * statt es zu erraten -- Fehlversuche durch Raten haben dieses Projekt
+ * bereits mehrfach aufgehalten.
+ */
+export async function recordMatoolResponseShape(
+  db: D1Database,
+  input: { area: string; observedAt: string; shape: unknown }
+): Promise<void> {
+  validateIdentifier(input.area, 64);
+  const shapeJson = JSON.stringify(input.shape);
+  if (shapeJson === undefined || shapeJson.length > 16_000) {
+    throw invalidSnapshotInput();
+  }
+  await db
+    .prepare(
+      `INSERT INTO matool_response_shapes
+         (shape_id, area, source_id, observed_at, shape_json)
+       VALUES (?, ?, 'schema', ?, ?)`
+    )
+    .bind(
+      `shape_${input.area}_${crypto.randomUUID()}`,
+      input.area,
+      input.observedAt,
+      shapeJson
+    )
+    .run();
+}
+
 export async function recordMatoolSnapshotFailure(
   db: D1Database,
   input: RecordMatoolSnapshotFailureInput

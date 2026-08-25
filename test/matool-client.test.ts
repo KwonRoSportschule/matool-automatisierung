@@ -7,6 +7,7 @@ import {
   assertAllowedMatoolUrl,
   MATOOL_INTERESSENT_DETAIL_FIELDS,
   MatoolClient,
+  MatoolShapeMismatchError,
   validateMatoolBaseUrl
 } from "../src/matool/client";
 import { MATOOL_SCHUELER_DETAIL_PAYLOAD_FIELDS } from "../src/matool/schueler-detail";
@@ -219,12 +220,44 @@ function paginatedListPage(input: {
   `;
 }
 
+/**
+ * Bildet den am 25.08.2026 aus der Live-Antwort aufgenommenen Aufbau nach:
+ * eine sichtbare Zeile mit den vier Spalten der Kopfzeile, gefolgt von der
+ * Kennungszeile mit drei Zellen, der Aufklapp-Aktion und zwei
+ * verschachtelten Detailzeilen.
+ */
 function schuelerRow(sourceId: string, number: number): string {
   return `
-    <tr onclick="formular_fuellen(${sourceId},'Synthetic ${sourceId}')">
-      <td>${number}</td><td>Vorname ${number}</td><td>Name ${number}
-        <table><tr><td>Vertrag Synthetic ${number}</td></tr></table>
+    ${schuelerDataRow(number)}
+    ${schuelerIdentifierRow(sourceId)}
+  `;
+}
+
+function schuelerDataRow(number: number): string {
+  return `
+    <tr>
+      <td>${number}&euro;</td>
+      <td>Vorname ${number}</td>
+      <td>Gr&ouml;&szlig;mann ${number}</td>
+      <td>Vertrag&nbsp;Synthetic ${number}</td>
+    </tr>
+  `;
+}
+
+function schuelerIdentifierRow(
+  sourceId: string,
+  onclick = `formular_fuellen(${sourceId},'Synthetic ${sourceId}')`
+): string {
+  return `
+    <tr>
+      <td><img alt="" onclick="${onclick}"></td>
+      <td>
+        <table>
+          <tr><td>PRIVATE-HIDDEN-DETAIL-A-${sourceId}</td></tr>
+          <tr><td>PRIVATE-HIDDEN-DETAIL-B-${sourceId}</td></tr>
+        </table>
       </td>
+      <td></td>
     </tr>
   `;
 }
@@ -1762,6 +1795,45 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
+  it("gibt bei abweichendem Schema die beobachtete Form mit, ohne Inhalte", async () => {
+    const body = paginatedListPage({
+      area: "schueler",
+      currentOffset: 0,
+      offsets: [0],
+      // Kopfzeile passt, aber die sichtbare Zeile fehlt vollstaendig.
+      rows: schuelerIdentifierRow("710001")
+    });
+    const pages = new Map([
+      ["/index.php?show=schueler&todo=&offset=0", { body }]
+    ]);
+
+    const fehler = await clientForPaginatedPages(pages)
+      .extractSafeArea(
+        {
+          email: "service-account@example.invalid",
+          password: "synthetic-password"
+        },
+        "schueler"
+      )
+      .then(
+        () => undefined,
+        (error: unknown) => error
+      );
+
+    expect(fehler).toBeInstanceOf(MatoolShapeMismatchError);
+    const { shape } = fehler as MatoolShapeMismatchError;
+    expect(shape.area).toBe("schueler");
+    expect(shape.headerNamesByColumnCount?.["4"]).toEqual([
+      "nr",
+      "vorname",
+      "name",
+      "vertrag"
+    ]);
+    expect(shape.rowShapes?.length ?? 0).toBeGreaterThan(0);
+    // Die Diagnose darf Formangaben fuehren, aber keine Zellwerte.
+    expect(JSON.stringify(shape)).not.toContain("PRIVATE-HIDDEN-DETAIL");
+  });
+
   it("benennt generische Spalten nach einer separaten Kopfzeile", async () => {
     const page = `
       <html><body><h1>Artikel</h1>
@@ -2322,14 +2394,14 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
       expect(result.records).toHaveLength(2);
       expect(result.records[0]?.payload).toMatchObject({
-        name: "Name 1",
-        nr: "1",
+        name: "Größmann 1",
+        nr: "1€",
         vertrag: "Vertrag Synthetic 1",
         vorname: "Vorname 1"
       });
       expect(result.records[1]?.payload).toMatchObject({
-        name: "Name 2",
-        nr: "2",
+        name: "Größmann 2",
+        nr: "2€",
         vertrag: "Vertrag Synthetic 2",
         vorname: "Vorname 2"
       });
@@ -2367,15 +2439,27 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     expect(result.rowCount).toBe(501);
     expect(result.records[0]?.sourceId).toBe("700000");
     expect(result.records.at(-1)?.sourceId).toBe("700500");
-  });
+    // 17 Seiten mit je 30 zweigeteilten Zeilen: unter Last reicht die
+    // Vorgabe von fuenf Sekunden nicht verlaesslich.
+  }, 30_000);
 
   it("verwirft jede Abweichung von der live bestaetigten Schuelerzeile", async () => {
     const invalidRows = [
-      `<tr onclick="formular_fuellen(710001)"><td>1</td><td>Vorname</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
-      `<tr onclick="formular_fuellen(710001,'Synthetic')"><td>1</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
+      // sichtbare Zeile ohne folgende Kennungszeile
+      schuelerDataRow(1),
+      // Kennungszeile ohne zugehoerige sichtbare Zeile
+      schuelerIdentifierRow("710001"),
+      // Aufklapp-Aktion ohne zweites Argument, also ohne belegbare Kennung
+      `${schuelerDataRow(1)}${schuelerIdentifierRow(
+        "710001",
+        "formular_fuellen(710001)"
+      )}`,
+      // dieselbe Kennung zweimal auf einer Seite
       `${schuelerRow("710001", 1)}${schuelerRow("710001", 2)}`,
-      `<tr><td>1</td><td>Vorname</td><td>Name<table><tr><td>Vertrag</td></tr></table></td></tr>`,
-      `<tr onclick="formular_fuellen(710001,'Synthetic')"><td>1</td><td>Vorname</td><td>Name</td></tr>`
+      // sichtbare Zeile mit drei statt vier Spalten
+      `<tr><td>1</td><td>Vorname</td><td>Name</td></tr>${schuelerIdentifierRow(
+        "710001"
+      )}`
     ];
 
     for (const rows of invalidRows) {

@@ -1,4 +1,9 @@
 import { AppError } from "../core/app-error";
+import {
+  MatoolShapeMismatchError,
+  type MatoolResponseShape,
+  type SafeAreaRowShape
+} from "./response-shape";
 import { canonicalJson, sha256Hex } from "../core/crypto";
 import { parseArtikelDetailResponse } from "./artikel-detail";
 import { RunCookieJar } from "./cookie-jar";
@@ -37,6 +42,11 @@ const EXACT_LIST_AREAS = new Set([
 ]);
 // Detaildaten werden ausschliesslich ueber MATOOLs lesenden JSON-Endpunkt
 // geladen. Die Grenze entspricht der maximal verarbeiteten Listenmenge.
+export {
+  MatoolShapeMismatchError,
+  type MatoolResponseShape
+} from "./response-shape";
+
 const MAX_INTERESSENTEN_DETAIL_RECORDS = 500;
 const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
@@ -2116,37 +2126,54 @@ async function extractSafeAreaPage(
     explicitId?: string;
     payload: Record<string, string | number>;
   }> = [];
-  if (area === "interessenten") {
-    prepared.push(
-      ...prepareInteressentenSafeAreaRows(
-        rows,
-        headerNamesByColumnCount
-      )
-    );
-  } else if (area === "artikel") {
-    prepared.push(
-      ...prepareArtikelSafeAreaRows(rows, headerNamesByColumnCount)
-    );
-  } else if (area === "lager") {
-    prepared.push(
-      ...prepareLagerSafeAreaRows(
-        rows,
-        lagerMarkers,
-        headerNamesByColumnCount
-      )
-    );
-  } else if (area === "newsletter") {
-    prepared.push(
-      ...prepareNewsletterSafeAreaRows(rows, headerNamesByColumnCount)
-    );
-  } else if (area === "archiv") {
-    prepared.push(
-      ...prepareArchivSafeAreaRows(rows, headerNamesByColumnCount)
-    );
-  } else if (area === "schueler") {
-    prepared.push(
-      ...prepareSchuelerSafeAreaRows(rows, headerNamesByColumnCount)
-    );
+  try {
+    if (area === "interessenten") {
+      prepared.push(
+        ...prepareInteressentenSafeAreaRows(
+          rows,
+          headerNamesByColumnCount
+        )
+      );
+    } else if (area === "artikel") {
+      prepared.push(
+        ...prepareArtikelSafeAreaRows(rows, headerNamesByColumnCount)
+      );
+    } else if (area === "lager") {
+      prepared.push(
+        ...prepareLagerSafeAreaRows(
+          rows,
+          lagerMarkers,
+          headerNamesByColumnCount
+        )
+      );
+    } else if (area === "newsletter") {
+      prepared.push(
+        ...prepareNewsletterSafeAreaRows(rows, headerNamesByColumnCount)
+      );
+    } else if (area === "archiv") {
+      prepared.push(
+        ...prepareArchivSafeAreaRows(rows, headerNamesByColumnCount)
+      );
+    } else if (area === "schueler") {
+      prepared.push(
+        ...prepareSchuelerSafeAreaRows(rows, headerNamesByColumnCount)
+      );
+    }
+  } catch (error) {
+    // Ein blosses "passt nicht" hilft niemandem weiter. Die beobachtete Form
+    // wird deshalb mitgegeben, damit sich das Schema belegen laesst, statt
+    // es zu erraten.
+    if (
+      error instanceof AppError &&
+      !(error instanceof MatoolShapeMismatchError) &&
+      error.code.endsWith("_schema_mismatch")
+    ) {
+      throw new MatoolShapeMismatchError(
+        error,
+        describeSafeAreaShape(area, rows, headerNamesByColumnCount)
+      );
+    }
+    throw error;
   }
   const seen = new Set<string>();
   for (const row of
@@ -2220,13 +2247,22 @@ type ExactPreparedSafeAreaRow = {
   payload: Record<string, string | number>;
 };
 
+/**
+ * MATOOL fuehrt jede Mitgliederzeile zweigeteilt: Die sichtbare Zeile traegt
+ * die vier Spalten der Kopfzeile, die unmittelbar folgende Zeile die
+ * technische Kennung und die aufklappbaren Detailtafeln. Es ist derselbe
+ * Aufbau wie bei den Interessenten.
+ *
+ * Belegt am 25.08.2026 durch die Strukturaufnahme in matool_response_shapes:
+ * je Seite eine Kopfzeile und 30 sichtbare Zeilen mit vier gefuellten Zellen,
+ * dazu 30 Kennungszeilen mit drei leeren Zellen, einer Kennung und je zwei
+ * verschachtelten Zeilen. Ein frueherer Stand hielt die Kennungszeile fuer
+ * die Datenzeile und verwarf deshalb jede Seite.
+ */
 function prepareSchuelerSafeAreaRows(
   rows: readonly SafeAreaRowCapture[],
   headerNamesByColumnCount: ReadonlyMap<number, string[]>
 ): ExactPreparedSafeAreaRow[] {
-  const topLevelRows = rows.filter((row) => row.parentRow === undefined);
-  const records: ExactPreparedSafeAreaRow[] = [];
-  const seenSourceIds = new Set<string>();
   const headerNames = headerNamesByColumnCount.get(
     SCHUELER_SAFE_AREA_FIELDS.length
   );
@@ -2236,71 +2272,84 @@ function prepareSchuelerSafeAreaRows(
   ) {
     throw paginatedSafeAreaSchemaError();
   }
-  const descendantCounts = new Map<SafeAreaRowCapture, number>();
-  for (const candidate of rows) {
-    let parent = candidate.parentRow;
-    while (parent) {
-      descendantCounts.set(parent, (descendantCounts.get(parent) ?? 0) + 1);
-      parent = parent.parentRow;
-    }
-  }
 
-  for (const row of topLevelRows) {
-    if (row.header) {
+  const records: ExactPreparedSafeAreaRow[] = [];
+  const seenSourceIds = new Set<string>();
+  let rowsOfInterest = 0;
+
+  for (const [index, row] of rows.entries()) {
+    if (isSchuelerSafeAreaIdentifierRow(row)) {
+      rowsOfInterest += 1;
+    }
+    if (!isSchuelerSafeAreaDataRow(row)) {
       continue;
     }
-    const cells = row.cells.map(normalizeExactSafeAreaCell);
-    const nestedRows = rows.filter((candidate) => candidate.parentRow === row);
-    const hasAction =
-      row.schuelerActionCandidateCount > 0 ||
-      row.schuelerActionInvalid ||
-      row.stableListIds.length > 0;
-    const hasLiveDataShape =
-      row.tdCount === 3 &&
-      row.thCount === 0 &&
-      cells.length === 3 &&
-      cells.some((cell) => cell.length > 0);
-
-    if (!hasAction) {
-      if (hasLiveDataShape) {
-        throw paginatedSafeAreaSchemaError();
-      }
+    rowsOfInterest += 1;
+    const identifierRow = rows[index + 1];
+    if (!identifierRow || !isSchuelerSafeAreaIdentifierRow(identifierRow)) {
+      // Eine einzelne Zeile ohne Kennung wird uebergangen, nicht zum Anlass
+      // genommen, die ganze Seite zu verwerfen. Ein Sonderfall darf nicht
+      // den gesamten Abruf kosten.
       continue;
     }
-
-    if (
-      !hasLiveDataShape ||
-      (descendantCounts.get(row) ?? 0) !== 1 ||
-      nestedRows.length !== 1 ||
-      nestedRows[0]?.header ||
-      nestedRows[0]?.tdCount !== 1 ||
-      nestedRows[0]?.thCount !== 0 ||
-      nestedRows[0]?.cells.length !== 1 ||
-      row.schuelerActionCandidateCount !== 1 ||
-      row.schuelerActionInvalid ||
-      row.stableListIds.length !== 1
-    ) {
-      throw paginatedSafeAreaSchemaError();
+    const sourceId = identifierRow.stableListIds[0];
+    if (!sourceId) {
+      continue;
     }
-    const sourceId = row.stableListIds[0];
-    if (!sourceId || seenSourceIds.has(sourceId)) {
+    // Eine doppelte Kennung wird nicht uebergangen: Dann ist unklar, welche
+    // Zeile zu welchem Mitglied gehoert, und ein falsch zugeordneter
+    // Datensatz waere schlimmer als ein fehlender.
+    if (seenSourceIds.has(sourceId)) {
       throw paginatedSafeAreaSchemaError();
     }
     seenSourceIds.add(sourceId);
-    const contract = normalizeExactSafeAreaCell(
-      nestedRows[0]?.cells[0] ?? ""
-    );
-    records.push({
-      explicitId: sourceId,
-      payload: buildExactSafeAreaPayload(
-        row,
-        [...cells, contract],
-        headerNamesByColumnCount
-      )
+
+    const cells = row.cells.map(normalizeSafeAreaCell);
+    const payload: Record<string, string | number> = {
+      columnCount: cells.length,
+      tableIndex: row.tableIndex
+    };
+    cells.forEach((cell, cellIndex) => {
+      const field = SCHUELER_SAFE_AREA_FIELDS[cellIndex];
+      if (field) {
+        payload[field] = cell;
+      }
     });
+    records.push({ explicitId: sourceId, payload });
   }
 
+  // Eine leere Seite ist zulaessig. Zeilen, von denen sich keine einzige
+  // zuordnen laesst, sind es nicht: dann hat sich der Aufbau geaendert, und
+  // das soll auffallen statt stillzuschweigen.
+  if (rowsOfInterest > 0 && records.length === 0) {
+    throw paginatedSafeAreaSchemaError();
+  }
   return records;
+}
+
+/** Die sichtbare Zeile: vier Spalten, keine Kennung, nicht verschachtelt. */
+function isSchuelerSafeAreaDataRow(row: SafeAreaRowCapture): boolean {
+  return (
+    !row.header &&
+    row.parentRow === undefined &&
+    row.stableListIds.length === 0 &&
+    row.tdCount === SCHUELER_SAFE_AREA_FIELDS.length &&
+    row.thCount === 0 &&
+    row.cells.length === SCHUELER_SAFE_AREA_FIELDS.length
+  );
+}
+
+/** Die darauf folgende Zeile mit der Kennung und der Aufklapp-Aktion. */
+function isSchuelerSafeAreaIdentifierRow(row: SafeAreaRowCapture): boolean {
+  return (
+    !row.header &&
+    row.parentRow === undefined &&
+    row.tdCount === 3 &&
+    row.thCount === 0 &&
+    row.stableListIds.length === 1 &&
+    row.schuelerActionCandidateCount === 1 &&
+    !row.schuelerActionInvalid
+  );
 }
 
 function prepareArtikelSafeAreaRows(
@@ -3016,6 +3065,59 @@ function paginatedSafeAreaSchemaError(): AppError {
   );
 }
 
+/** Hoechstzahl der gefuehrten Zeilenformen; haeufigste zuerst. */
+const MAX_REPORTED_ROW_SHAPES = 16;
+
+function describeSafeAreaShape(
+  area: string,
+  rows: readonly SafeAreaRowCapture[],
+  headerNamesByColumnCount: ReadonlyMap<number, string[]>
+): MatoolResponseShape {
+  const nestedCounts = new Map<SafeAreaRowCapture, number>();
+  for (const row of rows) {
+    const parent = row.parentRow;
+    if (parent) {
+      nestedCounts.set(parent, (nestedCounts.get(parent) ?? 0) + 1);
+    }
+  }
+
+  const buckets = new Map<string, SafeAreaRowShape>();
+  for (const row of rows) {
+    const form = {
+      hasStableId: row.stableListIds.length > 0,
+      header: row.header,
+      nestedRowCount: nestedCounts.get(row) ?? 0,
+      nonEmptyCellCount: row.cells.filter(
+        (cell) => normalizeSafeAreaCell(cell).length > 0
+      ).length,
+      occurrences: 0,
+      schuelerActionCandidateCount: row.schuelerActionCandidateCount,
+      tdCount: row.tdCount,
+      thCount: row.thCount,
+      topLevel: row.parentRow === undefined
+    };
+    const key = canonicalJson({ ...form, occurrences: 0 });
+    const bucket = buckets.get(key) ?? form;
+    bucket.occurrences += 1;
+    buckets.set(key, bucket);
+  }
+
+  return {
+    area,
+    headerNamesByColumnCount: Object.fromEntries(
+      [...headerNamesByColumnCount].map(([count, names]) => [
+        String(count),
+        names
+      ])
+    ),
+    rowCount: rows.length,
+    rowShapes: [...buckets.values()]
+      .sort((left, right) => right.occurrences - left.occurrences)
+      .slice(0, MAX_REPORTED_ROW_SHAPES),
+    topLevelRowCount: rows.filter((row) => row.parentRow === undefined).length
+  };
+}
+
 function exactListSchemaError(): AppError {
   return new AppError(
     "matool_exact_list_schema_mismatch",
@@ -3058,8 +3160,69 @@ function selectSafeAreaSourceId(
     : undefined;
 }
 
+/**
+ * HTMLRewriter reicht den Text einer Zelle so durch, wie er in der Quelle
+ * steht. Ohne diese Aufloesung landet "1685&euro;" woertlich in der
+ * Datenbank und im Dashboard.
+ */
+const NAMED_HTML_ENTITIES: Readonly<Record<string, string>> = {
+  Auml: "Ä",
+  Ouml: "Ö",
+  Uuml: "Ü",
+  amp: "&",
+  apos: "'",
+  auml: "ä",
+  bdquo: "„",
+  copy: "©",
+  deg: "°",
+  euro: "€",
+  gt: ">",
+  laquo: "«",
+  ldquo: "“",
+  lsquo: "‘",
+  lt: "<",
+  mdash: "—",
+  nbsp: " ",
+  ndash: "–",
+  ouml: "ö",
+  quot: '"',
+  raquo: "»",
+  rdquo: "”",
+  rsquo: "’",
+  szlig: "ß",
+  uuml: "ü"
+};
+
+function decodeHtmlEntities(value: string): string {
+  if (!value.includes("&")) {
+    return value;
+  }
+  return value.replace(
+    /&(#\d{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/gu,
+    (treffer: string, kern: string) => {
+      if (!kern.startsWith("#")) {
+        return NAMED_HTML_ENTITIES[kern] ?? treffer;
+      }
+      const codePoint = /^#[xX]/u.test(kern)
+        ? Number.parseInt(kern.slice(2), 16)
+        : Number.parseInt(kern.slice(1), 10);
+      // Ersatzzeichenpaare und Werte ausserhalb des Unicode-Bereichs wuerden
+      // fromCodePoint werfen; sie bleiben unveraendert stehen.
+      if (
+        !Number.isSafeInteger(codePoint) ||
+        codePoint <= 0 ||
+        codePoint > 0x10ffff ||
+        (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ) {
+        return treffer;
+      }
+      return String.fromCodePoint(codePoint);
+    }
+  );
+}
+
 function normalizeSafeAreaCell(value: string): string {
-  const normalized = value
+  const normalized = decodeHtmlEntities(value)
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, MAX_SAFE_AREA_CELL_LENGTH);
@@ -3069,7 +3232,7 @@ function normalizeSafeAreaCell(value: string): string {
 }
 
 function normalizeExactSafeAreaCell(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
+  return decodeHtmlEntities(value).replace(/\s+/gu, " ").trim();
 }
 
 interface InteressentenRowCapture {
