@@ -72,9 +72,15 @@
           "class_name": "InteressentenSyncWorkflow"
         }
       ],
-      // Hinweis: "limits": { "cpu_ms": ... } benoetigt Workers Paid.
-      // Auf dem Free-Tarif bricht ein Lauf nach etwa fuenf Bereichen mit
-      // "exceededCpu" ab.
+      // Ohne diesen Block gilt die Vorgabe von 30 Sekunden CPU. Der
+      // Listenschritt ueber mehrere tausend Interessenten sprengt sie und
+      // wiederholt sich dann endlos mit "Worker exceeded CPU time limit"
+      // -- am 25.08.2026 an einem zwei Stunden haengenden Workflow belegt.
+      // Produktion fuehrt dieselben Werte; Staging fehlten sie schlicht.
+      "limits": {
+        "cpu_ms": 300000,
+        "subrequests": 10000
+      },
       "triggers": {
         "crons": ["0 7-18 * * mon-fri"]
       }
