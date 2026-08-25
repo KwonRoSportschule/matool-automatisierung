@@ -1,6 +1,6 @@
 # MATOOL Middleware Hub – V1-Todo- und Abnahmeplan
 
-Stand: 19. August 2026  
+Stand: 25. August 2026
 Grundlage: Code-, Cloudflare-, D1-, MATOOL- und Zapier-Audit vom 19. August 2026
 
 ## Zweck dieses Dokuments
@@ -357,6 +357,9 @@ angelegte Datensätze enthalten.
         Historie entfernen.
   - [ ] `outputs/` und vergleichbare personenbezogene Exportdateien dauerhaft
         per `.gitignore` ausschließen.
+  - [ ] Personen- und Bankdaten in `test/schueler-details.test.ts` vollständig
+        durch eindeutig synthetische Werte ersetzen und die sechs lokalen
+        Commits vor jeder Veröffentlichung auf diese Werte prüfen.
   - [ ] GitHub-Historie und frischen Klon auf XLSX-/Bild-/Kontaktdaten prüfen.
   - [ ] Danach verifizieren, dass die Cloudflare-GitHub-App weiterhin auf das
         bereinigte Repository zugreifen kann.
@@ -446,13 +449,16 @@ angelegte Datensätze enthalten.
   - [x] Migration 0005 zuerst auf Staging anwenden und Schema prüfen.
   - [x] Neue Worker-Version auf Staging bereitstellen.
   - [x] Aktive Versions-ID und vorherige Rollback-Version notieren.
-  - [ ] Einen kontrollierten manuellen Read-only-Lauf ausführen.
+  - [x] Einen kontrollierten manuellen Read-only-Lauf ausführen.
+  - [ ] Lokales `main` (`ahead 6, behind 1`) mit `origin/main` zusammenführen;
+        dabei Client, Scheduler, Tests und die beiden `0007`-Migrationen
+        semantisch abgleichen.
 - **Abnahmekriterien:**
   - [x] Migration 0005 ist nicht mehr ausstehend.
   - [x] Tabelle `zapier_snapshot_subscriptions` und die neuen Changefeed-Felder
         existieren.
   - [x] Aktive Worker-Version ist neuer als `e0833ded…`.
-  - [ ] Interessenten-Details sind nicht mehr auf 4 begrenzt.
+  - [x] Interessenten-Details sind nicht mehr auf 4 begrenzt.
   - [ ] Klassen sind nicht mehr auf 20 begrenzt.
   - [x] `OUTBOUND_DELIVERY_ENABLED` bleibt `false`.
   - [x] First-Trial-/Kontaktprozess bleibt `disabled`.
@@ -462,8 +468,9 @@ angelegte Datensätze enthalten.
   `4de71702-2e42-459a-8a22-23a170bf7fbb`; `/healthz` HTTP 200; Migration 0005
   ohne ausstehende Folgemigration; Changefeed-Tabelle und -Spalten vorhanden;
   `OUTBOUND_DELIVERY_ENABLED=false`; Prozess `interessenten_first_trial` ist
-  `disabled`. Manueller Lauf `sync_0ff56284-827a-41b9-9d51-3b7cc4e22b08`
-  bleibt als fehlgeschlagener Live-Nachweis offen.
+  `disabled`. Der spätere DATA-01-Live-Abgleich bestätigte 3.492 Listen- und
+  Detail-IDs ohne Differenz. REL-01 bleibt wegen Klassenkriterium und noch
+  nicht zusammengeführtem/deploytem Mitgliederstand offen.
 
 ---
 
@@ -682,17 +689,20 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
 
 - [ ] **Status:** offen
 - **Priorität:** kritisch
-- **Befund:** Nur eine generische Schülerliste wird gelesen; 66 von 96 Zeilen
-  besitzen nur generische Felder. Der HAR-belegte Endpunkt
-  `/json/schueler_daten.php` wird nicht verwendet.
+- **Historischer Befund:** Nur eine generische Schülerliste wurde gelesen; 66
+  von 96 Zeilen besaßen nur generische Felder. Seitdem wurden Pagination,
+  stabile IDs und ein lokaler Detailabruf ergänzt; die Live-Abnahme fehlt.
 - **Live-Nachweis vom 19.08.2026:** Beim unveränderten Standortfilter `alle`
   zeigt MATOOL 19 Seiten. Die Seiten verwenden `offset` in 30er-Schritten;
   Seite 1 enthält 30 und Seite 19 enthält 19 stabile numerische Datensätze.
   Damit sind 559 aktuelle Mitglieder in der Quelle belegt. Der Hub liest
   bislang nur eine Seite. MATOOL merkt sich die zuletzt geöffnete Seite in der
   Sitzung; deshalb muss ein Vollabruf ausdrücklich mit `offset=0` beginnen.
-- **Benötigte Daten:** Benutzer stellt eine read-only HAR-Aufnahme bereit, in
-  der ein Schüler geöffnet und seine Detaildaten geladen werden.
+- **Aktueller lokaler Stand vom 25.08.2026:** Sechs lokale Commits und weitere
+  uncommittete Änderungen lesen Mitgliederseiten vollständig, holen eine
+  aufgeklappte Mitgliedsmaske über Open/Page/Close und verwenden eine
+  Feld-Allowlist. Typechecks bestehen; ein vollständiger Live-D1-Abgleich ist
+  nicht belegt.
 - **Arbeitsschritte:**
   - [x] Aktuelle MATOOL-Quellmenge und Paging-Struktur ohne Ausgabe
         personenbezogener Daten erfassen: 19 Seiten / 559 Mitglieder.
@@ -702,9 +712,9 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
         und doppelte stabile IDs im Test sicher ablehnen.
   - [x] Echte dreizellige äußere Mitgliederzeile mit verschachtelter
         Datentabelle und stabiler ID als Regressionstest abdecken.
-  - [ ] Vollständige Schülerliste und Pagination lesen.
+  - [x] Vollständige Schülerliste und Pagination lesen.
   - [ ] Schülerdetail-Endpunkt und alle freigegebenen Felder abbilden.
-  - [ ] Stabile Schüler-ID speichern.
+  - [x] Stabile Schüler-ID speichern.
   - [ ] Beziehung Schüler → Klasse/Kurs prüfen und speichern.
   - [ ] Mit identischen Filtern für Standort, Status und Suche die sichtbare
         MATOOL-Gesamtzahl erfassen und mit vollständigem Abruf sowie aktivem
@@ -716,7 +726,15 @@ Für jeden Datenbereich wird dieselbe Abgleichstabelle ausgefüllt:
   identischen Filtern 1:1 überein; ein zweiter unveränderter Vollabruf erzeugt
   weder fehlende noch doppelte Mitglieder.
 - **Aufwand:** 1 Arbeitstag nach vollständigem HAR.
-- **Nachweis:** _noch einzutragen_
+- **Nachweis:** Lokal `main` auf `0e27d07` plus uncommitteter
+  Open/Page/Close-Implementierung; Worker-, Web-, Node-, Test- und
+  Zapier-Typechecks bestanden. Detailidentität, synthetische Fixtures,
+  Staging-Deployment, D1-Parität und zweiter unveränderter Lauf bleiben offen.
+
+**Scope-Hinweis:** `docs/sync-spezifikation.md` und der lokale Scheduler
+reduzieren den Umfang auf Interessenten und Mitglieder. Diese Entwurfsänderung
+ersetzt ohne ausdrückliche Freigabe nicht den verbindlichen 13-Bereiche-Umfang;
+DATA-02 sowie DATA-04 bis DATA-07 bleiben offen.
 
 ### TODO DATA-04 – Check-in und Anwesenheiten
 
@@ -1090,3 +1108,6 @@ Diese Tabelle wird nach jedem freigegebenen Arbeitspunkt aktualisiert.
 | 19.08.2026 | DATA-01/DATA-03/DQ-02 | Verschachtelte Live-Tabellenstruktur und stillen 0-Abruf korrigiert | Äußere MATOOL-ID wird mit inneren Tabellenfeldern genau einmal zusammengeführt; 0-Record-Vollabruf schlägt fehl; 40/40 Parser-Tests, beide Typechecks und unabhängiges Review bestanden; Live-Verifikation offen |
 | 24.08.2026 | DATA-01 | Vollständigen fortsetzbaren Interessentenabgleich implementiert und lokal verifiziert | Exakter Listen-Ersatz, 100er-Detailbatches, Retry/Backoff, Wiederaufnahme und finales ID-Paritätsgate; 246/246 Tests und beide Typechecks bestanden; Deployment und Live-Differenz 0 bleiben offen |
 | 24.08.2026 | DATA-01 | Vollständigen Live-Abgleich MATOOL gegen D1 abgeschlossen | Workflow `succeeded`; 3.492 eindeutige Listen- und Detail-IDs, 0 fehlend, 0 zusätzlich, 0 veraltet, 0 Duplikate, 0 Fehler und Differenz 0; DATA-01 abgehakt |
+| 25.08.2026 | REL-01/DATA-03 | Sechs lokale Commits und aktuellen Arbeitsbaum geprüft | Mitglieder-Pagination und stabile Speicherung lokal belegt; Detail-/D1-/Live-Abnahme bleibt offen; `main` ist 6 Commits vor und 1 Commit hinter `origin/main` |
+| 25.08.2026 | SEC-00 | Personen- und Bankdaten in Mitgliedertests gefunden | Vor Push synthetisieren und lokale beziehungsweise veröffentlichte Historie prüfen; SEC-00 bleibt offen |
+| 25.08.2026 | BASE | Abweichenden V1-Umfang dokumentiert | Zwei-Bereiche-Spezifikation ist nur Entwurf; offene 13-Bereiche-Todos wurden nicht abgehakt |
