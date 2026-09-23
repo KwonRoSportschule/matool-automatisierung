@@ -24,6 +24,7 @@ interface SnapshotDeliveryLeaseRow {
 export interface CreateSnapshotZapierSubscriptionInput {
   area: string;
   onlyChanged: boolean;
+  onlyNew?: boolean;
   targetUrl: string;
 }
 
@@ -54,6 +55,9 @@ export async function createSnapshotZapierSubscription(
 ): Promise<{ id: string }> {
   validateArea(input.area);
   validateTargetUrl(input.targetUrl);
+  if (input.onlyChanged && input.onlyNew === true) {
+    throw invalidInput();
+  }
   const timestamp = validateDate(now);
   const subscriptionId = `zsnap_${crypto.randomUUID()}`;
   const row = await db
@@ -63,13 +67,14 @@ export async function createSnapshotZapierSubscription(
          target_url,
          area,
          only_changed,
+         only_new,
          status,
          last_delivered_change_id,
          created_at,
          updated_at
        )
        VALUES (
-         ?, ?, ?, ?, 'active',
+         ?, ?, ?, ?, ?, 'active',
          COALESCE((
            SELECT MAX(change_id)
            FROM matool_snapshot_changes
@@ -80,11 +85,13 @@ export async function createSnapshotZapierSubscription(
        ON CONFLICT(target_url) DO UPDATE SET
          area = excluded.area,
          only_changed = excluded.only_changed,
+         only_new = excluded.only_new,
          status = 'active',
          last_delivered_change_id = CASE
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.last_delivered_change_id
            ELSE excluded.last_delivered_change_id
          END,
@@ -92,6 +99,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.pending_change_id
            ELSE NULL
          END,
@@ -99,6 +107,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.delivery_attempt_count
            ELSE 0
          END,
@@ -106,6 +115,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.delivery_next_attempt_at
            ELSE NULL
          END,
@@ -113,6 +123,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.lease_owner
            ELSE NULL
          END,
@@ -120,6 +131,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.lease_expires_at
            ELSE NULL
          END,
@@ -127,6 +139,7 @@ export async function createSnapshotZapierSubscription(
            WHEN zapier_snapshot_subscriptions.status = 'active'
              AND zapier_snapshot_subscriptions.area = excluded.area
              AND zapier_snapshot_subscriptions.only_changed = excluded.only_changed
+             AND zapier_snapshot_subscriptions.only_new = excluded.only_new
              THEN zapier_snapshot_subscriptions.last_error_code
            ELSE NULL
          END,
@@ -138,6 +151,7 @@ export async function createSnapshotZapierSubscription(
       input.targetUrl,
       input.area,
       input.onlyChanged ? 1 : 0,
+      input.onlyNew === true ? 1 : 0,
       input.area,
       timestamp,
       timestamp
@@ -209,6 +223,10 @@ export async function claimNextSnapshotZapierDelivery(
                    zapier_snapshot_subscriptions.only_changed = 0
                    OR changes.change_kind = 'updated'
                  )
+                 AND (
+                   zapier_snapshot_subscriptions.only_new = 0
+                   OR changes.change_kind = 'created'
+                 )
              ),
              delivery_attempt_count = 0,
              delivery_next_attempt_at = ?,
@@ -232,6 +250,10 @@ export async function claimNextSnapshotZapierDelivery(
                    subscriptions.only_changed = 0
                    OR changes.change_kind = 'updated'
                  )
+                 AND (
+                   subscriptions.only_new = 0
+                   OR changes.change_kind = 'created'
+                 )
              )
            ORDER BY (
                       SELECT MIN(changes.change_id)
@@ -244,6 +266,10 @@ export async function claimNextSnapshotZapierDelivery(
                         AND (
                           subscriptions.only_changed = 0
                           OR changes.change_kind = 'updated'
+                        )
+                        AND (
+                          subscriptions.only_new = 0
+                          OR changes.change_kind = 'created'
                         )
                     ),
                     subscriptions.updated_at,

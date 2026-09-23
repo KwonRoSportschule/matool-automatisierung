@@ -43,13 +43,15 @@ function serviceRequest(path: string, init: RequestInit = {}): Request {
 async function subscribe(
   area: string,
   targetUrl: string,
-  onlyChanged = false
+  onlyChanged = false,
+  onlyNew = false
 ): Promise<string> {
   const response = await dispatch(
     serviceRequest("/api/zapier/v1/snapshot-subscriptions", {
       body: JSON.stringify({
         area,
         only_changed: onlyChanged,
+        only_new: onlyNew,
         target_url: targetUrl
       }),
       headers: { "Content-Type": "application/json" },
@@ -177,6 +179,118 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     );
     expect(second.processed).toBe(0);
     expect(requests).toHaveLength(1);
+  });
+
+  it("stellt bei only_new nur den ersten Datensatz eines Mitglieds zu", async () => {
+    const targetUrl = zapierTargetUrl();
+    const subscriptionId = await subscribe(
+      "schueler_details",
+      targetUrl,
+      false,
+      true
+    );
+    const sourceId = crypto.randomUUID().replaceAll("-", "");
+    await persistChange("schueler_details", sourceId, "neu");
+    await persistChange("schueler_details", sourceId, "geändert");
+
+    const requests: Request[] = [];
+    const fetchImplementation = vi.fn(async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      requests.push(new Request(input, init));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    const result = await processSnapshotZapierDeliveries(
+      deliveryEnv(),
+      fetchImplementation
+    );
+
+    expect(result).toMatchObject({ completed: 1, processed: 1 });
+    expect(requests).toHaveLength(1);
+    await expect(requests[0]?.json()).resolves.toMatchObject({
+      change_kind: "created",
+      is_new: true,
+      source_id: sourceId
+    });
+
+    await dispatch(
+      serviceRequest(
+        `/api/zapier/v1/snapshot-subscriptions/${subscriptionId}`,
+        { method: "DELETE" }
+      )
+    );
+  });
+
+  it("liefert Mitglieder-Details ohne Bank- und Zahlungsdaten an Zapier", async () => {
+    const targetUrl = zapierTargetUrl();
+    await subscribe("schueler_details", targetUrl);
+    const timestamp = new Date().toISOString();
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: [
+        "bic",
+        "beitrag",
+        "email",
+        "iban",
+        "konto",
+        "name",
+        "schueler_nr",
+        "vertragid",
+        "vertragsende",
+        "vname",
+        "zahlart"
+      ],
+      area: "schueler_details",
+      finishedAt: timestamp,
+      observedAt: timestamp,
+      records: [
+        {
+          sourceId: "987654",
+          payload: {
+            bic: "SYNTHETICBIC",
+            beitrag: "79.00",
+            email: "mitglied@example.invalid",
+            iban: "DE00123456780000000000",
+            konto: "12345678",
+            name: "Mitglied",
+            schueler_nr: "987654",
+            vertragid: "synthetic-contract-id",
+            vertragsende: "2027-08-01",
+            vname: "Beispiel",
+            zahlart: "SEPA"
+          }
+        }
+      ],
+      runId: `snapshot_schueler_details_${crypto.randomUUID()}`,
+      startedAt: timestamp
+    });
+
+    const requests: Request[] = [];
+    const fetchImplementation = vi.fn(async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      requests.push(new Request(input, init));
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+
+    await processSnapshotZapierDeliveries(deliveryEnv(), fetchImplementation);
+
+    expect(requests).toHaveLength(1);
+    const delivered = (await requests[0]?.json()) as Record<string, unknown>;
+    expect(delivered).toMatchObject({
+      area: "schueler_details",
+      email: "mitglied@example.invalid",
+      name: "Mitglied",
+      schueler_nr: "987654",
+      vertragid: "synthetic-contract-id",
+      vertragsende: "2027-08-01",
+      vname: "Beispiel"
+    });
+    for (const field of ["iban", "bic", "konto", "beitrag", "zahlart"]) {
+      expect(delivered).not.toHaveProperty(field);
+    }
   });
 
   it.each([

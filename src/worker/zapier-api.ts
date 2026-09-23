@@ -5,6 +5,7 @@ import {
   type ProspectContactEvent
 } from "../core/first-trial";
 import { jsonResponse, methodNotAllowed } from "../core/http";
+import { projectSnapshotPayloadForZapier } from "../core/zapier-payload";
 import { validateZapierTargetUrl } from "../sinks/zapier";
 import {
   claimEventForZapier,
@@ -211,6 +212,10 @@ async function listSnapshotsForZapier(
     ? Math.min(300, Math.max(1, rawLimit))
     : 100;
   const onlyChanged = url.searchParams.get("only_changed") === "true";
+  const onlyNew = url.searchParams.get("only_new") === "true";
+  if (onlyChanged && onlyNew) {
+    invalidPayload();
+  }
 
   const rawCursor = url.searchParams.get("cursor");
   let cursor: number | null = null;
@@ -232,6 +237,9 @@ async function listSnapshotsForZapier(
   const bindings: Array<number | string> = [area];
   if (onlyChanged) {
     conditions.push("changes.change_kind = 'updated'");
+  }
+  if (onlyNew) {
+    conditions.push("changes.change_kind = 'created'");
   }
   if (cursor !== null) {
     conditions.push("changes.change_id < ?");
@@ -285,7 +293,7 @@ async function listSnapshotsForZapier(
     return {
       // MATOOL payloads may use generic names such as `id`. Put the payload
       // first so the stable Zapier integration contract below always wins.
-      ...payload,
+      ...projectSnapshotPayloadForZapier(area, payload),
       id: row.zapier_event_id,
       area,
       change_id: row.change_id,

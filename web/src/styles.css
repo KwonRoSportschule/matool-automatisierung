@@ -367,6 +367,9 @@ tbody tr:hover { background: #fafcf9; }
 .discovery-result { max-height: 20rem; margin-top: .7rem; padding: .7rem; overflow: auto; border-radius: .45rem; background: rgb(0 0 0 / 12%); color: rgb(255 255 255 / 76%); font-size: .72rem; line-height: 1.55; }
 .discovery-result[hidden] { display: none; }
 .footer { display: flex; width: min(1480px, 100%); margin: 0 auto; padding: 0 2rem 1.5rem; justify-content: space-between; gap: 1rem; color: var(--muted); font-size: .72rem; }
+.build-info { max-width: 36rem; }
+.build-info summary { cursor: pointer; }
+.build-info p { overflow-wrap: anywhere; line-height: 1.6; }
 
 .record-dialog { width: min(920px, calc(100% - 2rem)); max-height: calc(100vh - 2rem); padding: 0; overflow: hidden; border: 0; border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-lg); }
 .record-dialog::backdrop { background: rgb(9 25 17 / 58%); backdrop-filter: blur(3px); }

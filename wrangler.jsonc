@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-29",
   "workers_dev": false,
   "preview_urls": false,
+  "version_metadata": {
+    "binding": "VERSION_METADATA"
+  },
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
@@ -46,6 +49,9 @@
       "name": "matool-middleware-staging",
       "workers_dev": true,
       "preview_urls": false,
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "vars": {
         "APP_ENV": "staging",
         "ACCESS_AUD": "da7897b053c6af64c05371801a7f7081bf394937a0c657c1d5fd88260bba46ca",
@@ -89,6 +95,9 @@
       "name": "matool-middleware-production",
       "workers_dev": false,
       "preview_urls": false,
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "limits": {
         "cpu_ms": 300000,
         "subrequests": 10000

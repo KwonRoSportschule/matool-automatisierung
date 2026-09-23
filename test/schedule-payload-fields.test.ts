@@ -11,14 +11,17 @@ import {
 } from "../src/worker/schedule";
 
 describe("Snapshot-Feldallowlist", () => {
-  it("ruft Interessenten und ihre Details vor dem anfragestarken Klassenbereich ab", () => {
+  it("ruft Interessenten und ihre Details vor den Mitglieder-Lebenszyklusbereichen ab", () => {
     // Fachlich benoetigt werden ausschliesslich Interessenten und
     // Mitglieder; jeweils Liste vor Detailabruf.
     expect(MATOOL_SNAPSHOT_AREAS).toEqual([
       "interessenten",
       "interessenten_details",
       "schueler",
-      "schueler_details"
+      "schueler_details",
+      "schueler_ex",
+      "checkin",
+      "graduierungen"
     ]);
     expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
     expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);
@@ -35,14 +38,7 @@ describe("Snapshot-Feldallowlist", () => {
     ]);
 
     expect(first).toEqual(second);
-    expect(first).toEqual([
-      "columnCount",
-      "tableIndex",
-      "email",
-      "handy",
-      "status",
-      "vorname"
-    ]);
+    expect(first).toEqual(["email", "handy", "status", "vorname"]);
     expect(first).not.toContain("c63");
   });
 
@@ -123,7 +119,6 @@ describe("Snapshot-Feldallowlist", () => {
 
     expect(fields).toHaveLength(80);
     expect(new Set(fields).size).toBe(fields.length);
-    expect(fields.slice(0, 2)).toEqual(["columnCount", "tableIndex"]);
-    expect(fields).toEqual([...fields.slice(0, 2), ...fields.slice(2).sort()]);
+    expect(fields).toEqual([...fields].sort());
   });
 });

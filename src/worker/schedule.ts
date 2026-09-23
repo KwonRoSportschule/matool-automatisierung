@@ -42,7 +42,10 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "interessenten",
   "interessenten_details",
   "schueler",
-  "schueler_details"
+  "schueler_details",
+  "schueler_ex",
+  "checkin",
+  "graduierungen"
 ] as const;
 
 const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
@@ -59,7 +62,8 @@ const EXACT_CURRENT_SET_AREAS = new Set([
   "klassen",
   "lager",
   "newsletter",
-  "schueler"
+  "schueler",
+  "schueler_ex"
 ]);
 
 /**
@@ -127,14 +131,29 @@ export interface CollectSnapshotsResult {
 // pauschale c00-c63-Liste verbrauchte den Grossteil dieses Budgets bereits,
 // bevor die tatsaechlich von MATOOL gelieferten Spalten hinzukamen.
 const MAX_SNAPSHOT_PAYLOAD_FIELDS = 80;
-const SNAPSHOT_TECHNICAL_PAYLOAD_FIELDS = ["columnCount", "tableIndex"];
 const SAFE_SNAPSHOT_PAYLOAD_FIELD = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
+// Zum Wochenbeginn darf die bestaetigte Check-in-Ansicht noch leer sein.
+// Ihr festes Schema gilt auch dann; aus null Records laesst sich keine
+// Feldallowlist ableiten. Die strenge Store-Validierung bleibt bestehen.
+const MATOOL_CHECKIN_PAYLOAD_FIELDS = [
+  "checkin_datum",
+  "checkin_uhrzeit",
+  "checkin_zeitpunkt",
+  "klasse_id",
+  "mitglied_id"
+] as const;
+
 /**
- * Erlaubte Feldnamen eines Laufs. Neben zwei technischen Basisfeldern werden
- * ausschliesslich die im aktuellen MATOOL-Abruf vorkommenden Feldnamen
- * zugelassen. Der Extraktor prueft deren Form bereits; hier wird die Auswahl
- * nochmals validiert und auf das Store-Limit begrenzt.
+ * Erlaubte Feldnamen eines Laufs: ausschliesslich die im aktuellen
+ * MATOOL-Abruf vorkommenden Feldnamen. Der Extraktor prueft deren Form
+ * bereits; hier wird die Auswahl nochmals validiert und auf das Store-Limit
+ * begrenzt.
+ *
+ * Bis zum 10.09.2026 standen hier zusaetzlich die Darstellungsfelder
+ * "columnCount" und "tableIndex". Sie beschreiben nur, an welcher Stelle der
+ * gerenderten Seite eine Zeile stand, und liessen deshalb jeden Listenlauf
+ * den kompletten Bestand als geaendert melden.
  */
 export function snapshotPayloadFields(
   records: readonly { payload: Readonly<Record<string, unknown>> }[]
@@ -148,14 +167,13 @@ export function snapshotPayloadFields(
     }
   }
 
-  // Technische Basis zuerst, danach alle real beobachteten Felder in stabiler
-  // Reihenfolge. So ist die Auswahl unabhaengig von Datensatz- und
-  // Objekt-Reihenfolge und bleibt garantiert innerhalb des Store-Limits.
-  const orderedFields = [
-    ...SNAPSHOT_TECHNICAL_PAYLOAD_FIELDS,
-    ...[...observedFields].sort((left, right) => left.localeCompare(right))
-  ];
-  return [...new Set(orderedFields)].slice(0, MAX_SNAPSHOT_PAYLOAD_FIELDS);
+  // Alle real beobachteten Felder in stabiler Reihenfolge. So ist die Auswahl
+  // unabhaengig von Datensatz- und Objekt-Reihenfolge und bleibt garantiert
+  // innerhalb des Store-Limits.
+  const orderedFields = [...observedFields].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  return orderedFields.slice(0, MAX_SNAPSHOT_PAYLOAD_FIELDS);
 }
 
 /**
@@ -438,7 +456,9 @@ export async function collectMatoolSnapshots(
               allowedPayloadFields:
                 area === "klassen"
                   ? MATOOL_KLASSEN_PAYLOAD_FIELDS
-                  : snapshotPayloadFields(records),
+                  : area === "checkin"
+                    ? MATOOL_CHECKIN_PAYLOAD_FIELDS
+                    : snapshotPayloadFields(records),
               area,
               finishedAt,
               observedAt: finishedAt,
@@ -624,6 +644,18 @@ async function readDirectArea(
   if (area === "schueler_details") {
     return (
       await client.extractSchuelerDetails(
+        credentials,
+        await selectSchuelerDetailSourceIds(db, detailLimit),
+        onProgress
+      )
+    ).records;
+  }
+  if (area === "checkin") {
+    return (await client.extractCheckins(credentials)).records;
+  }
+  if (area === "graduierungen") {
+    return (
+      await client.extractGraduierungen(
         credentials,
         await selectSchuelerDetailSourceIds(db, detailLimit),
         onProgress

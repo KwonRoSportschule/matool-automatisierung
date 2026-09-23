@@ -9,7 +9,8 @@ const EXACT_CURRENT_SET_AREAS = new Set([
   "klassen",
   "lager",
   "newsletter",
-  "schueler"
+  "schueler",
+  "schueler_ex"
 ]);
 const MAX_PAYLOAD_FIELDS = 80;
 // Schuelerdetails enthalten 67 Felder sowie vollstaendige Listenwerte. Das
@@ -19,6 +20,22 @@ const MAX_PAYLOAD_FIELDS = 80;
 const MAX_PAYLOAD_BYTES = 512_000;
 const MAX_PAYLOAD_STRING_LENGTH = 256_000;
 const MAX_SNAPSHOT_BATCH_BYTES = 1_800_000;
+
+/**
+ * Marke fuer einen Datensatz, dessen gespeicherter Inhaltshash bewusst
+ * verworfen wurde, weil sich die Zusammensetzung des Payloads geaendert hat
+ * -- etwa beim Entfernen der Darstellungsfelder am 10.09.2026.
+ *
+ * Fuer einen so markierten Datensatz entscheidet der naechste Lauf nicht am
+ * Hash, sondern am gespeicherten Payload selbst, ob sich etwas geaendert hat.
+ * Der neu berechnete Hash wird danach uebernommen. So meldet die Umstellung
+ * weder den gesamten Bestand als geaendert -- genau die Falschmeldung, die
+ * sie beseitigen soll -- noch verschluckt sie eine echte Aenderung, die
+ * zwischen Migration und naechstem Lauf in MATOOL passiert.
+ *
+ * Ein leerer Wert kann kein SHA-256-Hex sein und ist deshalb eindeutig.
+ */
+const REBASELINE_CONTENT_HASH = "";
 
 export type MatoolSnapshotValue = boolean | number | string | null;
 
@@ -388,7 +405,11 @@ function buildSnapshotStatement(
        ON CONFLICT (area, source_id) DO UPDATE SET
          last_seen_at = excluded.last_seen_at,
          last_changed_at = CASE
-           WHEN matool_snapshots.content_hash <> excluded.content_hash
+           WHEN CASE
+                  WHEN matool_snapshots.content_hash = ?
+                    THEN matool_snapshots.payload_json <> excluded.payload_json
+                  ELSE matool_snapshots.content_hash <> excluded.content_hash
+                END
              THEN excluded.last_changed_at
            ELSE matool_snapshots.last_changed_at
          END,
@@ -402,7 +423,8 @@ function buildSnapshotStatement(
       input.observedAt,
       input.runId,
       input.observedAt,
-      JSON.stringify(chunk)
+      JSON.stringify(chunk),
+      REBASELINE_CONTENT_HASH
     );
 }
 
@@ -436,7 +458,13 @@ function buildSnapshotChangeStatement(
        WHERE json_type(incoming.value) = 'object'
          AND (
            existing.source_id IS NULL
-           OR existing.content_hash <> json_extract(incoming.value, '$.contentHash')
+           OR CASE
+                WHEN existing.content_hash = ?
+                  THEN existing.payload_json <>
+                    json_extract(incoming.value, '$.payloadJson')
+                ELSE existing.content_hash <>
+                  json_extract(incoming.value, '$.contentHash')
+              END
          )
        ON CONFLICT (area, source_id, run_id) DO NOTHING`
     )
@@ -445,7 +473,8 @@ function buildSnapshotChangeStatement(
       input.runId,
       input.observedAt,
       JSON.stringify(chunk),
-      input.area
+      input.area,
+      REBASELINE_CONTENT_HASH
     );
 }
 

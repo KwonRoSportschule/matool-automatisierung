@@ -2,6 +2,7 @@ export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   INTERESSENTEN_SYNC_WORKFLOW: Workflow<InteressentenSyncWorkflowParams>;
+  VERSION_METADATA?: WorkerVersionMetadata;
 
   APP_ENV: "local" | "test" | "staging" | "production";
   ACCESS_AUD: string;

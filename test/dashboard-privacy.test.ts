@@ -30,9 +30,7 @@ describe("Dashboard-Datenschutz", () => {
       c01: "sehr-langer-personenbezogener-wert",
       c09: 4711,
       c63: true,
-      columnCount: 64,
-      status: "Neu",
-      tableIndex: 2
+      status: "Neu"
     };
     const columns = dashboardColumns("interessenten", [payload]);
     const definitions = new Map(columns.map((column) => [column.key, column]));
@@ -44,8 +42,6 @@ describe("Dashboard-Datenschutz", () => {
     }
     expect(definitions.get("status")?.masked).toBe(false);
     expect(values.status).toBe("Neu");
-    expect(values.columnCount).toBe("64");
-    expect(values.tableIndex).toBe("2");
   });
 
   it.each([

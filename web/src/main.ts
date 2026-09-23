@@ -1,4 +1,5 @@
 import { ActivityView } from "./activity";
+import { buildInfoText } from "./build-info";
 import {
   getOverview,
   isAbortError,
@@ -39,6 +40,7 @@ import type {
 
 const elements = {
   environment: byId("environment"),
+  buildInfo: byId("build-info"),
   refresh: byId<HTMLButtonElement>("refresh"),
   privacyShort: byId("privacy-short"),
   privacyNotice: byId("privacy-notice"),
@@ -153,6 +155,7 @@ async function loadOverview(): Promise<boolean> {
 }
 
 function renderOverview(overview: DashboardOverview): void {
+  elements.buildInfo.textContent = buildInfoText(overview.build);
   elements.environment.textContent =
     `${formatEnvironment(overview.environment)} · Nur Lesen`;
   elements.privacyShort.textContent = overview.privacy.masked

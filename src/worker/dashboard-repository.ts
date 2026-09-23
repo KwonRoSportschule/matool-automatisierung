@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import { FIRST_TRIAL_COLLECTOR } from "../core/first-trial";
+import { getBuildInfo } from "./build-info";
 import {
   PROTECTED_DASHBOARD_VALUE,
   areaLabel,
@@ -344,6 +345,7 @@ export async function getDashboardOverview(
       schemaVersion: 2,
       generatedAt,
       environment: env.APP_ENV,
+      build: getBuildInfo(env),
       privacy: dashboardPrivacyNotice(env),
       range: { days: rangeDays, from, to: generatedAt },
       overall,
@@ -722,7 +724,7 @@ function buildChartSeries(
     const point = byDay.get(day) ?? { changed: 0, failed: 0, label: day, new: 0, successful: 0 };
     if (row.status === "succeeded") {
       point.successful += row.count;
-    } else {
+    } else if (row.status === "failed" || row.status === "partial_failed") {
       point.failed += row.count;
     }
     byDay.set(day, point);
@@ -759,6 +761,8 @@ function buildFunctionCatalogue(
       env.MATOOL_REAL_RUNS_ENABLED === "confirmed-read-only"
   );
   const outbound = env.OUTBOUND_DELIVERY_ENABLED === "true";
+  const scheduledAreas: readonly string[] = MATOOL_SNAPSHOT_AREAS;
+  const classExtractionEnabled = scheduledAreas.includes("klassen");
   return [
     {
       key: "scheduled_matool_sync",
@@ -783,11 +787,15 @@ function buildFunctionCatalogue(
     {
       key: "class_extraction",
       name: "Vollstaendiger Klassenabruf",
-      description: "Liest Klassen ueber den bestaetigten Detail-Endpunkt ohne Schuelerlisten.",
+      description: classExtractionEnabled
+        ? "Liest Klassen ueber den bestaetigten Detail-Endpunkt ohne Schuelerlisten."
+        : "Der Klassenabruf ist fuer die aktuelle Datensynchronisation deaktiviert.",
       areas: ["klassen"],
-      state: matoolReady ? "enabled" : "unavailable",
+      state: classExtractionEnabled
+        ? matoolReady ? "enabled" : "unavailable"
+        : "disabled",
       execution: "automatic_and_manual",
-      lastRunAt: lastSync?.started_at ?? null,
+      lastRunAt: classExtractionEnabled ? lastSync?.started_at ?? null : null,
       dependencies: ["MATOOL Read-only"]
     },
     {

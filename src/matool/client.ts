@@ -6,7 +6,9 @@ import {
 } from "./response-shape";
 import { canonicalJson, sha256Hex } from "../core/crypto";
 import { parseArtikelDetailResponse } from "./artikel-detail";
+import { parseCheckinPage } from "./checkin";
 import { RunCookieJar } from "./cookie-jar";
+import { parseGraduierungResponse } from "./graduierung";
 import {
   MATOOL_KLASSEN_DETAIL_PAYLOAD_FIELDS,
   parseKlassenDetailResponse
@@ -32,7 +34,8 @@ const PAGINATED_SAFE_AREAS = new Set([
   "artikel",
   "interessenten",
   "lager",
-  "schueler"
+  "schueler",
+  "schueler_ex"
 ]);
 const EXACT_LIST_AREAS = new Set([
   "archiv",
@@ -68,6 +71,10 @@ const SAFE_MATOOL_AREAS = [
   "newsletter",
   "pruefungen",
   "schueler",
+  // Die gefilterte Mitgliederansicht liefert ausschliesslich Personen, deren
+  // Kuendigung abgeschlossen ist. Sie bleibt ein eigener Snapshot-Bereich,
+  // damit ein Wechsel zum Ex-Mitglied als neues Zapier-Ereignis erkennbar ist.
+  "schueler_ex",
   "telemetrie"
 ] as const;
 const SAFE_MATOOL_AREA_SET = new Set<string>(SAFE_MATOOL_AREAS);
@@ -131,7 +138,9 @@ type MatoolPaginatedSafeArea =
   | "artikel"
   | "interessenten"
   | "lager"
-  | "schueler";
+  | "schueler"
+  | "schueler_ex";
+type MatoolSchuelerSafeArea = "schueler" | "schueler_ex";
 type MatoolExactListArea = "archiv" | "artikel" | "lager" | "newsletter";
 
 export interface MatoolSafeAreaRecord {
@@ -143,7 +152,8 @@ export interface MatoolSafeAreaResult {
   area:
     | MatoolSafeArea
     | "interessenten_details"
-    | MatoolExactDetailArea;
+    | MatoolExactDetailArea
+    | "graduierungen";
   bodyBytes: number;
   records: MatoolSafeAreaRecord[];
   rowCount: number;
@@ -415,60 +425,186 @@ export class MatoolClient {
     return this.fetchSingleSafeAreaPage(allowedArea);
   }
 
+  /**
+   * Liest die aktuelle Check-in-Woche. Die Auswertung bleibt absichtlich auf
+   * technische Kennungen und den Zeitpunkt begrenzt; Namen und Bilder aus
+   * der MaTool-Ansicht werden nicht gespeichert.
+   */
+  async extractCheckins(
+    credentials: MatoolCredentials
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    await this.login(credentials);
+
+    const response = await this.request("/index.php?show=checkin", {
+      headers: { Accept: "text/html,application/xhtml+xml" },
+      method: "GET"
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw checkinFetchError();
+    }
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (!contentType.toLowerCase().includes("text/html")) {
+      await response.body?.cancel();
+      throw checkinFetchError();
+    }
+    const body = await readBoundedBody(response);
+    const records = parseCheckinPage(body);
+    return {
+      area: "checkin",
+      bodyBytes: body.byteLength,
+      records,
+      rowCount: records.length
+    };
+  }
+
+  /**
+   * Liest die bei MaTool hinterlegte Prüfungs-/Graduierungshistorie für eine
+   * begrenzte Mitgliedergruppe. Der Endpunkt ist rein lesend und benötigt
+   * keinen geöffneten Bearbeitungsdialog.
+   */
+  async extractGraduierungen(
+    credentials: MatoolCredentials,
+    sourceIds: readonly string[],
+    onProgress?: () => Promise<void>
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    const selectedIds = selectExactDetailIds(sourceIds, "schueler");
+    await this.login(credentials);
+
+    const records: MatoolSafeAreaRecord[] = [];
+    let bodyBytes = 0;
+    for (const [index, sourceId] of selectedIds.entries()) {
+      if (index > 0 && index % EXACT_DETAIL_PROGRESS_STEP === 0) {
+        await onProgress?.();
+      }
+      const response = await this.requestReadOnlyWithStatusRetry(
+        "/json/graduierung_daten.php",
+        {
+          body: new URLSearchParams({ schueler_nr: sourceId }),
+          headers: {
+            Accept: "application/json, text/javascript, */*; q=0.01",
+            "Content-Type":
+              "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          method: "POST"
+        }
+      );
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw graduierungFetchError();
+      }
+      const body = await readBoundedBody(response);
+      bodyBytes += body.byteLength;
+      records.push(...parseGraduierungResponse(body, sourceId));
+      if (records.length > MAX_EXACT_DETAIL_RECORDS) {
+        throw graduierungFetchError();
+      }
+    }
+    return {
+      area: "graduierungen",
+      bodyBytes,
+      records,
+      rowCount: records.length
+    };
+  }
+
   private async extractPaginatedSafeArea(
     area: MatoolPaginatedSafeArea
   ): Promise<MatoolSafeAreaResult> {
-    // MATOOL merkt sich die zuletzt geoeffnete Seite in der Session.
-    // Deshalb muss auch die erste Seite immer explizit offset=0 anfordern.
-    const firstPage = await this.fetchSafeAreaPage(area, 0);
-    if (firstPage.records.length === 0) {
-      throw paginatedSafeAreaSchemaError();
-    }
-    const pagination = normalizeSafeAreaPagination(
-      firstPage.pagination,
-      area,
-      0
-    );
-    validateSelectedPaginationPage(pagination, 0);
-
-    const records = new Map<string, MatoolSafeAreaRecord>();
-    let bodyBytes = firstPage.bodyBytes;
-    mergePaginatedSafeAreaRecords(records, firstPage.records);
-
-    for (const offset of pagination.offsets) {
-      if (offset === 0) {
-        continue;
-      }
-      const page = await this.fetchSafeAreaPage(area, offset);
-      if (page.records.length === 0) {
+    let observedPage: SafeAreaPageResult | undefined;
+    let requestedOffset = 0;
+    let stage: NonNullable<MatoolResponseShape["pagination"]>["stage"] = "rows";
+    try {
+      // MATOOL merkt sich die zuletzt geoeffnete Seite in der Session.
+      // Deshalb muss auch die erste Seite immer explizit offset=0 anfordern.
+      const firstPage = await this.fetchSafeAreaPage(area, 0);
+      observedPage = firstPage;
+      stage = "nonempty";
+      if (firstPage.records.length === 0) {
         throw paginatedSafeAreaSchemaError();
       }
-      bodyBytes += page.bodyBytes;
-      const pagePagination = normalizeSafeAreaPagination(
-        page.pagination,
+      stage = "pagination";
+      const pagination = normalizeSafeAreaPagination(
+        firstPage.pagination,
         area,
-        offset
+        0
       );
-      if (!sameNumbers(pagePagination.offsets, pagination.offsets)) {
+      stage = "selected_page";
+      validateSelectedPaginationPage(pagination, 0);
+
+      const records = new Map<string, MatoolSafeAreaRecord>();
+      let bodyBytes = firstPage.bodyBytes;
+      stage = "merge";
+      mergePaginatedSafeAreaRecords(records, firstPage.records);
+
+      for (const offset of pagination.offsets) {
+        if (offset === 0) {
+          continue;
+        }
+        requestedOffset = offset;
+        observedPage = undefined;
+        stage = "rows";
+        const page = await this.fetchSafeAreaPage(area, offset);
+        observedPage = page;
+        stage = "nonempty";
+        if (page.records.length === 0) {
+          throw paginatedSafeAreaSchemaError();
+        }
+        bodyBytes += page.bodyBytes;
+        stage = "pagination";
+        const pagePagination = normalizeSafeAreaPagination(
+          page.pagination,
+          area,
+          offset
+        );
+        stage = "page_set";
+        if (!sameNumbers(pagePagination.offsets, pagination.offsets)) {
+          throw paginatedSafeAreaSchemaError();
+        }
+        stage = "selected_page";
+        validateSelectedPaginationPage(pagePagination, offset);
+        stage = "merge";
+        mergePaginatedSafeAreaRecords(records, page.records);
+        if (records.size > MAX_SAFE_AREA_RECORDS) {
+          throw safeAreaLimitError();
+        }
+      }
+
+      if (records.size === 0) {
         throw paginatedSafeAreaSchemaError();
       }
-      validateSelectedPaginationPage(pagePagination, offset);
-      mergePaginatedSafeAreaRecords(records, page.records);
-      if (records.size > MAX_SAFE_AREA_RECORDS) {
-        throw safeAreaLimitError();
+
+      return {
+        area,
+        bodyBytes,
+        records: [...records.values()],
+        rowCount: records.size
+      };
+    } catch (error) {
+      if (error instanceof MatoolShapeMismatchError) {
+        throw new MatoolShapeMismatchError(error, {
+          ...error.shape,
+          ...(error.shape.pagination ? {
+            pagination: { ...error.shape.pagination, requestedOffset, stage }
+          } : {})
+        });
       }
+      if (error instanceof AppError && error.code.endsWith("_schema_mismatch") && observedPage) {
+        throw new MatoolShapeMismatchError(error, {
+          ...observedPage.shape,
+          pagination: {
+            ...describeSafeAreaPagination(observedPage.pagination, area),
+            requestedOffset,
+            parsedRecordCount: observedPage.records.length,
+            stage
+          }
+        });
+      }
+      throw error;
     }
-
-    if (records.size === 0) {
-      throw paginatedSafeAreaSchemaError();
-    }
-
-    return {
-      area,
-      bodyBytes,
-      records: [...records.values()],
-      rowCount: records.size
-    };
   }
 
   private async fetchSingleSafeAreaPage(
@@ -496,9 +632,12 @@ export class MatoolClient {
     area: MatoolSafeArea,
     offset?: number
   ): Promise<SafeAreaPageResult> {
-    const query = new URLSearchParams({ show: area });
+    const query = new URLSearchParams({ show: matoolSafeAreaView(area) });
+    if (area === "schueler_ex") {
+      query.set("ex_schueler_auswahl", "show");
+    }
     if (offset !== undefined) {
-      if (area === "schueler") {
+      if (isSchuelerSafeArea(area)) {
         query.set("todo", "");
       }
       query.set("offset", String(offset));
@@ -1381,6 +1520,17 @@ interface SafeAreaRowCapture {
   schuelerActionCandidateCount: number;
   schuelerActionInvalid: boolean;
   stableListIds: string[];
+  /**
+   * Laufende Nummer der HTML-Tabelle, in der die Zeile steht -- also die
+   * Position der Zeile auf der abgerufenen Listenseite, kein Fachwert.
+   *
+   * Sie dient ausschliesslich der Strukturpruefung und der Formaufnahme und
+   * darf niemals in einen Snapshot-Payload gelangen: MATOOL sortiert die
+   * Interessentenliste absteigend nach Nummer, weshalb schon ein einziger
+   * neuer Interessent die Position -- und damit den Inhaltshash -- jedes
+   * aelteren Datensatzes verschiebt. Genau das hat am 09./10.09.2026 taeglich
+   * rund 3.500 vorgetaeuschte Aenderungen erzeugt.
+   */
   tableIndex: number;
   tdCount: number;
   thCount: number;
@@ -1399,6 +1549,7 @@ interface SafeAreaPaginationCapture {
 }
 
 interface ParsedSafeAreaPage {
+  shape: MatoolResponseShape;
   pagination: SafeAreaPaginationCapture;
   records: MatoolSafeAreaRecord[];
 }
@@ -1469,12 +1620,11 @@ function collectSafeAreaHeaderNames(
 function toSafeAreaFieldNames(
   labels: readonly string[]
 ): string[] | undefined {
-  const reserved = new Set(["columnCount", "tableIndex"]);
   const names: string[] = [];
   const used = new Set<string>();
   for (const label of labels) {
     const name = toSafeAreaFieldName(label);
-    if (!name || reserved.has(name) || used.has(name)) {
+    if (!name || used.has(name)) {
       return undefined;
     }
     used.add(name);
@@ -1646,6 +1796,22 @@ function exactDetailFetchError(area: MatoolExactDetailArea): AppError {
   );
 }
 
+function checkinFetchError(): AppError {
+  return new AppError(
+    "matool_checkin_fetch_failed",
+    502,
+    "Die MATOOL-Check-in-Daten konnten nicht gelesen werden."
+  );
+}
+
+function graduierungFetchError(): AppError {
+  return new AppError(
+    "matool_graduierung_fetch_failed",
+    502,
+    "Die MATOOL-Graduierungsdaten konnten nicht gelesen werden."
+  );
+}
+
 /**
  * Prueft MATOOLs JSON-Detailantwort und kopiert ausschliesslich Felder der
  * bestaetigten Allowlist. Die ID muss mit der angefragten Listen-ID
@@ -1814,7 +1980,7 @@ async function extractSafeAreaPage(
     if (
       parent &&
       capture.text.trim().length > 0 &&
-      area !== "schueler"
+          !isSchuelerSafeArea(area)
     ) {
       const addition = `${parent.text.trim().length > 0 ? " " : ""}${capture.text}`;
       parent.text = exactListArea
@@ -2032,7 +2198,7 @@ async function extractSafeAreaPage(
         }
         const stableListId = extractStableListId(onclick, area);
         if (
-          area === "schueler" &&
+          isSchuelerSafeArea(area) &&
           /\bformular_fuellen\s*\(/iu.test(onclick)
         ) {
           activeRow.schuelerActionCandidateCount += 1;
@@ -2141,7 +2307,17 @@ async function extractSafeAreaPage(
   const transformed = rewriter.transform(
     new Response(body, { headers: { "Content-Type": contentType } })
   );
-  await drainBody(transformed.body);
+  try {
+    await drainBody(transformed.body);
+  } catch (error) {
+    if (error instanceof AppError && error.code.endsWith("_schema_mismatch")) {
+      throw new MatoolShapeMismatchError(error, {
+        ...describeSafeAreaShape(area, rows, collectSafeAreaHeaderNames(rows)),
+        pagination: describeSafeAreaPagination(pagination, area)
+      });
+    }
+    throw error;
+  }
 
   if (mailFieldDetected && passwordFieldDetected) {
     throw new AppError(
@@ -2191,7 +2367,7 @@ async function extractSafeAreaPage(
       prepared.push(
         ...prepareArchivSafeAreaRows(rows, headerNamesByColumnCount)
       );
-    } else if (area === "schueler") {
+    } else if (isSchuelerSafeArea(area)) {
       prepared.push(
         ...prepareSchuelerSafeAreaRows(rows, headerNamesByColumnCount)
       );
@@ -2207,14 +2383,17 @@ async function extractSafeAreaPage(
     ) {
       throw new MatoolShapeMismatchError(
         error,
-        describeSafeAreaShape(area, rows, headerNamesByColumnCount)
+        {
+          ...describeSafeAreaShape(area, rows, headerNamesByColumnCount),
+          pagination: describeSafeAreaPagination(pagination, area)
+        }
       );
     }
     throw error;
   }
   const seen = new Set<string>();
   for (const row of
-    area === "interessenten" || area === "schueler" || exactListArea
+    area === "interessenten" || isSchuelerSafeArea(area) || exactListArea
       ? []
       : rows) {
     // Kopfzeilen sind keine Datensaetze.
@@ -2231,10 +2410,7 @@ async function extractSafeAreaPage(
     ) {
       continue;
     }
-    const payload: Record<string, string | number> = {
-      columnCount: cells.length,
-      tableIndex: row.tableIndex
-    };
+    const payload: Record<string, string | number> = {};
     const headerNames = headerNamesByColumnCount.get(cells.length);
     cells.forEach((cell, index) => {
       const fallback = `c${index.toString().padStart(2, "0")}`;
@@ -2271,12 +2447,12 @@ async function extractSafeAreaPage(
     prepared.map(async ({ explicitId, payload }) => ({
       payload,
       sourceId:
-        area === "archiv" && explicitId
+    area === "archiv" && explicitId
           ? await sha256Hex(explicitId)
           : (explicitId ?? (await sha256Hex(canonicalJson(payload))))
     }))
   );
-  return { pagination, records };
+  return { pagination, records, shape: describeSafeAreaShape(area, rows, headerNamesByColumnCount) };
 }
 
 type ExactPreparedSafeAreaRow = {
@@ -2342,10 +2518,7 @@ function prepareSchuelerSafeAreaRows(
     seenSourceIds.add(sourceId);
 
     const cells = row.cells.map(normalizeSafeAreaCell);
-    const payload: Record<string, string | number> = {
-      columnCount: cells.length,
-      tableIndex: row.tableIndex
-    };
+    const payload: Record<string, string | number> = {};
     cells.forEach((cell, cellIndex) => {
       const field = SCHUELER_SAFE_AREA_FIELDS[cellIndex];
       if (field) {
@@ -2432,7 +2605,6 @@ function prepareArtikelSafeAreaRows(
       seenSourceIds,
       sourceId,
       buildExactSafeAreaPayload(
-        row,
         cells,
         headerNamesByColumnCount
       )
@@ -2522,7 +2694,6 @@ function prepareLagerSafeAreaRows(
       seenSourceIds,
       recordMarker.id,
       buildExactSafeAreaPayload(
-        row,
         cells,
         headerNamesByColumnCount
       )
@@ -2575,7 +2746,6 @@ function prepareNewsletterSafeAreaRows(
       seenSourceIds,
       sourceId,
       buildExactSafeAreaPayload(
-        row,
         cells,
         headerNamesByColumnCount
       )
@@ -2626,7 +2796,6 @@ function prepareArchivSafeAreaRows(
       throw exactListSchemaError();
     }
     const payload = buildExactSafeAreaPayload(
-      row,
       cells,
       headerNamesByColumnCount
     );
@@ -2661,14 +2830,10 @@ function addExactPreparedRecord(
 }
 
 function buildExactSafeAreaPayload(
-  row: SafeAreaRowCapture,
   cells: readonly string[],
   headerNamesByColumnCount: ReadonlyMap<number, string[]>
 ): Record<string, string | number> {
-  const payload: Record<string, string | number> = {
-    columnCount: cells.length,
-    tableIndex: row.tableIndex
-  };
+  const payload: Record<string, string | number> = {};
   const headerNames = headerNamesByColumnCount.get(cells.length);
   cells.forEach((cell, index) => {
     const fallback = `c${index.toString().padStart(2, "0")}`;
@@ -2764,10 +2929,7 @@ function prepareInteressentenSafeAreaRows(
     seenSourceIds.add(explicitId);
 
     const cells = row.cells.map(normalizeSafeAreaCell);
-    const payload: Record<string, string | number> = {
-      columnCount: cells.length,
-      tableIndex: row.tableIndex
-    };
+    const payload: Record<string, string | number> = {};
     cells.forEach((cell, cellIndex) => {
       const field = INTERESSENTEN_SAFE_AREA_FIELDS[cellIndex];
       if (!field) {
@@ -2818,6 +2980,76 @@ interface NormalizedSafeAreaPagination {
   offsets: number[];
   selectedOffset?: number;
   selectedPageNumber?: number;
+}
+
+function describeSafeAreaPagination(
+  capture: SafeAreaPaginationCapture,
+  area: MatoolSafeArea
+): NonNullable<MatoolResponseShape["pagination"]> {
+  const knownKeys = new Set(["show", "todo", "offset", "ex_schueler_auswahl"]);
+  const offsets = new Set<number>();
+  type LinkShape = NonNullable<MatoolResponseShape["pagination"]>["links"][number];
+  const linkShapes = new Map<string, LinkShape>();
+  let invalidLinkCount = 0;
+  for (const href of capture.links) {
+    let url: URL | undefined;
+    try {
+      url = new URL(href.replace(/&amp;/giu, "&"), "https://core.matool.de/");
+    } catch { /* Invalid links are represented by structural flags below. */ }
+    const rawOffset = url?.searchParams.get("offset") ?? null;
+    const validOffset = rawOffset !== null && /^(?:0|[1-9]\d*)$/u.test(rawOffset)
+      && Number.isSafeInteger(Number(rawOffset));
+    if (validOffset) offsets.add(Number(rawOffset));
+    const keys = url ? [...url.searchParams.keys()] : [];
+    const valueState = (key: string, expected: string): "absent" | "valid" | "other" => {
+      const value = url?.searchParams.get(key) ?? null;
+      return value === null ? "absent" : value === expected ? "valid" : "other";
+    };
+    let valid = false;
+    if (isPaginatedSafeArea(area)) {
+      try {
+        parseSafeAreaPaginationOffset(href, area);
+        valid = true;
+      } catch { /* Only a boolean is retained, never the rejected URL. */ }
+    }
+    if (!valid) invalidLinkCount += 1;
+    const exFilter = url?.searchParams.get("ex_schueler_auswahl") ?? null;
+    const link: LinkShape = {
+      expectedLocation: Boolean(url && url.origin === "https://core.matool.de"
+        && url.pathname === "/index.php" && !url.username && !url.password && !url.hash),
+      queryKeys: [...new Set(keys.map((key) => knownKeys.has(key) ? key : "<other>"))].sort(),
+      queryKeyCount: keys.length,
+      duplicateQueryKeys: new Set(keys).size !== keys.length,
+      offsetState: rawOffset === null ? "absent" : validOffset ? "valid" : "other",
+      show: valueState("show", matoolSafeAreaView(area)),
+      todo: valueState("todo", ""),
+      exFilter: exFilter === null ? "absent" : exFilter === "show" ? "show" : "other",
+      valid,
+      occurrences: 0
+    };
+    // Offset values live in the separate bounded set. Excluding them here
+    // deduplicates normal pages and keeps late, structurally different failures.
+    const key = JSON.stringify(link);
+    const group = linkShapes.get(key) ?? link;
+    group.occurrences += 1;
+    linkShapes.set(key, group);
+  }
+  const links = [...linkShapes.values()].sort((left, right) => Number(left.valid) - Number(right.valid));
+  return {
+    detected: capture.detected,
+    invalidElement: capture.invalidElement,
+    linkCount: capture.links.length,
+    offsets: [...offsets].sort((left, right) => left - right).slice(0, MAX_SAFE_AREA_PAGES),
+    links: links.slice(0, 16),
+    omittedLinkShapes: Math.max(0, links.length - 16),
+    invalidLinkCount,
+    selectedCount: capture.selected.length,
+    selectedPageNumbers: capture.selected.flatMap((marker) => {
+      const text = marker.text.replace(/\s+/gu, "");
+      const page = Number(text);
+      return /^\d+$/u.test(text) && Number.isSafeInteger(page) && page > 0 && page <= MAX_SAFE_AREA_PAGES ? [page] : [];
+    })
+  };
 }
 
 function normalizeSafeAreaPagination(
@@ -2918,18 +3150,30 @@ function parseSafeAreaPaginationOffset(
   }
 
   const entries = [...url.searchParams];
-  const allowedKeys =
-    area === "schueler"
-      ? new Set(["show", "todo", "offset"])
-      : new Set(["show", "offset"]);
+  const allowedKeys = isSchuelerSafeArea(area)
+    ? new Set([
+        "show",
+        "todo",
+        "offset",
+        ...(area === "schueler_ex" ? ["ex_schueler_auswahl"] : [])
+      ])
+    : new Set(["show", "offset"]);
+  // Live shape from 23.09.2026: ex-member pagination omits the session
+  // filter from all 66 links. Only that key is optional in links; every
+  // canonical page fetch still sets ex_schueler_auswahl=show explicitly.
+  const requiredKeys = [...allowedKeys].filter(
+    (key) => key !== "ex_schueler_auswahl"
+  );
   if (
-    entries.length !== allowedKeys.size ||
     entries.some(([key]) => !allowedKeys.has(key)) ||
-    [...allowedKeys].some(
+    new Set(entries.map(([key]) => key)).size !== entries.length ||
+    requiredKeys.some(
       (key) => entries.filter(([entryKey]) => entryKey === key).length !== 1
     ) ||
-    url.searchParams.get("show") !== area ||
-    (area === "schueler" && url.searchParams.get("todo") !== "")
+    url.searchParams.get("show") !== matoolSafeAreaView(area) ||
+    (isSchuelerSafeArea(area) && url.searchParams.get("todo") !== "") ||
+    (area === "schueler_ex" && url.searchParams.has("ex_schueler_auswahl") &&
+      url.searchParams.get("ex_schueler_auswahl") !== "show")
   ) {
     throw paginatedSafeAreaSchemaError();
   }
@@ -2994,7 +3238,7 @@ function extractStableListId(
   onclick: string,
   area: MatoolSafeArea
 ): string | undefined {
-  if (area !== "interessenten" && area !== "schueler") {
+  if (area !== "interessenten" && !isSchuelerSafeArea(area)) {
     return undefined;
   }
   const match =
@@ -3088,6 +3332,16 @@ function isPaginatedSafeArea(
   return PAGINATED_SAFE_AREAS.has(area);
 }
 
+function isSchuelerSafeArea(
+  area: MatoolSafeArea
+): area is MatoolSchuelerSafeArea {
+  return area === "schueler" || area === "schueler_ex";
+}
+
+function matoolSafeAreaView(area: MatoolSafeArea): string {
+  return isSchuelerSafeArea(area) ? "schueler" : area;
+}
+
 function isExactListArea(
   area: MatoolSafeArea
 ): area is MatoolExactListArea {
@@ -3178,8 +3432,10 @@ function selectSafeAreaSourceId(
   const areaKey =
     area === "interessenten"
       ? "interessent"
-      : area === "schueler" || area === "artikel"
-        ? area
+      : isSchuelerSafeArea(area)
+        ? "schueler"
+        : area === "artikel"
+          ? area
         : "id";
   for (const key of [areaKey, "id", "interessent", "schueler", "artikel"]) {
     const ids = new Set(
