@@ -85,8 +85,9 @@ bereits ausgerollt. Deployment- und Beobachtungsstatus separat nachweisen.
   13 ausführbare Dateien plus zwei dokumentierte historische Varianten im
   Archiv. Frische lokale D1-Kette mit 5/5 Tests abgenommen; Remote-Pending-Liste
   leer. Belege: [Migrationsaudit](migration-audit-2026-09-22.md).
-- [ ] Wiederhergestellte Migrationen gemeinsam mit der geprüften
-  Anwendungsversion in Git versionieren.
+- [x] Wiederhergestellte Migrationen gemeinsam mit der geprüften
+  Anwendungsversion in Git versionieren: lokaler Commit `4d33047` auf
+  `kwonro/stabilisierung-20260922`, kein Push.
 - [x] Regel für neue Migrationen festhalten: ab `0011` nur noch eindeutige,
   fortlaufende Nummern; bereits angewendete historische Namen bleiben erhalten.
 - [x] Vollständigen D1-Export samt lokalem Wiederherstellungstest und
@@ -110,8 +111,9 @@ reproduzierbar; ein Rückweg ist dokumentiert.
 - [x] Klären, ob die Abweichung aus Filterzustand, Pagination-URL,
   Sessionzustand, leeren Seiten oder einer abweichenden Ex-Mitglieder-Zeile
   entsteht: Seitenlinks lassen den Ex-Filter weg, kanonische Abrufe setzen ihn.
-- [x] Den Ex-Mitglieder-Collector gezielt lokal korrigieren; nur der Linkfilter
-  ist optional. Normaler Mitglieder-Collector unverändert; Rollout separat offen.
+- [x] Den Ex-Mitglieder-Collector gezielt korrigieren; nur der Linkfilter
+  ist optional. Normaler Mitglieder-Collector unverändert. Seit 23.09.,
+  11:15 UTC auf Staging (Version `bcc29938`); Live-Abnahme separat offen.
 - [x] Leere Ex-Mitglieder-Bestände bleiben ohne belegte gültige Leeransicht
   Sicherheitsfehler. Regressionstest ergänzt; kein stilles Leeren.
 - [ ] Vollständigkeit absichern: stabile MATOOL-ID, alle Seiten, keine
@@ -137,7 +139,7 @@ ist nicht mehr `partial_failed`.
   reproduziert klassifizieren: seit 14.09. 80 erfolgreiche Abrufe ohne Fehler.
 - [x] Aktive Datenabrufe von Kontaktfunktionen trennen; laufende Abrufe im
   Diagramm nicht als Fehler zählen, Klassenabruf korrekt deaktiviert anzeigen.
-  Lokal korrigiert und getestet; Betriebs-/Datenqualitätsanzeige in P2/P3 vertiefen.
+  Korrigiert, getestet, seit 23.09. auf Staging; Anzeige in P2/P3 vertiefen.
 - [x] Bewusst deaktivierte Zapier-/Kontaktfunktionen neutral anzeigen;
   Health-Regression bestätigt auch mit alten Zustellfehlern keinen roten
   Gesamtstatus. Keine Funktionen aktiviert.

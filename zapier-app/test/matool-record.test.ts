@@ -6,6 +6,10 @@ import type {
 
 import app from "../src/index.js";
 import authentication from "../src/authentication.js";
+import matoolMemberRecord from "../src/triggers/matool-member-record.js";
+import matoolExMemberRecord from "../src/triggers/matool-ex-member-record.js";
+import matoolCheckinRecord from "../src/triggers/matool-checkin-record.js";
+import matoolGraduierungRecord from "../src/triggers/matool-graduierung-record.js";
 import { performLegacy } from "../src/triggers/matool-record-legacy.js";
 import {
   perform,
@@ -15,6 +19,7 @@ import {
   sample,
   SNAPSHOT_AREA_CHOICES
 } from "../src/triggers/matool-record.js";
+import matoolProspectRecord from "../src/triggers/matool-prospect-record.js";
 
 const detailKeys = [
   "matool_id",
@@ -99,7 +104,12 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
   it("behält den alten Trigger verborgen und exportiert den robusten Hook als v2", () => {
     expect(Object.keys(app.triggers ?? {})).toEqual([
       "matool_record",
-      "matool_record_v2"
+      "matool_record_v2",
+      "matool_prospect_record_v1",
+      "matool_member_record_v1",
+      "matool_ex_member_record_v1",
+      "matool_checkin_record_v1",
+      "matool_graduierung_record_v1"
     ]);
     expect(app.triggers?.matool_record?.display.hidden).toBe(true);
     expect(app.triggers?.matool_record?.operation.type).toBe("polling");
@@ -141,6 +151,160 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     expect(SNAPSHOT_AREA_CHOICES.interessenten_details).toBe(
       "Interessenten-Details"
     );
+  });
+
+  it("bietet einen festen, datenschutzkonformen Interessenten-Trigger an", () => {
+    expect(matoolProspectRecord.key).toBe("matool_prospect_record_v1");
+    expect(matoolProspectRecord.operation.type).toBe("hook");
+    expect(matoolProspectRecord.operation.sample).toMatchObject({
+      area: "interessenten_details",
+      vorname: "Beispiel"
+    });
+    expect(SNAPSHOT_AREA_CHOICES.schueler_details).toBe(
+      "Mitglieder-Details (minimiert)"
+    );
+    expect(SNAPSHOT_AREA_CHOICES.checkin).toBe("Check-ins");
+  });
+
+  it("bietet einen festen, minimierten Mitglieder-Trigger an", () => {
+    expect(matoolMemberRecord.key).toBe("matool_member_record_v1");
+    expect(matoolMemberRecord.operation.type).toBe("hook");
+    expect(matoolMemberRecord.operation.sample).toMatchObject({
+      area: "schueler_details",
+      vertragid: "synthetic-contract-id"
+    });
+    expect(matoolMemberRecord.operation.sample).not.toHaveProperty("iban");
+    expect(matoolMemberRecord.operation.sample).not.toHaveProperty("bic");
+  });
+
+  it("bietet einen festen Trigger fuer abgeschlossene Kuendigungen an", () => {
+    expect(matoolExMemberRecord.key).toBe("matool_ex_member_record_v1");
+    expect(matoolExMemberRecord.operation.type).toBe("hook");
+    expect(matoolExMemberRecord.operation.sample).toMatchObject({
+      area: "schueler_ex",
+      name: "Ehemalig",
+      vorname: "Beispiel"
+    });
+    expect(SNAPSHOT_AREA_CHOICES.schueler_ex).toBe(
+      "Ehemalige Mitglieder (Kündigung abgeschlossen)"
+    );
+  });
+
+  it("bietet feste Trigger für Check-ins und Prüfungen an", () => {
+    expect(matoolCheckinRecord.operation.sample).toMatchObject({
+      area: "checkin",
+      klasse_id: "1340",
+      mitglied_id: "67890"
+    });
+    expect(matoolGraduierungRecord.operation.sample).toMatchObject({
+      area: "graduierungen",
+      graduierung_id: "15359",
+      storniert: false
+    });
+    expect(SNAPSHOT_AREA_CHOICES.graduierungen).toBe(
+      "Prüfungen / Graduierungen"
+    );
+  });
+
+  it("abonniert beim Ex-Mitglied-Trigger nur den abgeschlossenen Kuendigungsbereich", async () => {
+    let captured: HttpRequestOptionsWithUrl | undefined;
+    const operation = matoolExMemberRecord.operation;
+    if (operation.type !== "hook") {
+      throw new Error("Der Ex-Mitglied-Trigger muss ein REST Hook sein.");
+    }
+    const performSubscribe = operation.performSubscribe;
+    if (typeof performSubscribe !== "function") {
+      throw new Error("Der Ex-Mitglied-Trigger muss abonnierbar sein.");
+    }
+
+    await performSubscribe(
+      zObject({ id: "subscription-ex-member" }, (request) => {
+        captured = request;
+      }),
+      {
+        inputData: { only_changed: true },
+        targetUrl: hookTarget("ex-member/abc/")
+      } as unknown as Parameters<typeof performSubscribe>[1]
+    );
+
+    expect(captured).toMatchObject({
+      body: {
+        area: "schueler_ex",
+        only_changed: true,
+        target_url: hookTarget("ex-member/abc/")
+      },
+      method: "POST",
+      url: "https://middleware.example.invalid/api/zapier/v1/snapshot-subscriptions"
+    });
+  });
+
+  it("abonniert beim festen Interessenten-Trigger immer nur den Detailbereich", async () => {
+    let captured: HttpRequestOptionsWithUrl | undefined;
+    const operation = matoolProspectRecord.operation;
+    if (operation.type !== "hook") {
+      throw new Error("Der Interessenten-Trigger muss ein REST Hook sein.");
+    }
+    const performSubscribe = operation.performSubscribe;
+    if (typeof performSubscribe !== "function") {
+      throw new Error("Der Interessenten-Trigger muss abonnierbar sein.");
+    }
+    expect(operation.inputFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "only_new",
+          label: "Nur neue Interessenten"
+        })
+      ])
+    );
+
+    const result = await performSubscribe(
+      zObject({ id: "subscription-prospect" }, (request) => {
+        captured = request;
+      }),
+      {
+        inputData: { only_changed: true, only_new: true },
+        targetUrl: hookTarget("prospect/abc/")
+      } as unknown as Parameters<typeof performSubscribe>[1]
+    );
+
+    expect(result).toEqual({ id: "subscription-prospect" });
+    expect(captured).toMatchObject({
+      body: {
+        area: "interessenten_details",
+        only_changed: false,
+        only_new: true,
+        target_url: hookTarget("prospect/abc/")
+      },
+      method: "POST",
+      url: "https://middleware.example.invalid/api/zapier/v1/snapshot-subscriptions"
+    });
+  });
+
+  it("abonniert den Mitglieder-Trigger auf Wunsch ausschließlich für neue Mitglieder", async () => {
+    let captured: HttpRequestOptionsWithUrl | undefined;
+    const operation = matoolMemberRecord.operation;
+    if (operation.type !== "hook" || typeof operation.performSubscribe !== "function") {
+      throw new Error("Der Mitglieder-Trigger muss abonnierbar sein.");
+    }
+
+    await operation.performSubscribe(
+      zObject({ id: "subscription-new-member" }, (request) => {
+        captured = request;
+      }),
+      {
+        inputData: { only_changed: true, only_new: true },
+        targetUrl: hookTarget("member/new/")
+      } as unknown as Parameters<typeof operation.performSubscribe>[1]
+    );
+
+    expect(captured).toMatchObject({
+      body: {
+        area: "schueler_details",
+        only_changed: false,
+        only_new: true,
+        target_url: hookTarget("member/new/")
+      }
+    });
   });
 
   it("liefert alle 34 Interessenten-Detailfelder als synthetisches Mapping-Beispiel", () => {
@@ -313,6 +477,31 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
 
     expect(requestedUrl).toBe(
       "https://middleware.example.invalid/api/zapier/v1/snapshots?area=interessenten_details&limit=3&only_changed=true"
+    );
+  });
+
+  it("filtert beim Zap-Test ausschließlich neue Datensätze vor dem Limit", async () => {
+    let requestedUrl = "";
+    await performList(
+      zObject(
+        {
+          area: "interessenten_details",
+          records: [snapshotRecord()]
+        },
+        (request) => {
+          requestedUrl = request.url;
+        }
+      ),
+      {
+        inputData: {
+          area: "interessenten_details",
+          only_new: "true"
+        }
+      } as unknown as Parameters<typeof performList>[1]
+    );
+
+    expect(requestedUrl).toBe(
+      "https://middleware.example.invalid/api/zapier/v1/snapshots?area=interessenten_details&limit=3&only_new=true"
     );
   });
 

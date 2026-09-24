@@ -100,6 +100,9 @@ export interface WarningSummary {
   state: "critical" | "warning";
   technicalCode: string | null;
   title: string;
+  occurrenceCount?: number;
+  firstOccurredAt?: string | null;
+  lastOccurredAt?: string | null;
 }
 
 export interface ScheduleSummary {

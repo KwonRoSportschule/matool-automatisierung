@@ -68,10 +68,16 @@ gespeicherte Variablen. Lokaler Branch `kwonro/stabilisierung-20260922`
 angelegt; kein Push. Arbeitsunterbrechung etwa 10:18 bis 11:05 UTC wegen
 fehlendem Workspace-Kontingent; währenddessen kein Fortschritt behauptet.
 
-Zum Zeitpunkt dieser Notiz ist der Ex-Fix nur lokal. Letzte verifizierte
-Staging-Version: `ab1a5b63-eb41-4c15-a375-c228f1438065` (Diagnose-Deployment).
-Vor Rollout: vollständige Tests, Typechecks, Dry-run und Git-Checkpoint.
-Danach: erfolgreicher vollständiger Ex-Abruf, Mengen-/ID-Abgleich und
+Um 11:15 UTC wurde der Ex-Fix einschließlich Statuskorrekturen auf Staging
+ausgerollt: Version `bcc29938-dc4d-4dc4-85e7-f79c51650ab5`, Basiscommit
+`4d33047b704f5a1d7711143099d871bd90f23e15`. Der Quellhash entspricht dem
+Dry-run. Die Markierung „dirty“ bleibt ehrlich bestehen, weil unabhängige
+Zapier-App-/Analysearbeiten nicht in diesen Commit aufgenommen wurden.
+Keine dieser Arbeiten verworfen oder veröffentlicht. Zusätzlich 27/27
+Zapier-App-Tests bestanden. Code-Rückweg siehe Rollback-Dokument.
+
+Der letzte alte Stundenabruf endete um 11:13:44 UTC, Sperre regulär frei.
+Offen: erfolgreicher vollständiger Ex-Kontrollabruf, Mengen-/ID-Abgleich und
 unveränderter Wiederholungslauf. Elf geplante fehlerfreie Läufe eines ganzen
 Betriebstags erst nach Abschluss der Umsetzung prüfen.
 

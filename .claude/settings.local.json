@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm run *)",
+      "PowerShell($p = Get-Command pnpm -ErrorAction SilentlyContinue; if \\($p\\) { \"pnpm gefunden: $\\($p.Source\\)\"; pnpm --version } else { \"pnpm NICHT auf PATH\" }; $n = Get-Command node -ErrorAction SilentlyContinue; if \\($n\\) { \"node: $\\($n.Source\\)\"; node --version } else { \"node NICHT auf PATH\" })",
+      "Bash(pnpm test *)",
+      "Bash(npx pnpm *)",
+      "Bash(git add *)",
+      "Bash(npx wrangler *)"
+    ]
+  }
+}

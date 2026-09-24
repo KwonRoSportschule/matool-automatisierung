@@ -2743,6 +2743,56 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
+  describe.each(["schueler", "schueler_ex"] as const)("Kennungszuordnung fuer %s", (area) => {
+    const validRows = schuelerRow("710001", 1);
+    const orphan = schuelerIdentifierRow("710002");
+    const invalidCases = [
+      ["verwaiste Kennung vor gueltigem Paar", orphan + validRows],
+      ["verwaiste Kennung nach gueltigem Paar", validRows + orphan],
+      ["ungueltige Aktion neben gueltigem Paar", validRows + schuelerDataRow(2)
+        + schuelerIdentifierRow("710002", "formular_fuellen(710002)")],
+      ["Drei-Zellen-Datenzeile mit Kennung", validRows
+        + "<tr><td>2</td><td>Synthetic</td><td>Person</td></tr>" + orphan],
+      ["mehrere Aktionen in Kennungszeile", validRows + schuelerDataRow(2)
+        + orphan.replace("<td><img", "<td><img onclick=\"formular_fuellen(710003,'Synthetic')\"><img")],
+      ["Kennung unter unzugeordnetem Layout", validRows
+        + `<tr><td><table>${orphan}</table></td></tr>`],
+      ["ungueltige Aktion unter unzugeordnetem Layout", validRows
+        + "<tr><td><table><tr><td><img onclick=\"formular_fuellen(710004)\"></td></tr></table></td></tr>"]
+    ];
+
+    it.each(invalidCases)("verwirft gemischte Seite: %s", async (_description, rows) => {
+      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows: rows! });
+      const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+      await expect(clientForPaginatedPages(pages).extractSafeArea({
+        email: "service-account@example.invalid", password: "synthetic-password"
+      }, area)).rejects.toMatchObject({
+        code: "matool_paginated_list_schema_mismatch", status: 502,
+        shape: { area, pagination: { stage: "rows" } }
+      });
+    });
+
+    it("erlaubt kennungsfreies Layout und mehrstufig verschachtelte zugeordnete Details", async () => {
+      // Both a valid-looking and an invalid action inside an accepted member's
+      // detail subtree are details, not additional list entries. The accepted
+      // identifier is two parentRow hops away from these actions.
+      const details = schuelerIdentifierRow("710001").replace(
+        "PRIVATE-HIDDEN-DETAIL-A-710001",
+        "<table><tr><td><img onclick=\"formular_fuellen(799998,'Synthetic')\"><img onclick=\"formular_fuellen(799999)\"></td></tr></table>"
+      );
+      const rows = schuelerDataRow(900) + schuelerDataRow(1) + details
+        + schuelerRow("710002", 2) + schuelerDataRow(901);
+      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows });
+      const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+      const result = await clientForPaginatedPages(pages).extractSafeArea({
+        email: "service-account@example.invalid", password: "synthetic-password"
+      }, area);
+      expect(result.records.map(({ sourceId }) => sourceId)).toEqual(["710001", "710002"]);
+      expect(result.rowCount).toBe(2);
+      expect(result.records[0]?.payload).toMatchObject({ vorname: "Vorname 1", name: "Größmann 1" });
+    });
+  });
+
   it("verwirft eine vollstaendig gelesene paginierte Liste ohne Datensaetze", async () => {
     const offsets = [0, 30];
     const pages = new Map<string, { body: string }>();

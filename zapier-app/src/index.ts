@@ -6,6 +6,11 @@ import packageJson from "../package.json" with { type: "json" };
 
 import authentication from "./authentication.js";
 import { addMiddlewareCredentials } from "./middleware.js";
+import matoolCheckinRecord from "./triggers/matool-checkin-record.js";
+import matoolGraduierungRecord from "./triggers/matool-graduierung-record.js";
+import matoolMemberRecord from "./triggers/matool-member-record.js";
+import matoolExMemberRecord from "./triggers/matool-ex-member-record.js";
+import matoolProspectRecord from "./triggers/matool-prospect-record.js";
 import matoolRecord from "./triggers/matool-record.js";
 import matoolRecordLegacy from "./triggers/matool-record-legacy.js";
 
@@ -19,6 +24,11 @@ export default defineApp({
   beforeRequest: [addMiddlewareCredentials],
   triggers: {
     [matoolRecordLegacy.key]: matoolRecordLegacy,
-    [matoolRecord.key]: matoolRecord
+    [matoolRecord.key]: matoolRecord,
+    [matoolProspectRecord.key]: matoolProspectRecord,
+    [matoolMemberRecord.key]: matoolMemberRecord,
+    [matoolExMemberRecord.key]: matoolExMemberRecord,
+    [matoolCheckinRecord.key]: matoolCheckinRecord,
+    [matoolGraduierungRecord.key]: matoolGraduierungRecord
   }
 });
