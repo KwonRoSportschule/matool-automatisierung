@@ -421,6 +421,90 @@ describe("Zapier-Service-API", () => {
     });
   });
 
+  it("filtert only_new vor dem Seitenlimit", async () => {
+    const seed = crypto.randomUUID().replaceAll("-", "");
+    const sourceId = `new-member-${seed}`;
+    await seedSnapshotChanges("schueler_details", [
+      {
+        changeKind: "created",
+        contentHash: "a".repeat(64),
+        eventId: `${seed}${"1".padStart(32, "0")}`,
+        observedAt: "2026-08-10T09:00:00.000Z",
+        payload: { version: "neu" },
+        sourceId
+      },
+      {
+        changeKind: "updated",
+        contentHash: "b".repeat(64),
+        eventId: `${seed}${"2".padStart(32, "0")}`,
+        observedAt: "2026-08-10T09:01:00.000Z",
+        payload: { version: "geändert" },
+        sourceId
+      }
+    ]);
+
+    const response = await dispatch(
+      serviceRequest(
+        "/api/zapier/v1/snapshots?area=schueler_details&limit=100&only_new=true"
+      )
+    );
+    const payload = (await response.json()) as ZapierSnapshotPage;
+
+    expect(response.status).toBe(200);
+    expect(payload.records).toHaveLength(1);
+    expect(payload.records[0]).toMatchObject({
+      change_kind: "created",
+      is_new: true,
+      source_id: sourceId
+    });
+  });
+
+  it("gibt Mitglieder-Details im Zapier-Testabruf nur minimiert aus", async () => {
+    const seed = crypto.randomUUID().replaceAll("-", "");
+    await seedSnapshotChanges("schueler_details", [
+      {
+        changeKind: "created",
+        contentHash: "d".repeat(64),
+        eventId: `${seed}${"1".padStart(32, "0")}`,
+        observedAt: "2026-08-10T09:00:00.000Z",
+        payload: {
+          bic: "SYNTHETICBIC",
+          beitrag: "79.00",
+          email: "mitglied@example.invalid",
+          iban: "DE00123456780000000000",
+          konto: "12345678",
+          name: "Mitglied",
+          schueler_nr: "54321",
+          vertragid: "synthetic-contract-id",
+          vertragsende: "2027-08-01",
+          vname: "Beispiel",
+          zahlart: "SEPA"
+        },
+        sourceId: `member-${seed}`
+      }
+    ]);
+
+    const response = await dispatch(
+      serviceRequest("/api/zapier/v1/snapshots?area=schueler_details&limit=1")
+    );
+    const payload = (await response.json()) as ZapierSnapshotPage;
+    const record = payload.records[0] ?? {};
+
+    expect(response.status).toBe(200);
+    expect(record).toMatchObject({
+      area: "schueler_details",
+      email: "mitglied@example.invalid",
+      name: "Mitglied",
+      schueler_nr: "54321",
+      vertragid: "synthetic-contract-id",
+      vertragsende: "2027-08-01",
+      vname: "Beispiel"
+    });
+    for (const field of ["iban", "bic", "konto", "beitrag", "zahlart"]) {
+      expect(record).not.toHaveProperty(field);
+    }
+  });
+
   it("liefert für A-B-A eigene IDs und den historischen Payload", async () => {
     const seed = crypto.randomUUID().replaceAll("-", "");
     const sourceId = `map-${seed}`;

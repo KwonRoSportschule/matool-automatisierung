@@ -23,11 +23,40 @@ export interface SafeAreaRowShape {
 
 export interface MatoolResponseShape {
   area: string;
+  truncated?: true;
+  pagination?: SafeAreaPaginationShape;
   headerNamesByColumnCount?: Record<string, string[]>;
   json?: JsonShape;
   rowCount?: number;
   rowShapes?: SafeAreaRowShape[];
   topLevelRowCount?: number;
+}
+
+/** Only structural flags and page numbers; never URLs, IDs or query values. */
+export interface SafeAreaPaginationShape {
+  detected: boolean;
+  invalidElement: boolean;
+  linkCount: number;
+  offsets: number[];
+  links: Array<{
+    expectedLocation: boolean;
+    queryKeys: string[];
+    queryKeyCount: number;
+    duplicateQueryKeys: boolean;
+    offsetState: "absent" | "valid" | "other";
+    show: "absent" | "valid" | "other";
+    todo: "absent" | "valid" | "other";
+    exFilter: "absent" | "show" | "other";
+    valid: boolean;
+    occurrences: number;
+  }>;
+  omittedLinkShapes: number;
+  invalidLinkCount: number;
+  selectedCount: number;
+  selectedPageNumbers: number[];
+  requestedOffset?: number;
+  parsedRecordCount?: number;
+  stage?: "rows" | "nonempty" | "pagination" | "page_set" | "selected_page" | "merge";
 }
 
 export interface JsonShape {
@@ -53,8 +82,58 @@ export class MatoolShapeMismatchError extends AppError {
   constructor(cause: AppError, shape: MatoolResponseShape) {
     super(cause.code, cause.status, cause.message);
     this.name = "MatoolShapeMismatchError";
-    this.shape = shape;
+    this.shape = boundResponseShape(shape);
   }
+}
+
+// Diagnostic headers are not trusted data: an unexpected header may contain a
+// person's name. Keep only confirmed generic field labels, never arbitrary text.
+const DIAGNOSTIC_HEADER_NAMES = new Set([
+  "nr", "datum", "vorname", "name", "status", "vertrag", "bezeichnung",
+  "artikel", "anzahl", "bestand", "preis", "betrag", "typ", "datei",
+  "download", "betreff", "kategorie", "klasse", "email", "telefon", "handy",
+  "quelle", "kontakt", "probetraining", "ergebnis", "anrede"
+]);
+const MAX_RESPONSE_SHAPE_BYTES = 15_500;
+
+/** Keep diagnostics below the store's 16,000-character limit, also in UTF-8. */
+function boundResponseShape(shape: MatoolResponseShape): MatoolResponseShape {
+  const result: MatoolResponseShape = {
+    ...shape,
+    ...(shape.headerNamesByColumnCount ? {
+      headerNamesByColumnCount: Object.fromEntries(
+        Object.entries(shape.headerNamesByColumnCount).map(([count, names]) => [
+          count, names.map((name) => DIAGNOSTIC_HEADER_NAMES.has(name) ? name : "<other>")
+        ])
+      )
+    } : {})
+  };
+  const fits = () => new TextEncoder().encode(JSON.stringify(result)).byteLength <= MAX_RESPONSE_SHAPE_BYTES;
+  if (fits()) return result;
+  result.truncated = true;
+  delete result.headerNamesByColumnCount;
+  if (fits()) return result;
+  if (result.json) {
+    result.json = {
+      kind: result.json.kind,
+      ...(result.json.keyCount === undefined ? {} : { keyCount: result.json.keyCount }),
+      ...(result.json.length === undefined ? {} : { length: result.json.length })
+    };
+  }
+  if (fits()) return result;
+  delete result.rowShapes;
+  if (fits()) return result;
+  if (result.pagination) {
+    result.pagination = { ...result.pagination, links: [...result.pagination.links] };
+    while (result.pagination.links.length > 0 && !fits()) {
+      result.pagination.links.pop();
+      result.pagination.omittedLinkShapes += 1;
+    }
+  }
+  if (fits()) return result;
+  // Defensive final fallback for callers supplying a shape outside the bounded
+  // parser contract. Never let an oversized diagnostic hide the original error.
+  return { area: shape.area.slice(0, 64), truncated: true };
 }
 
 const MAX_REPORTED_KEYS = 100;

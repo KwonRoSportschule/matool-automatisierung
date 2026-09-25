@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import { FIRST_TRIAL_COLLECTOR } from "../core/first-trial";
+import { getBuildInfo } from "./build-info";
 import {
   PROTECTED_DASHBOARD_VALUE,
   areaLabel,
@@ -72,6 +73,15 @@ interface AreaRunRow {
   started_at: string;
   status: "failed" | "succeeded";
   success_count: number;
+  sync_id: string | null;
+}
+
+interface AreaFailureGroupRow {
+  area: string;
+  error_code: string | null;
+  occurrence_count: number;
+  first_occurred_at: string;
+  last_occurred_at: string;
 }
 
 interface AreaChangeCountRow {
@@ -152,6 +162,7 @@ export async function getDashboardOverview(
       areaCounts,
       latestAreaRuns,
       latestSuccessfulAreaRuns,
+      areaFailureGroups,
       areaChangeCounts,
       syncTotals,
       hourlyRuns,
@@ -182,6 +193,14 @@ export async function getDashboardOverview(
       ).all<AreaCountRow>(),
       env.DB.prepare(latestAreaRunSql(false)).all<AreaRunRow>(),
       env.DB.prepare(latestAreaRunSql(true)).all<AreaRunRow>(),
+      env.DB.prepare(
+        `SELECT area, error_code, COUNT(*) AS occurrence_count,
+                MIN(finished_at) AS first_occurred_at,
+                MAX(finished_at) AS last_occurred_at
+         FROM matool_snapshot_runs
+         WHERE status = 'failed' AND started_at >= ? AND started_at <= ?
+         GROUP BY area, error_code`
+      ).bind(from, generatedAt).all<AreaFailureGroupRow>(),
       env.DB.prepare(
         `SELECT area,
                 SUM(CASE WHEN change_kind = 'created' THEN 1 ELSE 0 END) AS new_count,
@@ -339,7 +358,16 @@ export async function getDashboardOverview(
 
     const security = dataProtectionConnection(protection, generatedAt);
 
-    const warnings = buildWarnings(matool, scheduleCard, areas, zapier);
+    const warnings = buildWarnings(matool, scheduleCard, areas, zapier, {
+      failureGroups: areaFailureGroups.results,
+      latestRuns: latestAreaRuns.results,
+      lastSync,
+      lastScheduledSync,
+      matoolReady: Boolean(
+        env.MATOOL_EMAIL && env.MATOOL_PASSWORD &&
+        env.MATOOL_REAL_RUNS_ENABLED === "confirmed-read-only"
+      )
+    });
     const overall = deriveOverall(
       [matool, database, scheduleCard, zapier, security, ...areas],
       warnings
@@ -356,6 +384,7 @@ export async function getDashboardOverview(
       schemaVersion: 2,
       generatedAt,
       environment: env.APP_ENV,
+      build: getBuildInfo(env),
       privacy: dashboardPrivacyNotice(env),
       range: { days: rangeDays, from, to: generatedAt },
       overall,
@@ -408,13 +437,13 @@ export async function getDashboardOverview(
 function latestAreaRunSql(successOnly: boolean): string {
   return `WITH ranked AS (
     SELECT run_id, area, status, started_at, finished_at, fetched_count,
-           success_count, failure_count, error_code,
+           success_count, failure_count, error_code, sync_id,
            ROW_NUMBER() OVER (PARTITION BY area ORDER BY started_at DESC) AS position
     FROM matool_snapshot_runs
     ${successOnly ? "WHERE status = 'succeeded'" : ""}
   )
   SELECT run_id, area, status, started_at, finished_at, fetched_count,
-         success_count, failure_count, error_code
+         success_count, failure_count, error_code, sync_id
   FROM ranked
   WHERE position = 1`;
 }
@@ -635,10 +664,50 @@ function buildWarnings(
   matool: Record<string, unknown> & { state: DashboardState },
   schedule: Record<string, unknown> & { state: DashboardState },
   areas: ReadonlyArray<{ key: string; label: string; state: DashboardState; lastRun: unknown }>,
-  zapier: Record<string, unknown> & { state: DashboardState }
+  zapier: Record<string, unknown> & { state: DashboardState },
+  context: {
+    failureGroups: readonly AreaFailureGroupRow[];
+    latestRuns: readonly AreaRunRow[];
+    lastSync: SyncRow | null;
+    lastScheduledSync: SyncRow | null;
+    matoolReady: boolean;
+  }
 ): unknown[] {
   const warnings: unknown[] = [];
+  const currentFailures = context.latestRuns.filter((run) =>
+    run.status === "failed" && areas.some((area) =>
+      area.key === run.area && area.state === "critical"
+    )
+  );
+  const latestRun = [...context.latestRuns].sort((left, right) =>
+    right.started_at.localeCompare(left.started_at)
+  )[0];
+  // Only absorb summary symptoms when their source run is established.
+  // A configuration issue or legacy failure without a parent stays visible.
+  const matoolExplained = context.matoolReady && latestRun?.sync_id &&
+    (latestRun.sync_id === context.lastSync?.sync_id ||
+      latestRun.sync_id === context.lastScheduledSync?.sync_id) &&
+    currentFailures.some((run) => run.run_id === latestRun.run_id);
+  const scheduledRun = context.lastScheduledSync;
+  const scheduleExplained = scheduledRun &&
+    (scheduledRun.status === "failed" || scheduledRun.status === "partial_failed") &&
+    scheduledRun.error_code === "one_or_more_areas_failed" &&
+    // Missing later schedule windows remain an independent concern, even
+    // when the old parent run's area failures can all be explained.
+    scheduledRun.scheduled_for !== null &&
+    typeof schedule.previousScheduledAt === "string" &&
+    Date.parse(scheduledRun.scheduled_for) >= Date.parse(schedule.previousScheduledAt) - 7_200_000 &&
+    scheduledRun.failed_area_count > 0 &&
+    currentFailures.filter((run) => run.sync_id === scheduledRun.sync_id).length ===
+      scheduledRun.failed_area_count;
+
   for (const connection of [matool, schedule, zapier]) {
+    if (
+      (connection.key === "matool" && matoolExplained) ||
+      (connection.key === "schedule" && scheduleExplained)
+    ) {
+      continue;
+    }
     if (connection.state === "warning" || connection.state === "critical") {
       warnings.push({
         key: `${connection.key}_state`,
@@ -658,14 +727,23 @@ function buildWarnings(
   for (const area of areas.filter(
     (entry) => entry.state === "warning" || entry.state === "critical"
   )) {
+    const failure = currentFailures.find((run) => run.area === area.key);
+    const repeated = failure && context.failureGroups.find((group) =>
+      group.area === area.key && group.error_code === failure.error_code
+    );
     warnings.push({
       key: `area_${area.key}`,
       state: area.state,
       title: `${area.label}: letzter Abruf pruefen`,
       impact: "Der Datenbereich kann unvollstaendig oder veraltet sein.",
       action: "Laufstatus und Fehlercode im Aktivitaetsverlauf pruefen.",
-      occurredAt: null,
-      technicalCode: null
+      occurredAt: failure?.finished_at ?? null,
+      technicalCode: failure?.error_code ?? null,
+      ...(failure ? {
+        occurrenceCount: repeated?.occurrence_count ?? 0,
+        firstOccurredAt: repeated?.first_occurred_at ?? null,
+        lastOccurredAt: repeated?.last_occurred_at ?? null
+      } : {})
     });
   }
   return warnings;
@@ -683,7 +761,7 @@ function deriveOverall(
       state: "critical",
       label: "Handlungsbedarf",
       summary: "Mindestens ein wichtiger Teil des Hubs ist ausgefallen oder nicht aktuell.",
-      reasonCount: critical,
+      reasonCount: warnings.length,
       recommendedAction: "Die roten Statuskarten und Warnungen zuerst pruefen."
     };
   }
@@ -692,7 +770,7 @@ function deriveOverall(
       state: "warning",
       label: "Betrieb mit Warnungen",
       summary: "Der Hub arbeitet, einzelne Bereiche benoetigen jedoch Aufmerksamkeit.",
-      reasonCount: Math.max(warning, warnings.length),
+      reasonCount: warnings.length,
       recommendedAction: "Gelbe Hinweise im Verlauf kontrollieren."
     };
   }
@@ -740,7 +818,7 @@ function buildChartSeries(
     const point = byDay.get(day) ?? { changed: 0, failed: 0, label: day, new: 0, successful: 0 };
     if (row.status === "succeeded") {
       point.successful += row.count;
-    } else {
+    } else if (row.status === "failed" || row.status === "partial_failed") {
       point.failed += row.count;
     }
     byDay.set(day, point);
@@ -820,6 +898,8 @@ function buildFunctionCatalogue(
       env.MATOOL_REAL_RUNS_ENABLED === "confirmed-read-only"
   );
   const outbound = env.OUTBOUND_DELIVERY_ENABLED === "true";
+  const scheduledAreas: readonly string[] = MATOOL_SNAPSHOT_AREAS;
+  const classExtractionEnabled = scheduledAreas.includes("klassen");
   return [
     {
       key: "scheduled_matool_sync",
@@ -844,11 +924,15 @@ function buildFunctionCatalogue(
     {
       key: "class_extraction",
       name: "Vollstaendiger Klassenabruf",
-      description: "Liest Klassen ueber den bestaetigten Detail-Endpunkt ohne Schuelerlisten.",
+      description: classExtractionEnabled
+        ? "Liest Klassen ueber den bestaetigten Detail-Endpunkt ohne Schuelerlisten."
+        : "Der Klassenabruf ist fuer die aktuelle Datensynchronisation deaktiviert.",
       areas: ["klassen"],
-      state: matoolReady ? "enabled" : "unavailable",
+      state: classExtractionEnabled
+        ? matoolReady ? "enabled" : "unavailable"
+        : "disabled",
       execution: "automatic_and_manual",
-      lastRunAt: lastSync?.started_at ?? null,
+      lastRunAt: classExtractionEnabled ? lastSync?.started_at ?? null : null,
       dependencies: ["MATOOL Read-only"]
     },
     {
@@ -899,7 +983,7 @@ function buildFunctionCatalogue(
       name: "Beitragsuebersicht",
       description:
         "Summiert die Monatsbeitraege aller nicht stillgelegten Mitglieder und erzeugt die XML-Datei fuer Dashboard und Zapier.",
-      areas: MATOOL_SNAPSHOT_AREAS.filter((area) => area.startsWith("schueler")),
+      areas: ["schueler", "schueler_details"],
       state: "enabled",
       execution: "on_demand",
       lastRunAt: null,

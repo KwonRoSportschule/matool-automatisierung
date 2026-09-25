@@ -100,6 +100,9 @@ export interface WarningSummary {
   state: "critical" | "warning";
   technicalCode: string | null;
   title: string;
+  occurrenceCount?: number;
+  firstOccurredAt?: string | null;
+  lastOccurredAt?: string | null;
 }
 
 export interface ScheduleSummary {
@@ -131,6 +134,7 @@ export interface DashboardOverview {
   charts: { points: ChartPoint[] };
   connections: Record<string, ConnectionSummary>;
   environment: string;
+  build?: DashboardBuildInfo;
   functions: FunctionSummary[];
   generatedAt: string;
   metrics: {
@@ -154,6 +158,17 @@ export interface DashboardOverview {
   schedule: ScheduleSummary;
   schemaVersion: number;
   warnings: WarningSummary[];
+}
+
+export interface DashboardBuildInfo {
+  versionId: string | null;
+  versionCreatedAt: string | null;
+  source: {
+    baseCommit: string | null;
+    builtAt: string;
+    sourceHash: string;
+    workingTree: "clean" | "dirty" | "unknown";
+  } | null;
 }
 
 export interface ActivityItem {

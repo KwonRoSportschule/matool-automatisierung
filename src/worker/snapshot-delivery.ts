@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import { jsonResponse, methodNotAllowed } from "../core/http";
+import { projectSnapshotPayloadForZapier } from "../core/zapier-payload";
 import { validateZapierTargetUrl } from "../sinks/zapier";
 import type { Env } from "./env";
 import {
@@ -52,6 +53,8 @@ export async function handleSnapshotSubscriptionApiRequest(
       typeof body.area !== "string" ||
       !allowedAreas.includes(body.area) ||
       typeof body.only_changed !== "boolean" ||
+      (body.only_new !== undefined && typeof body.only_new !== "boolean") ||
+      (body.only_new === true && body.only_changed === true) ||
       typeof body.target_url !== "string" ||
       body.target_url.length === 0 ||
       body.target_url.length > MAX_TARGET_URL_LENGTH
@@ -74,6 +77,7 @@ export async function handleSnapshotSubscriptionApiRequest(
       {
         area: body.area,
         onlyChanged: body.only_changed,
+        onlyNew: body.only_new === true,
         targetUrl: targetUrl.toString()
       },
       new Date()
@@ -83,7 +87,8 @@ export async function handleSnapshotSubscriptionApiRequest(
         schema_version: 1,
         id: subscription.id,
         area: body.area,
-        only_changed: body.only_changed
+        only_changed: body.only_changed,
+        only_new: body.only_new === true
       },
       { status: 201 }
     );
@@ -250,7 +255,10 @@ async function deliverSnapshotEvent(
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new TypeError("invalid snapshot payload");
     }
-    payload = parsed as Record<string, unknown>;
+    payload = projectSnapshotPayloadForZapier(
+      lease.area,
+      parsed as Record<string, unknown>
+    );
   } catch {
     return {
       errorCode: "snapshot_zapier_payload_invalid",
@@ -358,7 +366,10 @@ async function readSubscriptionBody(
   }
   const body = parsed as Record<string, unknown>;
   const keys = Object.keys(body).sort();
-  if (keys.join(",") !== "area,only_changed,target_url") {
+  if (
+    keys.join(",") !== "area,only_changed,target_url" &&
+    keys.join(",") !== "area,only_changed,only_new,target_url"
+  ) {
     invalidSubscriptionPayload();
   }
   return body;

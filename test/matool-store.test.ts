@@ -52,6 +52,78 @@ async function openedRows<T extends { payload_json: string; source_id: string }>
   );
 }
 
+/**
+ * Wortgleich die Anweisung aus Migration 0010: sie entfernt die
+ * Darstellungsfelder und markiert den Inhaltshash zur Neuberechnung. Damit
+ * pruefen die Tests die tatsaechlich ausgelieferte Umstellung und nicht eine
+ * Nachbildung davon.
+ */
+async function migrateAwayFromDisplayFields(area: string): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE matool_snapshots
+        SET payload_json = json_remove(payload_json, '$.tableIndex', '$.columnCount'),
+            content_hash = ''
+      WHERE area = ?
+        AND CASE
+              WHEN json_valid(payload_json)
+                THEN json_extract(payload_json, '$.tableIndex') IS NOT NULL
+                  OR json_extract(payload_json, '$.columnCount') IS NOT NULL
+              ELSE 0
+            END`
+  )
+    .bind(area)
+    .run();
+}
+
+async function readChanges(
+  area: string,
+  sourceId: string
+): Promise<SnapshotChangeRow[]> {
+  const changes = await env.DB.prepare(
+    `SELECT run_id, change_kind, content_hash, payload_json, zapier_event_id
+     FROM matool_snapshot_changes
+     WHERE area = ? AND source_id = ?
+     ORDER BY change_id`
+  )
+    .bind(area, sourceId)
+    .all<SnapshotChangeRow>();
+  const cipher = await storedPayloadCipher(env);
+  return Promise.all(
+    changes.results.map(async (change) => {
+      expect(change.payload_json).toMatch(/^enc:v1:/u);
+      return {
+        ...change,
+        payload_json: await cipher.open({ area, sourceId }, change.payload_json)
+      };
+    })
+  );
+}
+
+async function readSnapshot(
+  area: string,
+  sourceId: string
+): Promise<(SnapshotRow & { last_changed_at: string }) | null> {
+  const snapshot = await env.DB.prepare(
+    `SELECT area, source_id, first_seen_at, last_seen_at, last_changed_at,
+            content_hash, payload_json, last_run_id
+     FROM matool_snapshots
+     WHERE area = ? AND source_id = ?`
+  )
+    .bind(area, sourceId)
+    .first<SnapshotRow & { last_changed_at: string }>();
+  if (!snapshot) {
+    return null;
+  }
+  expect(snapshot.payload_json).toMatch(/^enc:v1:/u);
+  return {
+    ...snapshot,
+    payload_json: await (await storedPayloadCipher(env)).open(
+      { area, sourceId },
+      snapshot.payload_json
+    )
+  };
+}
+
 describe("generische MATOOL-Snapshots", () => {
   it("upsertet nach Bereich und Quell-ID und loescht fehlende Datensaetze nie", async () => {
     const suffix = crypto.randomUUID();
@@ -339,6 +411,245 @@ describe("generische MATOOL-Snapshots", () => {
       `run_${suffix}_2`,
       `run_${suffix}_3`
     ]);
+  });
+
+  it("uebernimmt den neu berechneten Hash ohne vorgetaeuschte Aenderung", async () => {
+    // Am 10.09.2026 wurden die Darstellungsfelder "tableIndex" und
+    // "columnCount" aus dem Payload entfernt. Damit ist jeder gespeicherte
+    // Hash wertlos; Migration 0010 setzt ihn auf den leeren Wert. Ohne
+    // Sonderbehandlung meldete allein diese Umstellung den gesamten Bestand
+    // als geaendert -- genau die Falschmeldung, die sie beseitigen soll.
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `interessenten_${suffix}`;
+    const sourceId = "900004";
+    // Umlaute und Anfuehrungszeichen belegen, dass die Payload-Schreibweise
+    // von json_remove und JSON.stringify zeichengenau uebereinstimmt.
+    const payload = { name: 'Gr"ünwald & Söhne', status: "Termin" };
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["columnCount", "name", "status", "tableIndex"],
+      area,
+      finishedAt: "2026-09-10T08:00:01.000Z",
+      observedAt: "2026-09-10T08:00:00.000Z",
+      records: [
+        { sourceId, payload: { ...payload, columnCount: 5, tableIndex: 47 } }
+      ],
+      runId: `run_${suffix}_1`,
+      startedAt: "2026-09-10T08:00:00.000Z"
+    }, await storedPayloadCipher(env));
+    await migrateAwayFromDisplayFields(area);
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["name", "status"],
+      area,
+      finishedAt: "2026-09-10T09:00:01.000Z",
+      observedAt: "2026-09-10T09:00:00.000Z",
+      records: [{ sourceId, payload }],
+      runId: `run_${suffix}_2`,
+      startedAt: "2026-09-10T09:00:00.000Z"
+    }, await storedPayloadCipher(env));
+
+    const changes = await readChanges(area, sourceId);
+    const snapshot = await readSnapshot(area, sourceId);
+
+    // Nur die urspruengliche Anlage, kein zweiter Eintrag.
+    expect(changes.map((change) => change.change_kind)).toEqual(["created"]);
+    // Der neu berechnete Hash wird uebernommen, das Aenderungsdatum bleibt.
+    expect(snapshot?.content_hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(snapshot?.last_changed_at).toBe("2026-09-10T08:00:00.000Z");
+    expect(snapshot?.last_seen_at).toBe("2026-09-10T09:00:00.000Z");
+    expect(snapshot?.payload_json).toBe(
+      '{"name":"Gr\\"ünwald & Söhne","status":"Termin"}'
+    );
+  });
+
+  it("meldet eine echte Aenderung auch quer zur Neuberechnung", async () => {
+    // Aendert MATOOL zwischen Migration und naechstem Lauf tatsaechlich einen
+    // Wert, darf die Marke ihn nicht verschlucken.
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `interessenten_${suffix}`;
+    const sourceId = "900005";
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["columnCount", "status", "tableIndex"],
+      area,
+      finishedAt: "2026-09-10T08:00:01.000Z",
+      observedAt: "2026-09-10T08:00:00.000Z",
+      records: [
+        {
+          sourceId,
+          payload: { columnCount: 5, status: "Termin", tableIndex: 47 }
+        }
+      ],
+      runId: `run_${suffix}_1`,
+      startedAt: "2026-09-10T08:00:00.000Z"
+    }, await storedPayloadCipher(env));
+    await migrateAwayFromDisplayFields(area);
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area,
+      finishedAt: "2026-09-10T09:00:01.000Z",
+      observedAt: "2026-09-10T09:00:00.000Z",
+      records: [{ sourceId, payload: { status: "Mitglied" } }],
+      runId: `run_${suffix}_2`,
+      startedAt: "2026-09-10T09:00:00.000Z"
+    }, await storedPayloadCipher(env));
+
+    const changes = await readChanges(area, sourceId);
+    const snapshot = await readSnapshot(area, sourceId);
+
+    expect(changes.map((change) => change.change_kind)).toEqual([
+      "created",
+      "updated"
+    ]);
+    expect(changes[1]?.payload_json).toBe('{"status":"Mitglied"}');
+    expect(snapshot?.last_changed_at).toBe("2026-09-10T09:00:00.000Z");
+  });
+
+  it("uebernimmt Klartext-Altbestand nach Migration 0010 ohne Aenderung", async () => {
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `interessenten_${suffix}`;
+    const sourceId = "900011";
+    // Stand vor der Verschluesselung: ohne Schluessel bleibt die Nutzlast
+    // Klartext, genau wie am 10.09.2026 in D1.
+    const plaintextCipher = await storedPayloadCipher({
+      ...env,
+      DATA_ENCRYPTION_KEY: "",
+      DATA_ENCRYPTION_REQUIRED: "false"
+    });
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["columnCount", "status", "tableIndex"],
+      area,
+      finishedAt: "2026-09-10T08:00:01.000Z",
+      observedAt: "2026-09-10T08:00:00.000Z",
+      records: [{ sourceId, payload: { columnCount: 5, status: "Termin", tableIndex: 8 } }],
+      runId: `run_${suffix}_1`,
+      startedAt: "2026-09-10T08:00:00.000Z"
+    }, plaintextCipher);
+    await migrateAwayFromDisplayFields(area);
+    const migrated = await env.DB.prepare(
+      "SELECT content_hash, payload_json FROM matool_snapshots WHERE area = ? AND source_id = ?"
+    ).bind(area, sourceId).first<{ content_hash: string; payload_json: string }>();
+    expect(migrated).toEqual({ content_hash: "", payload_json: '{"status":"Termin"}' });
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area,
+      finishedAt: "2026-09-25T09:00:01.000Z",
+      observedAt: "2026-09-25T09:00:00.000Z",
+      records: [{ sourceId, payload: { status: "Termin" } }],
+      runId: `run_${suffix}_2`,
+      startedAt: "2026-09-25T09:00:00.000Z"
+    }, await storedPayloadCipher(env));
+
+    const changes = await env.DB.prepare(
+      "SELECT change_kind FROM matool_snapshot_changes WHERE area = ? AND source_id = ?"
+    ).bind(area, sourceId).all<{ change_kind: string }>();
+    expect(changes.results.map((change) => change.change_kind)).toEqual(["created"]);
+    const snapshot = await readSnapshot(area, sourceId);
+    expect(snapshot?.content_hash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(snapshot?.last_changed_at).toBe("2026-09-10T08:00:00.000Z");
+    expect(snapshot?.payload_json).toBe('{"status":"Termin"}');
+  });
+
+  it("stellt einen Erstimport nicht an bestehende Abos zu, spaetere Aenderungen schon", async () => {
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `schueler_ex_${suffix}`;
+    const subscriptionId = `zsnap_${crypto.randomUUID()}`;
+    await env.DB.prepare(
+      `INSERT INTO zapier_snapshot_subscriptions (
+         subscription_id, target_url, area, only_changed, status,
+         last_delivered_change_id, created_at, updated_at
+       ) VALUES (?, ?, ?, 0, 'active', 0, ?, ?)`
+    ).bind(
+      subscriptionId,
+      `https://hooks.example.invalid/${suffix}`,
+      area,
+      "2026-09-22T08:00:00.000Z",
+      "2026-09-22T08:00:00.000Z"
+    ).run();
+    const cursor = async () =>
+      (await env.DB.prepare(
+        "SELECT last_delivered_change_id AS id FROM zapier_snapshot_subscriptions WHERE subscription_id = ?"
+      ).bind(subscriptionId).first<{ id: number }>())?.id;
+    const maxChange = async () =>
+      (await env.DB.prepare(
+        "SELECT MAX(change_id) AS id FROM matool_snapshot_changes WHERE area = ?"
+      ).bind(area).first<{ id: number }>())?.id;
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area,
+      finishedAt: "2026-09-25T09:00:01.000Z",
+      observedAt: "2026-09-25T09:00:00.000Z",
+      records: [
+        { sourceId: "910001", payload: { status: "gekuendigt" } },
+        { sourceId: "910002", payload: { status: "gekuendigt" } }
+      ],
+      runId: `run_${suffix}_1`,
+      startedAt: "2026-09-25T09:00:00.000Z"
+    }, await storedPayloadCipher(env));
+    const baseline = await maxChange();
+    expect(baseline).toBeGreaterThan(0);
+    expect(await cursor()).toBe(baseline);
+
+    await persistMatoolSnapshotRun(env.DB, {
+      allowedPayloadFields: ["status"],
+      area,
+      finishedAt: "2026-09-25T10:00:01.000Z",
+      observedAt: "2026-09-25T10:00:00.000Z",
+      records: [
+        { sourceId: "910001", payload: { status: "gekuendigt" } },
+        { sourceId: "910002", payload: { status: "gekuendigt" } },
+        { sourceId: "910003", payload: { status: "gekuendigt" } }
+      ],
+      runId: `run_${suffix}_2`,
+      startedAt: "2026-09-25T10:00:00.000Z"
+    }, await storedPayloadCipher(env));
+    // Der neue Datensatz liegt hinter dem Cursor und wird zugestellt.
+    expect(await cursor()).toBe(baseline);
+    expect(await maxChange()).toBeGreaterThan(baseline!);
+  });
+
+  it("erkennt nach der Neuberechnung wieder am Hash", async () => {
+    const suffix = crypto.randomUUID().replaceAll("-", "_");
+    const area = `interessenten_${suffix}`;
+    const sourceId = "900006";
+
+    for (const [index, status] of ["Termin", "Termin", "Kontakt"].entries()) {
+      const hour = (8 + index).toString().padStart(2, "0");
+      await persistMatoolSnapshotRun(env.DB, {
+        allowedPayloadFields: ["columnCount", "status", "tableIndex"],
+        area,
+        finishedAt: `2026-09-10T${hour}:00:01.000Z`,
+        observedAt: `2026-09-10T${hour}:00:00.000Z`,
+        records: [
+          index === 0
+            ? {
+                sourceId,
+                payload: { columnCount: 5, status, tableIndex: 47 }
+              }
+            : { sourceId, payload: { status } }
+        ],
+        runId: `run_${suffix}_${index + 1}`,
+        startedAt: `2026-09-10T${hour}:00:00.000Z`
+      }, await storedPayloadCipher(env));
+      if (index === 0) {
+        await migrateAwayFromDisplayFields(area);
+      }
+    }
+
+    const changes = await readChanges(area, sourceId);
+    const snapshot = await readSnapshot(area, sourceId);
+
+    // Die Marke unterdrueckt genau einen Abgleich, nicht die Erkennung selbst.
+    expect(changes.map((change) => change.change_kind)).toEqual([
+      "created",
+      "updated"
+    ]);
+    expect(changes[1]?.payload_json).toBe('{"status":"Kontakt"}');
+    expect(snapshot?.content_hash).toBe(changes[1]?.content_hash);
   });
 
   it("speichert einen fehlgeschlagenen Lauf mit atomaren Fehlerzaehlern", async () => {

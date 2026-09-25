@@ -17,6 +17,7 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   artikel: "Artikel",
   berichte: "Berichte",
   checkin: "Check-ins",
+  graduierungen: "Prüfungen / Graduierungen",
   interessenten: "Interessenten",
   interessenten_details: "Interessenten-Details",
   karte: "Karte",
@@ -25,6 +26,7 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   newsletter: "Newsletter",
   pruefungen: "Pruefungen",
   schueler: "Schueler / Mitglieder",
+  schueler_ex: "Ehemalige Mitglieder (Kuendigung abgeschlossen)",
   telemetrie: "Telemetrie"
 };
 
@@ -173,7 +175,20 @@ const SCHUELER_FIELD_LABELS: Readonly<Record<string, string>> = {
   memo: "Memo"
 };
 
-const GENERIC_SAFE_FIELDS = new Set(["columnCount", "tableIndex", "status"]);
+const GENERIC_SAFE_FIELDS = new Set([
+  "checkin_datum",
+  "checkin_uhrzeit",
+  "checkin_zeitpunkt",
+  "graduierung",
+  "graduierung_id",
+  "klasse_id",
+  "mitglied_id",
+  "pdf_verfuegbar",
+  "pruefungsdatum",
+  "sparte",
+  "status",
+  "storniert"
+]);
 
 const PII_FIELD_PATTERN =
   /(?:^|_)(?:anschrift|adresse|alter|beschreibung|birth|date|email|foto|freitext|geburt|iban|kontakt|link|mail|mobil|nachname|name|notiz|ort|phone|plz|smsText|strasse|telefon|vorname)(?:$|_)/iu;
@@ -352,7 +367,9 @@ function fieldLabel(area: string, key: string): string {
     return CLASS_FIELD_LABELS[key];
   }
   if (
-    (area === "schueler" || area === "schueler_details") &&
+    (area === "schueler" ||
+      area === "schueler_details" ||
+      area === "schueler_ex") &&
     SCHUELER_FIELD_LABELS[key]
   ) {
     return SCHUELER_FIELD_LABELS[key];
@@ -369,8 +386,17 @@ function fieldLabel(area: string, key: string): string {
   }
   return (
     {
-      columnCount: "Spaltenanzahl",
-      tableIndex: "Tabellenindex",
+      checkin_datum: "Check-in-Datum",
+      checkin_uhrzeit: "Check-in-Uhrzeit",
+      checkin_zeitpunkt: "Check-in-Zeitpunkt",
+      graduierung: "Graduierung",
+      graduierung_id: "MATOOL-Graduierungs-ID",
+      klasse_id: "MATOOL-Klassen-ID",
+      mitglied_id: "MATOOL-Mitglieds-ID",
+      pdf_verfuegbar: "Prüfungs-PDF vorhanden",
+      pruefungsdatum: "Prüfungsdatum",
+      sparte: "Sparte",
+      storniert: "Storniert",
       status: "Status"
     }[key] ?? key.replaceAll("_", " ")
   );
@@ -382,7 +408,11 @@ function fieldOrder(area: string, key: string): number {
     const index = keys.indexOf(key);
     return index === -1 ? 1_000 : index;
   }
-  if (area === "schueler" || area === "schueler_details") {
+  if (
+    area === "schueler" ||
+    area === "schueler_details" ||
+    area === "schueler_ex"
+  ) {
     const index = Object.keys(SCHUELER_FIELD_LABELS).indexOf(key);
     if (index !== -1) {
       return index;
@@ -394,12 +424,6 @@ function fieldOrder(area: string, key: string): number {
     if (index !== -1) {
       return index;
     }
-  }
-  if (key === "tableIndex") {
-    return 900;
-  }
-  if (key === "columnCount") {
-    return 901;
   }
   const genericCell = /^c(\d{2})$/u.exec(key);
   return genericCell?.[1] ? Number.parseInt(genericCell[1], 10) : 800;

@@ -5,6 +5,9 @@
   "compatibility_date": "2026-07-29",
   "workers_dev": false,
   "preview_urls": false,
+  "version_metadata": {
+    "binding": "VERSION_METADATA"
+  },
   "assets": {
     "directory": "./dist/client",
     "binding": "ASSETS",
@@ -54,6 +57,9 @@
       "name": "matool-middleware-staging",
       "workers_dev": true,
       "preview_urls": false,
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "vars": {
         "APP_ENV": "staging",
         "ACCESS_AUD": "da7897b053c6af64c05371801a7f7081bf394937a0c657c1d5fd88260bba46ca",
@@ -99,14 +105,13 @@
         }
       ],
       // Spiegelt die im Cloudflare-Dashboard gesetzten Limits (Workers Paid).
-      // Ohne sie wuerde jedes Deploy sie entfernen, und ein Lauf bricht nach
-      // etwa fuenf Bereichen mit "exceededCpu" ab.
+      // Ohne diesen Block gilt die Vorgabe von 30 Sekunden CPU: Ein Deploy
+      // wuerde die Dashboard-Werte entfernen, der Listenschritt ueber mehrere
+      // tausend Interessenten bricht dann mit "exceededCpu" ab und wiederholt
+      // sich endlos (am 25.08.2026 an einem haengenden Workflow belegt).
       "limits": {
         "cpu_ms": 300000,
         "subrequests": 10000
-      },
-      "version_metadata": {
-        "binding": "VERSION_METADATA"
       },
       "triggers": {
         "crons": ["0 7-18 * * mon-fri"]
@@ -116,6 +121,9 @@
       "name": "matool-middleware-production",
       "workers_dev": false,
       "preview_urls": false,
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "limits": {
         "cpu_ms": 300000,
         "subrequests": 10000
