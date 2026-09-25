@@ -13,6 +13,7 @@ import {
 import type { Env } from "../src/worker/env";
 import worker from "../src/worker";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 const BASE = "https://matool-middleware-staging.example.invalid";
 
@@ -104,26 +105,30 @@ describe("Suche in der Datenansicht", () => {
   const nachname = `Suchprobe${suffix.slice(0, 8)}`;
 
   it("findet eine Person ueber Name, E-Mail und Ort", async () => {
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["email", "name", "ort", "status", "vorname"],
-      area: "interessenten",
-      finishedAt: "2099-09-01T10:00:02.000Z",
-      observedAt: "2099-09-01T10:00:01.000Z",
-      records: [
-        {
-          sourceId: `7${suffix.slice(0, 20)}`,
-          payload: {
-            email: `${nachname.toLowerCase()}@example.invalid`,
-            name: nachname,
-            ort: `Ortsprobe${suffix.slice(0, 8)}`,
-            status: "Neu",
-            vorname: "Lilli"
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["email", "name", "ort", "status", "vorname"],
+        area: "interessenten",
+        finishedAt: "2099-09-01T10:00:02.000Z",
+        observedAt: "2099-09-01T10:00:01.000Z",
+        records: [
+          {
+            sourceId: `7${suffix.slice(0, 20)}`,
+            payload: {
+              email: `${nachname.toLowerCase()}@example.invalid`,
+              name: nachname,
+              ort: `Ortsprobe${suffix.slice(0, 8)}`,
+              status: "Neu",
+              vorname: "Lilli"
+            }
           }
-        }
-      ],
-      runId: `suche_${suffix}`,
-      startedAt: "2099-09-01T10:00:00.000Z"
-    });
+        ],
+        runId: `suche_${suffix}`,
+        startedAt: "2099-09-01T10:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
     for (const begriff of [
       nachname,

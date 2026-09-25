@@ -21,6 +21,9 @@ export default defineConfig({
             // Staging verlangt das Dashboard-Passwort; die Tests schalten es
             // gezielt pro Fall ein.
             DASHBOARD_PASSWORD_REQUIRED: "false",
+            // Alle Tests laufen mit verschluesselten Nutzlasten wie im Betrieb.
+            DATA_ENCRYPTION_KEY:
+              "synthetic-data-encryption-key-for-tests-only",
             DEV_AUTH_BYPASS: "allow-loopback-only",
             ZAPIER_SERVICE_TOKEN:
               "synthetic-service-token-at-least-32-characters",

@@ -55,7 +55,8 @@ inhaltliche Prüfung vor einem Commit.
 - Admin-Webseite und Admin-API werden mit Cloudflare Access geschützt.
 - Bis dahin schützt Staging beide per HTTP Basic Auth. Benutzername und
   Passwort (`DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD`) existieren nur als
-  Cloudflare Secret; fehlen sie, bleibt das Dashboard gesperrt.
+  Cloudflare Secret; fehlen sie, bleibt das Dashboard gesperrt. Weitere
+  Schichten beschreibt „Schutzschichten für Personendaten“.
 - Service-Endpunkte erhalten eine eigene Authentifizierung und eng begrenzte
   Rechte.
 - `/api/zapier/v1/*` liegt zusätzlich hinter einer Cloudflare-Access-
@@ -85,6 +86,58 @@ inhaltliche Prüfung vor einem Commit.
 - Login-Erfolg wird durch eine authentifizierte Folgeseite geprüft, nicht nur
   durch einen Redirect.
 - Unbekannte Antwortformate führen zu einem Abbruch ohne Zustandsfortschreibung.
+
+## Schutzschichten für Personendaten
+
+Die Schüler-Details enthalten IBAN, Bankdaten, Geburtsdaten und Daten von
+Erziehungsberechtigten. Deshalb greifen mehrere voneinander unabhängige
+Schichten; fällt eine aus, schützen die übrigen weiter.
+
+| Schicht | Schutz | Umsetzung |
+|---|---|---|
+| Transport | Nur HTTPS | HTTP wird vor jeder Anmeldung per 308 auf HTTPS umgeleitet; `Strict-Transport-Security` für ein Jahr. |
+| Zugang | Benutzername und Passwort | HTTP Basic Auth, Vergleich in konstanter Zeit, Secrets nur in Cloudflare. |
+| Zugang | Bremse gegen Durchprobieren | Nach 10 Fehlversuchen in 15 Minuten ist die Herkunft 15 Minuten gesperrt, auch für richtige Zugangsdaten. Die IP liegt nur als HMAC vor und wird nach einem Tag gelöscht. |
+| Zugang (optional) | Zweiter Faktor | `DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS=true` verlangt zusätzlich eine Cloudflare-Access-Anmeldung, z. B. Einmalcode per E-Mail. Access wird vor dem Passwort geprüft. |
+| Speicherung | Verschlüsselung in D1 | Jede MATOOL-Nutzlast liegt als AES-256-GCM-Chiffrat vor (Schlüssel per HKDF-SHA-256 aus `DATA_ENCRYPTION_KEY`, zufälliger 96-Bit-IV je Schreibvorgang). Die Authentisierung bindet das Chiffrat an Bereich und Datensatz; ein vertauschtes oder verändertes Chiffrat wird abgelehnt. |
+| Speicherung | Kein Klartext durch Fehlkonfiguration | `DATA_ENCRYPTION_REQUIRED=true`: Ohne Schlüssel schlägt der Sync fehl, statt Klartext zu schreiben. |
+| Speicherbegrenzung | Löschfrist | Kopien alter Datensatzstände in der Änderungshistorie werden nach 30 Tagen gelöscht (`CHANGE_PAYLOAD_RETENTION_DAYS`); nur die Metadaten bleiben. |
+| Anzeige | Datenminimierung | IBAN und Kontonummer zeigt das Dashboard auch im Klartextbetrieb nur mit den letzten vier Stellen; Bankdaten sind nicht durchsuchbar. |
+| Protokolle | Keine Personendaten in Logs | Cloudflare-Request-Logs (volle URL samt Suchbegriff) sind abgeschaltet; eigene Logs enthalten nur Zähler und Fehlercodes. |
+
+Der Wartungslauf zu jedem Cron-Aufruf verschlüsselt Altbestand, versiegelt
+nach einem Schlüsselwechsel neu, setzt die Löschfrist durch und räumt die
+Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
+
+### Schlüsselverwaltung
+
+- `DATA_ENCRYPTION_KEY`: Zufallstext mit mindestens 32 Zeichen, erzeugt im
+  Passwortmanager und dort zusätzlich abgelegt. Cloudflare zeigt Secrets nach
+  dem Speichern nicht mehr an.
+- Schlüsselwechsel: neuen Wert als `DATA_ENCRYPTION_KEY`, bisherigen als
+  `DATA_ENCRYPTION_KEY_PREVIOUS` setzen. Sobald die Datenschutz-Kachel wieder
+  grün ist, `DATA_ENCRYPTION_KEY_PREVIOUS` löschen.
+- Geht der Schlüssel verloren, sind gespeicherte Stände nicht mehr lesbar.
+  Aktuelle Datensätze schreibt der nächste Sync mit dem neuen Schlüssel
+  neu, weil MATOOL die Quelle bleibt.
+
+### Grenzen, die Code allein nicht schließt
+
+- Wer das Cloudflare-Konto verwaltet, kann Code mit Zugriff auf den
+  Schlüssel deployen. Das Konto braucht deshalb 2FA und möglichst wenige
+  Mitglieder.
+- D1 Time Travel hält überschriebene Stände bis zu 30 Tage vor. Klartext aus
+  der Zeit vor der Umstellung ist erst danach vollständig verschwunden.
+- Der Inhalts-Hash (SHA-256 des Klartexts) bleibt zur Änderungserkennung
+  unverschlüsselt. Er verrät keinen Inhalt, erlaubt aber die Bestätigung
+  eines vollständig erratenen Datensatzes.
+- Die Zapier-Schnittstelle liefert freigegebene Bereiche vollständig aus,
+  auch `schueler_details` mit Bankdaten. Welche Felder Zapier wirklich
+  braucht, ist fachlich zu entscheiden und dann per Allowlist zu begrenzen.
+- Rechtliche Pflichten bleiben organisatorisch: Auftragsverarbeitungsverträge
+  mit Cloudflare und Zapier, Verzeichnis der Verarbeitungstätigkeiten,
+  Löschkonzept und Datenschutzhinweise. Das ersetzt keine Prüfung durch
+  Datenschutzbeauftragte.
 
 ## Ereignisse und Zustellung
 

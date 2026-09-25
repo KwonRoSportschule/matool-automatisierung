@@ -164,6 +164,77 @@ describe("Worker-Grenzen", () => {
     });
   });
 
+  it("leitet unverschluesseltes HTTP vor jeder Anmeldung auf HTTPS um", async () => {
+    const response = await dispatch(
+      new Request("http://matool-middleware-staging.example.invalid/api/admin/v1/status?x=1")
+    );
+    expect(response.status).toBe(308);
+    expect(response.headers.get("Location")).toBe(
+      "https://matool-middleware-staging.example.invalid/api/admin/v1/status?x=1"
+    );
+  });
+
+  it("setzt HSTS auf API-Antworten", async () => {
+    const response = await dispatch(
+      new Request("https://example.invalid/healthz")
+    );
+    expect(response.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000; includeSubDomains"
+    );
+  });
+
+  it("zeigt nach zu vielen Fehlversuchen eine Sperrseite mit Retry-After", async () => {
+    const passwordEnv = {
+      ...env,
+      APP_ENV: "staging",
+      DASHBOARD_PASSWORD: "synthetic-dashboard-password",
+      DASHBOARD_PASSWORD_REQUIRED: "true",
+      DASHBOARD_USERNAME: "synthetic-trainer"
+    } as Env;
+    const request = () =>
+      new Request("https://matool-middleware-staging.example.invalid/", {
+        headers: {
+          Authorization: `Basic ${btoa("synthetic-trainer:falsch-falsch-falsch")}`,
+          "CF-Connecting-IP": "203.0.113.77"
+        }
+      });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await dispatch(request(), passwordEnv)).status).toBe(401);
+    }
+
+    const locked = await dispatch(request(), passwordEnv);
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(locked.headers.get("WWW-Authenticate")).toBeNull();
+    await expect(locked.text()).resolves.toContain("Zu viele Fehlversuche");
+  });
+
+  it("meldet den Verschluesselungsstand als Datenschutz-Kachel", async () => {
+    const response = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/dashboard/overview?range=7")
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      connections: {
+        security: {
+          key: "security",
+          state: expect.stringMatching(/^(healthy|warning)$/u)
+        }
+      }
+    });
+
+    const unencrypted = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/dashboard/overview?range=7"),
+      { ...env, DATA_ENCRYPTION_KEY: undefined } as unknown as Env
+    );
+    await expect(unencrypted.json()).resolves.toMatchObject({
+      connections: {
+        security: { state: "critical", statusLabel: "Nicht verschluesselt" }
+      },
+      overall: { state: "critical" }
+    });
+  });
+
   it("liefert lokal nur aggregierten Prozessstatus", async () => {
     const response = await dispatch(
       new Request("http://127.0.0.1/api/admin/v1/status")

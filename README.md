@@ -104,6 +104,19 @@ Alternativ im Cloudflare-Dashboard unter Workers & Pages →
 503 statt öffentlich zu werden (`DASHBOARD_PASSWORD_REQUIRED=true`). Zum
 Abmelden den Browser vollständig schließen.
 
+Personendaten liegen in D1 nur AES-256-GCM-verschlüsselt. Den Schlüssel
+(Zufallstext, mindestens 32 Zeichen, zusätzlich im Passwortmanager ablegen)
+gibt es ebenfalls nur als Secret:
+
+```text
+pnpm exec wrangler secret put DATA_ENCRYPTION_KEY --env staging
+```
+
+Ohne Schlüssel speichert der Sync nichts (`DATA_ENCRYPTION_REQUIRED=true`).
+Der stündliche Wartungslauf verschlüsselt vorhandenen Altbestand; die Kachel
+„Datenschutz“ wird grün, sobald nichts mehr im Klartext liegt. Alle
+Schutzschichten stehen in [SECURITY.md](SECURITY.md#schutzschichten-für-personendaten).
+
 Nach Cloudflare-Login, Anlage der EU-D1-Datenbank und Einsetzen ihrer ID:
 
 ```text

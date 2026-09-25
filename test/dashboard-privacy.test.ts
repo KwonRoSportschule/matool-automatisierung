@@ -18,6 +18,7 @@ import {
 import type { Env } from "../src/worker/env";
 import worker from "../src/worker";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -337,6 +338,28 @@ describe("Dashboard-Datenschutz", () => {
     );
   });
 
+  it("zeigt Kontonummern auch im Klartextbetrieb nur mit den letzten vier Stellen", () => {
+    const values = Object.fromEntries(
+      dashboardFieldValues(
+        "schueler",
+        {
+          bic: "BYLADEM1001",
+          iban: "DE02 1203 0000 0000 2020 51",
+          konto: "123456789",
+          vorname: "Synthetisch"
+        },
+        true
+      ).map((field) => [field.key, field.value])
+    );
+    expect(values).toMatchObject({
+      bic: "BYLADEM1001",
+      iban: "•••• 2051",
+      konto: "•••• 6789",
+      vorname: "Synthetisch"
+    });
+    expect(JSON.stringify(values)).not.toContain("DE02");
+  });
+
   it("gibt bei ungueltigem gespeichertem JSON niemals Rohtext zurueck", () => {
     expect(parseStoredPayload("PII-SENTINEL-kein-JSON")).toEqual({});
     expect(parseStoredPayload('["PII-SENTINEL"]')).toEqual({});
@@ -346,25 +369,29 @@ describe("Dashboard-Datenschutz", () => {
   it("zeigt Testdaten bei ausdruecklich aktiviertem Klartext-Testmodus", async () => {
     const suffix = crypto.randomUUID().replaceAll("-", "");
     const piiSentinel = `PII-DASHBOARD-${suffix}`;
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["email", "firstName", "phone", "status"],
-      area: "interessenten",
-      finishedAt: "2099-08-03T10:00:02.000Z",
-      observedAt: "2099-08-03T10:00:01.000Z",
-      records: [
-        {
-          sourceId: `9${suffix.slice(0, 20)}`,
-          payload: {
-            email: `${piiSentinel}@example.invalid`,
-            firstName: piiSentinel,
-            phone: `+49${suffix.slice(0, 12)}`,
-            status: "Neu"
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["email", "firstName", "phone", "status"],
+        area: "interessenten",
+        finishedAt: "2099-08-03T10:00:02.000Z",
+        observedAt: "2099-08-03T10:00:01.000Z",
+        records: [
+          {
+            sourceId: `9${suffix.slice(0, 20)}`,
+            payload: {
+              email: `${piiSentinel}@example.invalid`,
+              firstName: piiSentinel,
+              phone: `+49${suffix.slice(0, 12)}`,
+              status: "Neu"
+            }
           }
-        }
-      ],
-      runId: `privacy_${suffix}`,
-      startedAt: "2099-08-03T10:00:00.000Z"
-    });
+        ],
+        runId: `privacy_${suffix}`,
+        startedAt: "2099-08-03T10:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
     const runtimeEnv = {
       ...env,
@@ -394,25 +421,29 @@ describe("Dashboard-Datenschutz", () => {
   it("maskiert Interessentenwerte am Snapshot-Endpunkt ohne Klartext-Testmodus", async () => {
     const suffix = crypto.randomUUID().replaceAll("-", "");
     const piiSentinel = `PII-MASKED-${suffix}`;
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["email", "firstName", "phone", "status"],
-      area: "interessenten",
-      finishedAt: "2099-08-04T10:00:02.000Z",
-      observedAt: "2099-08-04T10:00:01.000Z",
-      records: [
-        {
-          sourceId: `8${suffix.slice(0, 20)}`,
-          payload: {
-            email: `${piiSentinel}@example.invalid`,
-            firstName: piiSentinel,
-            phone: `+49${suffix.slice(0, 12)}`,
-            status: "Neu"
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["email", "firstName", "phone", "status"],
+        area: "interessenten",
+        finishedAt: "2099-08-04T10:00:02.000Z",
+        observedAt: "2099-08-04T10:00:01.000Z",
+        records: [
+          {
+            sourceId: `8${suffix.slice(0, 20)}`,
+            payload: {
+              email: `${piiSentinel}@example.invalid`,
+              firstName: piiSentinel,
+              phone: `+49${suffix.slice(0, 12)}`,
+              status: "Neu"
+            }
           }
-        }
-      ],
-      runId: `privacy_masked_${suffix}`,
-      startedAt: "2099-08-04T10:00:00.000Z"
-    });
+        ],
+        runId: `privacy_masked_${suffix}`,
+        startedAt: "2099-08-04T10:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
     const runtimeEnv = {
       ...env,

@@ -13,7 +13,12 @@
   },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
+    // Request-Logs enthielten die volle URL samt Suchbegriffen, also Namen.
+    // Die eigenen strukturierten Logs bleiben und sind frei von Personendaten.
+    "logs": {
+      "invocation_logs": false
+    }
   },
   "vars": {
     "APP_ENV": "local",
@@ -23,6 +28,8 @@
     "MATOOL_BASE_URL": "https://core.matool.de",
     "OUTBOUND_DELIVERY_ENABLED": "false",
     "DASHBOARD_PASSWORD_REQUIRED": "false",
+    "DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS": "false",
+    "DATA_ENCRYPTION_REQUIRED": "false",
     "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
     "PUBLIC_DASHBOARD_READ_ONLY": "false",
     "PUBLIC_DASHBOARD_PLAINTEXT": "false"
@@ -60,6 +67,13 @@
         //   wrangler secret put DASHBOARD_PASSWORD --env staging
         // Solange die Secrets fehlen, bleibt das Dashboard gesperrt.
         "DASHBOARD_PASSWORD_REQUIRED": "true",
+        // Zweiter Faktor: erst auf "true", wenn Cloudflare Access die
+        // workers.dev-Adresse schuetzt (siehe SECURITY.md).
+        "DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS": "false",
+        // Personendaten nur verschluesselt speichern. Schluessel als Secret:
+        //   wrangler secret put DATA_ENCRYPTION_KEY --env staging
+        // Ohne Schluessel schlagen Syncs fehl, statt Klartext zu speichern.
+        "DATA_ENCRYPTION_REQUIRED": "true",
         "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "false",
         // Klartext nur noch hinter dem Passwortschutz sichtbar.
@@ -110,6 +124,8 @@
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
         "DASHBOARD_PASSWORD_REQUIRED": "false",
+        "DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS": "false",
+        "DATA_ENCRYPTION_REQUIRED": "true",
         "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "false",
         "PUBLIC_DASHBOARD_PLAINTEXT": "false"

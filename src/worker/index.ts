@@ -8,8 +8,7 @@ import {
 import { MatoolClient } from "../matool/client";
 import {
   dashboardAccessSummary,
-  dashboardLoginRequiredResponse,
-  isDashboardLoginRequired,
+  dashboardLoginErrorResponse,
   requireAccessIdentity
 } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
@@ -54,6 +53,12 @@ const worker = {
     try {
       const url = new URL(request.url);
 
+      // Zugangsdaten und Personendaten nie ueber unverschluesseltes HTTP.
+      if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) {
+        url.protocol = "https:";
+        return Response.redirect(url.toString(), 308);
+      }
+
       if (url.pathname === "/healthz") {
         if (request.method !== "GET" && request.method !== "HEAD") {
           methodNotAllowed(["GET", "HEAD"]);
@@ -88,10 +93,10 @@ const worker = {
 
       return hardenAssetResponse(await env.ASSETS.fetch(request));
     } catch (error) {
-      if (isDashboardLoginRequired(error)) {
-        return dashboardLoginRequiredResponse(request, error);
-      }
-      return apiErrorResponse(error);
+      return (
+        dashboardLoginErrorResponse(request, error) ??
+        apiErrorResponse(error)
+      );
     }
   },
 
@@ -103,6 +108,14 @@ const worker = {
     context.waitUntil(handleScheduledInvocation(controller, env));
   }
 } satisfies ExportedHandler<Env>;
+
+function isLoopbackHostname(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  );
+}
 
 async function handleApiRequest(
   request: Request,
