@@ -43,6 +43,13 @@ pnpm run validate:offline
 
 ## Privater Upload
 
+Regulär lädt der GitHub-Workflow „Zapier-App veröffentlichen“
+(`.github/workflows/zapier-app.yml`) die App nach jedem Merge nach `main`
+hoch, der `zapier-app/` ändert. Er braucht das Repository-Secret
+`ZAPIER_DEPLOY_KEY` (Zapier Developer Platform → Settings → Deploy Keys).
+
+Manuell:
+
 Für Registrierung und Upload werden eine authentifizierte Zapier-CLI-Sitzung
 und die endgültige Staging-Origin benötigt:
 

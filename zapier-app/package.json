@@ -18,7 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "validate": "pnpm run build && zapier-platform validate",
     "validate:offline": "pnpm run build && zapier-platform validate --without-style",
-    "zapier:build": "pnpm run build && zapier-platform build"
+    "zapier:build": "pnpm run build && zapier-platform build",
+    "zapier:push": "pnpm run build && zapier-platform push --skip-dep-install"
   },
   "dependencies": {
     "zapier-platform-core": "19.0.0"

@@ -156,15 +156,33 @@ Die private App enthält jetzt die Aktion **Beitragsübersicht erstellen**
 Ausgaben: alle Summen und Zähler, `xml_datei` (Datei für Anhang oder Upload),
 `dateiname`, `mitglieder` und `nicht_eingerechnet` als Listen.
 
-Upload, nachdem der Worker deployt ist:
+## Ausrollen
 
-```text
-pnpm --dir zapier-app run zapier:build
-cd zapier-app && zapier-platform push
-```
+Beides wird erst mit dem Merge nach `main` live. Ein Push auf einen
+Feature-Branch baut weder den Worker in Cloudflare noch die Zapier-App.
 
-Die Version bleibt `0.0.0`; bestehende Zaps und der hinterlegte
-`MATOOL_MIDDLEWARE_ORIGIN` laufen unverändert weiter.
+**Worker (Cloudflare):** Merge nach `main` → Cloudflare baut und deployt
+`matool-middleware-staging`, die neue Version erscheint in der Version
+History. Ohne verbundenen Cloudflare-Build von Hand:
+`pnpm run deploy:staging`.
+
+**Zapier-App:** Der Workflow `.github/workflows/zapier-app.yml` lädt die App
+automatisch hoch, sobald sich `zapier-app/` auf `main` ändert. Einmalig
+einzurichten:
+
+1. Zapier Developer Platform → oben rechts **Settings** → **Deploy Keys** →
+   neuen Key erzeugen und kopieren.
+2. GitHub → Repository → **Settings → Secrets and variables → Actions** →
+   **New repository secret**, Name `ZAPIER_DEPLOY_KEY`, Wert einfügen.
+3. Liegt der Merge schon zurück: GitHub → **Actions** → „Zapier-App
+   veröffentlichen“ → **Run workflow**.
+
+Ohne Secret überspringt der automatische Lauf den Upload mit einer Warnung.
+Die Version bleibt `0.0.0` und wird überschrieben; bestehende Zaps und der
+hinterlegte `MATOOL_MIDDLEWARE_ORIGIN` laufen unverändert weiter.
+
+Lokal geht es weiterhin mit `zapier-platform login` und danach
+`pnpm --dir zapier-app run zapier:push`.
 
 ## Bauplan für den Zap (nächster Schritt)
 

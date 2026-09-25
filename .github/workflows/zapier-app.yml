@@ -1,0 +1,85 @@
+name: Zapier-App veröffentlichen
+
+# Laedt die private Zapier-App (App 244882, siehe zapier-app/.zapierapprc)
+# hoch, sobald sich ihr Code auf main aendert, oder manuell ueber
+# "Run workflow". Die Version aus zapier-app/package.json wird dabei
+# ueberschrieben; bestehende Zaps und der App-Umgebungswert
+# MATOOL_MIDDLEWARE_ORIGIN dieser Version bleiben erhalten.
+#
+# Voraussetzung: Repository-Secret ZAPIER_DEPLOY_KEY (Zapier Developer
+# Platform -> Settings -> Deploy Keys). Fehlt es, wird der automatische
+# Lauf mit einer Warnung uebersprungen; ein manueller Lauf schlaegt fehl.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "zapier-app/**"
+      - ".github/workflows/zapier-app.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zapier-app-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Private Zapier-App hochladen
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy-Key prüfen
+        id: deploy_key
+        env:
+          ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -n "$ZAPIER_DEPLOY_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "::error title=ZAPIER_DEPLOY_KEY fehlt::Repository-Secret ZAPIER_DEPLOY_KEY anlegen, siehe docs/beitraege-zapier.md."
+            exit 1
+          else
+            echo "::warning title=Zapier-App nicht hochgeladen::Repository-Secret ZAPIER_DEPLOY_KEY fehlt. Nach dem Anlegen den Workflow manuell starten."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Repository auschecken
+        if: steps.deploy_key.outputs.present == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: pnpm einrichten
+        if: steps.deploy_key.outputs.present == 'true'
+        uses: pnpm/action-setup@b0f76dfb45f55f8421693e4803ac7bb65143bd34 # v6
+        with:
+          version: 11.9.0
+          run_install: false
+
+      - name: Node.js einrichten
+        if: steps.deploy_key.outputs.present == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Abhängigkeiten reproduzierbar installieren
+        if: steps.deploy_key.outputs.present == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: App prüfen
+        if: steps.deploy_key.outputs.present == 'true'
+        run: |
+          pnpm --dir zapier-app run typecheck
+          pnpm --dir zapier-app run test
+
+      - name: App hochladen
+        if: steps.deploy_key.outputs.present == 'true'
+        working-directory: zapier-app
+        env:
+          ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
+        run: pnpm run zapier:push
