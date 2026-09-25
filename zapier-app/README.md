@@ -1,9 +1,12 @@
 # Private Zapier-App: MATOOL Middleware
 
-Diese interne Zapier-Platform-CLI-App liest neue oder geänderte Datensätze aus
-dem MATOOL Middleware Hub. Sie enthält genau einen Polling-Trigger:
+Diese interne Zapier-Platform-CLI-App liest Daten aus dem MATOOL Middleware
+Hub. Sie enthält einen Trigger und eine Aktion:
 
-`Neuer oder geänderter MATOOL-Datensatz`
+- Trigger `Neuer oder geänderter MATOOL-Datensatz`
+- Aktion `Beitragsübersicht erstellen`: Monatssumme aller nicht
+  stillgelegten Mitglieder plus XML-Datei, siehe
+  [docs/beitraege-zapier.md](../docs/beitraege-zapier.md)
 
 Die App nimmt keinen Kontakt zu Interessenten oder Mitgliedern auf, versendet
 keine Nachrichten und verändert keine Daten in MATOOL. Zeitregeln und spätere

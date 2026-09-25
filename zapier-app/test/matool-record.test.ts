@@ -104,7 +104,8 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     expect(app.triggers?.matool_record?.display.hidden).toBe(true);
     expect(app.triggers?.matool_record?.operation.type).toBe("polling");
     expect(app.triggers?.matool_record_v2?.operation.type).toBe("hook");
-    expect(Object.keys(app.creates ?? {})).toEqual([]);
+    // Einzige Aktion: die lesende Beitragsuebersicht.
+    expect(Object.keys(app.creates ?? {})).toEqual(["beitragsuebersicht"]);
     expect(Object.keys(app.searches ?? {})).toEqual([]);
   });
 

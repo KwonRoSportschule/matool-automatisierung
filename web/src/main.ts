@@ -5,6 +5,7 @@ import {
   runDiscovery,
   runMatoolSync
 } from "./api";
+import { BeitraegeView } from "./beitraege";
 import { renderChangeChart, renderRunChart } from "./charts";
 import { DatabaseView } from "./database";
 import {
@@ -82,6 +83,7 @@ const elements = {
 const detailDialog = new RecordDetailDialog();
 const activityView = new ActivityView();
 const databaseView = new DatabaseView(detailDialog);
+const beitraegeView = new BeitraegeView();
 
 let overviewAbortController: AbortController | null = null;
 let currentOverview: DashboardOverview | null = null;
@@ -110,7 +112,11 @@ async function refreshAll(): Promise<void> {
   try {
     const loaded = await loadOverview();
     if (loaded) {
-      await Promise.all([activityView.load(), databaseView.load()]);
+      await Promise.all([
+        activityView.load(),
+        databaseView.load(),
+        beitraegeView.load()
+      ]);
     }
   } finally {
     setRefreshBusy(false);

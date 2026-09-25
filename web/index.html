@@ -30,6 +30,7 @@
           <a href="#data-areas">Daten</a>
           <a href="#activity">Verlauf</a>
           <a href="#database">Datenbank</a>
+          <a href="#beitraege">Beiträge</a>
         </nav>
 
         <div class="topbar-actions">
@@ -325,6 +326,69 @@
               <button class="button button-secondary" id="database-next" type="button" disabled>Weiter</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="panel section beitraege-panel" id="beitraege" aria-labelledby="beitraege-title">
+        <div class="section-heading with-controls">
+          <div>
+            <div class="eyebrow">Mitglieder · Beiträge</div>
+            <h2 id="beitraege-title">Monatliche Beitragsübersicht</h2>
+            <p>Summe aller nicht stillgelegten Mitglieder aus den gespeicherten MATOOL-Stammdaten. Zapier erhält exakt dieselbe Berechnung.</p>
+          </div>
+          <div class="beitraege-actions">
+            <label class="control-field" for="beitraege-stichtag">Stichtag
+              <input id="beitraege-stichtag" type="date" />
+            </label>
+            <button class="button button-secondary" id="beitraege-load" type="button">Neu berechnen</button>
+            <a class="button button-primary" id="beitraege-download" href="/api/admin/v1/beitraege.xml" download>XML herunterladen</a>
+          </div>
+        </div>
+        <div id="beitraege-region" class="async-region" aria-busy="false">
+          <p class="result-message" id="beitraege-message" aria-live="polite">Beitragsübersicht wird berechnet …</p>
+          <div class="beitraege-hinweis" id="beitraege-hinweis" role="status" hidden></div>
+          <div class="metric-grid beitraege-metrics" id="beitraege-metrics"></div>
+          <div class="table-wrap beitraege-table">
+            <table>
+              <caption>Eingerechnete Mitglieder mit Monatsbeitrag</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col">Mitglieds-Nr.</th>
+                  <th scope="col">Vertrag</th>
+                  <th scope="col">Kundenart</th>
+                  <th scope="col">Zahlungsperiode</th>
+                  <th scope="col" class="numeric">Beitrag</th>
+                  <th scope="col" class="numeric">Monatsbeitrag</th>
+                </tr>
+              </thead>
+              <tbody id="beitraege-body">
+                <tr><td colspan="7" class="empty-state">Bitte warten …</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details class="beitraege-details">
+            <summary>Nicht eingerechnet (<span id="beitraege-ausschluss-count">0</span>)</summary>
+            <div class="table-wrap beitraege-table">
+              <table>
+                <caption>Nicht eingerechnete Mitglieder mit Grund</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Mitglieds-Nr.</th>
+                    <th scope="col">Grund</th>
+                    <th scope="col">Detail</th>
+                  </tr>
+                </thead>
+                <tbody id="beitraege-ausschluss-body"></tbody>
+              </table>
+            </div>
+          </details>
+          <details class="beitraege-details">
+            <summary>Regeln und Feldwerte prüfen</summary>
+            <p class="beitraege-regeln" id="beitraege-regeln"></p>
+            <div class="feldwerte-grid" id="beitraege-feldwerte"></div>
+          </details>
         </div>
       </section>
 

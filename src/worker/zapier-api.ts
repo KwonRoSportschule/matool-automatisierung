@@ -6,6 +6,7 @@ import {
 } from "../core/first-trial";
 import { jsonResponse, methodNotAllowed } from "../core/http";
 import { validateZapierTargetUrl } from "../sinks/zapier";
+import { zapierBeitragsUebersicht } from "./beitraege";
 import {
   claimEventForZapier,
   confirmEventForZapier,
@@ -58,8 +59,18 @@ export async function handleZapierApiRequest(
       environment: env.APP_ENV,
       event_types: [],
       snapshot_areas: ZAPIER_SNAPSHOT_AREAS,
-      token_scopes: ["snapshots:read"]
+      token_scopes: ["snapshots:read", "beitraege:read"]
     });
+  }
+
+  // Beitragsuebersicht aller nicht stillgelegten Mitglieder. Liefert nur
+  // Namen, Mitgliedsnummer, Vertrag und Betraege; Bank-, Geburts- und
+  // Kontaktdaten der Stammdaten werden dafuer gar nicht gelesen.
+  if (url.pathname === "/api/zapier/v1/beitraege") {
+    if (request.method !== "GET") {
+      methodNotAllowed(["GET"]);
+    }
+    return jsonResponse(await zapierBeitragsUebersicht(env, url));
   }
 
   if (url.pathname === "/api/zapier/v1/subscriptions") {
