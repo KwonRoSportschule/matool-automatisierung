@@ -12,6 +12,7 @@ import {
 } from "../src/worker/snapshot-delivery";
 import type { Env } from "../src/worker/env";
 import worker from "../src/worker";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 const serviceToken =
   "synthetic-service-token-at-least-32-characters";
@@ -68,15 +69,19 @@ async function persistChange(
   value: string
 ): Promise<void> {
   const timestamp = new Date().toISOString();
-  await persistMatoolSnapshotRun(env.DB, {
-    allowedPayloadFields: ["value"],
-    area,
-    finishedAt: timestamp,
-    observedAt: timestamp,
-    records: [{ sourceId, payload: { value } }],
-    runId: `snapshot_${area}_${crypto.randomUUID()}`,
-    startedAt: timestamp
-  });
+  await persistMatoolSnapshotRun(
+    env.DB,
+    {
+      allowedPayloadFields: ["value"],
+      area,
+      finishedAt: timestamp,
+      observedAt: timestamp,
+      records: [{ sourceId, payload: { value } }],
+      runId: `snapshot_${area}_${crypto.randomUUID()}`,
+      startedAt: timestamp
+    },
+    await storedPayloadCipher(env)
+  );
 }
 
 function deliveryEnv(): Env {

@@ -266,7 +266,8 @@ function renderConnections(
     { key: "matool", label: "MATOOL" },
     { key: "database", label: "Cloudflare D1" },
     { key: "schedule", label: "Zeitplan" },
-    { key: "zapier", label: "Zapier" }
+    { key: "zapier", label: "Zapier" },
+    { key: "security", label: "Datenschutz" }
   ] as const;
   elements.connectionsGrid.replaceChildren(
     ...definitions.map(({ key, label }) =>

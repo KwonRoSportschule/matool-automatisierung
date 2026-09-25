@@ -16,12 +16,15 @@ export function base64UrlEncodeText(input: string): string {
   return base64UrlEncodeBytes(encoder.encode(input));
 }
 
-export function base64UrlDecodeText(input: string): string {
+export function base64UrlDecodeBytes(input: string): Uint8Array {
   const normalized = input.replaceAll("-", "+").replaceAll("_", "/");
   const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(`${normalized}${padding}`);
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+export function base64UrlDecodeText(input: string): string {
+  return new TextDecoder().decode(base64UrlDecodeBytes(input));
 }
 
 export async function sha256Hex(input: string): Promise<string> {

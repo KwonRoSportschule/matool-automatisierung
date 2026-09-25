@@ -9,6 +9,7 @@ import {
   selectInteressentenDetailSourceIds,
   snapshotPayloadFields
 } from "../src/worker/schedule";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 describe("Snapshot-Feldallowlist", () => {
   it("ruft Interessenten und ihre Details vor dem anfragestarken Klassenbereich ab", () => {
@@ -73,33 +74,45 @@ describe("Snapshot-Feldallowlist", () => {
       sourceId
     }));
 
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["status"],
-      area: "interessenten",
-      finishedAt: "2098-01-01T00:00:01.000Z",
-      observedAt: "2098-01-01T00:00:00.000Z",
-      records: listRecords,
-      runId: `selection_list_${suffix}`,
-      startedAt: "2098-01-01T00:00:00.000Z"
-    });
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["status"],
-      area: "interessenten_details",
-      finishedAt: "2098-01-02T00:00:01.000Z",
-      observedAt: "2098-01-02T00:00:00.000Z",
-      records: [{ payload: { status: "ALT" }, sourceId: oldest }],
-      runId: `selection_old_${suffix}`,
-      startedAt: "2098-01-02T00:00:00.000Z"
-    });
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["status"],
-      area: "interessenten_details",
-      finishedAt: "2098-01-03T00:00:01.000Z",
-      observedAt: "2098-01-03T00:00:00.000Z",
-      records: [{ payload: { status: "NEU" }, sourceId: newest }],
-      runId: `selection_new_${suffix}`,
-      startedAt: "2098-01-03T00:00:00.000Z"
-    });
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["status"],
+        area: "interessenten",
+        finishedAt: "2098-01-01T00:00:01.000Z",
+        observedAt: "2098-01-01T00:00:00.000Z",
+        records: listRecords,
+        runId: `selection_list_${suffix}`,
+        startedAt: "2098-01-01T00:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["status"],
+        area: "interessenten_details",
+        finishedAt: "2098-01-02T00:00:01.000Z",
+        observedAt: "2098-01-02T00:00:00.000Z",
+        records: [{ payload: { status: "ALT" }, sourceId: oldest }],
+        runId: `selection_old_${suffix}`,
+        startedAt: "2098-01-02T00:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["status"],
+        area: "interessenten_details",
+        finishedAt: "2098-01-03T00:00:01.000Z",
+        observedAt: "2098-01-03T00:00:00.000Z",
+        records: [{ payload: { status: "NEU" }, sourceId: newest }],
+        runId: `selection_new_${suffix}`,
+        startedAt: "2098-01-03T00:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
     const selected = await selectInteressentenDetailSourceIds(env.DB);
 

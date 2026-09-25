@@ -14,6 +14,7 @@ import {
 } from "./delivery-repository";
 import type { Env } from "./env";
 import { requireZapierServiceRequest } from "./integration-auth";
+import { storedPayloadCipher } from "./payload-encryption";
 import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
 import { handleSnapshotSubscriptionApiRequest } from "./snapshot-delivery";
 
@@ -271,10 +272,16 @@ async function listSnapshotsForZapier(
 
   const hasMore = rows.results.length > limit;
   const page = rows.results.slice(0, limit);
-  const records = page.map((row) => {
+  const cipher = await storedPayloadCipher(env);
+  const payloads = await Promise.all(
+    page.map((row) =>
+      cipher.open({ area, sourceId: row.source_id }, row.payload_json)
+    )
+  );
+  const records = page.map((row, index) => {
     let payload: Record<string, unknown> = {};
     try {
-      const parsed: unknown = JSON.parse(row.payload_json);
+      const parsed: unknown = JSON.parse(payloads[index] ?? "");
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         payload = parsed as Record<string, unknown>;
       }

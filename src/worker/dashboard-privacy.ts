@@ -224,7 +224,7 @@ export function dashboardFieldValues(
 ): DashboardFieldValue[] {
   return dashboardColumns(area, [payload], plaintext).map((field) => ({
     ...field,
-    value: formatDashboardValue(payload[field.key], field.masked)
+    value: formatDashboardValue(payload[field.key], field.masked, field.key)
   }));
 }
 
@@ -241,7 +241,8 @@ export function dashboardValues(
         payload[field.key],
         plaintext
           ? false
-          : field.masked || isSensitiveDashboardField(area, field.key)
+          : field.masked || isSensitiveDashboardField(area, field.key),
+        field.key
       )
     ])
   );
@@ -404,7 +405,17 @@ function fieldOrder(area: string, key: string): number {
   return genericCell?.[1] ? Number.parseInt(genericCell[1], 10) : 800;
 }
 
-function formatDashboardValue(value: unknown, masked: boolean): string {
+/**
+ * Kontonummern braucht im Dashboard niemand vollstaendig; MATOOL bleibt die
+ * Quelle. Auch im Klartextbetrieb sind nur die letzten vier Stellen sichtbar.
+ */
+const LAST_DIGITS_ONLY_FIELDS = new Set(["iban", "konto"]);
+
+function formatDashboardValue(
+  value: unknown,
+  masked: boolean,
+  key = ""
+): string {
   if (value === null || value === undefined || value === "") {
     return "";
   }
@@ -416,7 +427,12 @@ function formatDashboardValue(value: unknown, masked: boolean): string {
     typeof value === "number" ||
     typeof value === "boolean"
   ) {
-    return String(value).slice(0, 2_000);
+    const text = String(value);
+    if (LAST_DIGITS_ONLY_FIELDS.has(key.toLowerCase())) {
+      const compact = text.replace(/\s+/gu, "");
+      return compact.length > 4 ? `•••• ${compact.slice(-4)}` : "••••";
+    }
+    return text.slice(0, 2_000);
   }
   return PROTECTED_DASHBOARD_VALUE;
 }

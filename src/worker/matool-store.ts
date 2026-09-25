@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import { ensureInteressentenSyncSchema } from "./interessenten-sync-store";
+import type { StoredPayloadCipher } from "./payload-encryption";
 
 const MAX_RECORDS_PER_RUN = 20_000;
 const EXACT_CURRENT_SET_AREAS = new Set([
@@ -62,9 +63,15 @@ export interface RecordMatoolSnapshotFailureInput {
   startedAt: string;
 }
 
+/**
+ * `cipher` versiegelt jede Nutzlast vor dem Schreiben. Der Inhalts-Hash
+ * entsteht vorher aus dem Klartext, damit die Aenderungserkennung vom
+ * zufaelligen IV unabhaengig bleibt.
+ */
 export async function persistMatoolSnapshotRun(
   db: D1Database,
-  input: PersistMatoolSnapshotRunInput
+  input: PersistMatoolSnapshotRunInput,
+  cipher: StoredPayloadCipher
 ): Promise<MatoolSnapshotRunResult> {
   validateRunIdentity(input);
   if (input.syncId) {
@@ -101,7 +108,10 @@ export async function persistMatoolSnapshotRun(
     );
     snapshots.push({
       contentHash: await sha256Hex(payloadJson),
-      payloadJson,
+      payloadJson: await cipher.seal(
+        { area: input.area, sourceId: record.sourceId },
+        payloadJson
+      ),
       sourceId: record.sourceId,
       zapierEventId: await sha256Hex(
         JSON.stringify([input.area, record.sourceId, input.runId])

@@ -8,6 +8,8 @@ const API_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Permissions-Policy":
     "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
   "Referrer-Policy": "no-referrer",
+  // Browser sprechen die Adresse ein Jahr lang nur noch per HTTPS an.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY"
 };
@@ -21,6 +23,8 @@ const ASSET_SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "Permissions-Policy":
     "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
   "Referrer-Policy": "no-referrer",
+  // Browser sprechen die Adresse ein Jahr lang nur noch per HTTPS an.
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY"
 };

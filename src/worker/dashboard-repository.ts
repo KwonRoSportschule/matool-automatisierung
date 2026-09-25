@@ -9,7 +9,15 @@ import {
   parseStoredPayload,
   searchableDashboardFields
 } from "./dashboard-privacy";
+import {
+  dataProtectionStatus,
+  type DataProtectionStatus
+} from "./data-protection";
 import type { Env } from "./env";
+import {
+  storedPayloadCipher,
+  type StoredPayloadCipher
+} from "./payload-encryption";
 import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
 import { getBerlinScheduleSummary } from "./schedule-window";
 
@@ -154,7 +162,8 @@ export async function getDashboardOverview(
       unconfirmedClaims,
       pendingOutbox,
       lastEvent,
-      lastDelivery
+      lastDelivery,
+      protection
     ] = await Promise.all([
       env.DB.prepare(
         `SELECT display_name, mode, updated_at
@@ -255,7 +264,8 @@ export async function getDashboardOverview(
          FROM deliveries
          ORDER BY finished_at DESC
          LIMIT 1`
-      ).first<DeliverySummaryRow>()
+      ).first<DeliverySummaryRow>(),
+      dataProtectionStatus(env)
     ]);
 
     const latestRunByArea = new Map(
@@ -327,9 +337,11 @@ export async function getDashboardOverview(
       action: null
     };
 
+    const security = dataProtectionConnection(protection, generatedAt);
+
     const warnings = buildWarnings(matool, scheduleCard, areas, zapier);
     const overall = deriveOverall(
-      [matool, database, scheduleCard, zapier, ...areas],
+      [matool, database, scheduleCard, zapier, security, ...areas],
       warnings
     );
     const totalStored = areas.reduce((sum, area) => sum + area.storedCount, 0);
@@ -347,7 +359,13 @@ export async function getDashboardOverview(
       privacy: dashboardPrivacyNotice(env),
       range: { days: rangeDays, from, to: generatedAt },
       overall,
-      connections: { matool, database, schedule: scheduleCard, zapier },
+      connections: {
+        matool,
+        database,
+        schedule: scheduleCard,
+        zapier,
+        security
+      },
       metrics: {
         storedRecords: totalStored,
         monitoredAreas: MATOOL_SNAPSHOT_AREAS.length,
@@ -747,6 +765,49 @@ function localDateKey(iso: string): string {
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
+function dataProtectionConnection(
+  protection: DataProtectionStatus,
+  generatedAt: string
+) {
+  const base = {
+    key: "security",
+    label: "Datenschutz",
+    checkedAt: generatedAt,
+    lastActivityAt: null,
+    lastError: null
+  };
+  if (!protection.encryptionConfigured) {
+    return {
+      ...base,
+      state: "critical" as const,
+      statusLabel: "Nicht verschluesselt",
+      lastSuccessAt: null,
+      description:
+        "Personendaten liegen unverschluesselt in D1, neue Daten werden nicht gespeichert.",
+      action: "DATA_ENCRYPTION_KEY als Cloudflare Secret setzen."
+    };
+  }
+  if (protection.unprotectedPayloads > 0) {
+    return {
+      ...base,
+      state: "warning" as const,
+      statusLabel: "Wird verschluesselt",
+      lastSuccessAt: null,
+      description: `${protection.unprotectedPayloads} aeltere Eintraege werden beim naechsten Wartungslauf verschluesselt.`,
+      action: "Den naechsten stuendlichen Lauf abwarten."
+    };
+  }
+  return {
+    ...base,
+    state: "healthy" as const,
+    statusLabel: "Verschluesselt",
+    lastSuccessAt: generatedAt,
+    description:
+      "Alle Personendaten liegen AES-256-GCM-verschluesselt in D1; alte Datensatzstaende werden automatisch geloescht.",
+    action: null
+  };
+}
+
 function buildFunctionCatalogue(
   env: Env,
   process: ProcessRow | null,
@@ -886,22 +947,19 @@ function buildFunctionCatalogue(
   ];
 }
 
-interface DashboardSnapshotRow {
+interface DashboardRecordMetaRow {
   change_kind: "created" | "updated";
   first_seen_at: string;
   is_current: number;
   last_changed_at: string;
   last_seen_at: string;
-  payload_json: string;
   public_id: string;
+  source_id: string;
 }
 
-interface DashboardColumnKeyRow {
-  field_key: unknown;
-}
-
-interface DashboardRecordDetailRow extends DashboardSnapshotRow {
-  is_current: number;
+interface DashboardRecordDetailRow extends DashboardRecordMetaRow {
+  details_payload_json: string | null;
+  list_payload_json: string;
   last_run_error_code: string | null;
   last_run_finished_at: string | null;
   last_run_started_at: string | null;
@@ -1219,40 +1277,13 @@ export async function listDashboardRecords(
     throw invalidDashboardQuery();
   }
   const normalizedQuery = requireDashboardSearchQuery(query.query);
-  const searchableFields = searchableDashboardFields(
-    area,
-    isDashboardPlaintext(env)
-  );
+  const plaintext = isDashboardPlaintext(env);
+  const searchableFields = searchableDashboardFields(area, plaintext);
   const conditions: string[] = [];
   const filterBindings: string[] = [];
   if (query.change !== "all") {
     conditions.push("record.change_kind = ?");
     filterBindings.push(query.change);
-  }
-  if (normalizedQuery) {
-    const pattern = `%${escapeLikePattern(normalizedQuery.toLowerCase())}%`;
-    const searchExpressions = [
-      "LOWER(record.public_id) LIKE ? ESCAPE '\\'"
-    ];
-    // Die Tabelle zeigt die Referenz als "REC-D1BB1B64". Wer sie von dort
-    // kopiert, suchte sonst nach einem Praefix, den die Kennung selbst gar
-    // nicht enthaelt.
-    filterBindings.push(
-      `%${escapeLikePattern(
-        normalizedQuery.toLowerCase().replace(/^rec-/u, "")
-      )}%`
-    );
-    for (const field of searchableFields) {
-      searchExpressions.push(
-        `LOWER(COALESCE(CAST(json_extract(
-           CASE WHEN json_valid(record.payload_json)
-                THEN record.payload_json ELSE '{}' END,
-           '$.${field}'
-         ) AS TEXT), '')) LIKE ? ESCAPE '\\'`
-      );
-      filterBindings.push(pattern);
-    }
-    conditions.push(`(${searchExpressions.join(" OR ")})`);
   }
 
   const whereSql = conditions.length > 0
@@ -1265,16 +1296,13 @@ export async function listDashboardRecords(
     lastSeenAt: "record.last_seen_at",
     recordRef: "record.public_id"
   }[query.sort];
-  // Ein Interessent oder Mitglied ist fachlich EIN Datensatz. Listen- und
-  // Detailfelder werden deshalb beim Lesen zusammengefuehrt; die Details
-  // gewinnen bei gleichnamigen Feldern, weil sie aus dem Formular stammen.
+  // Die Nutzlasten liegen verschluesselt in D1. Filter, Sortierung und
+  // Seitenbildung ueber Metadaten bleiben in SQL; Suche und Zusammenfuehrung
+  // von Listen- und Detailfeldern laufen erst nach dem Entschluesseln.
   const recordsCte = `WITH dashboard_records AS (
     SELECT
       snapshots.public_id,
-      json_patch(
-        snapshots.payload_json,
-        COALESCE(details.payload_json, '{}')
-      ) AS payload_json,
+      snapshots.source_id,
       snapshots.first_seen_at,
       snapshots.last_seen_at,
       COALESCE(snapshots.last_changed_at, snapshots.first_seen_at) AS last_changed_at,
@@ -1295,68 +1323,94 @@ export async function listDashboardRecords(
         LIMIT 1
       ), 'created') AS change_kind
     FROM matool_snapshots AS snapshots
-    LEFT JOIN matool_snapshots AS details
-      ON details.area = snapshots.area || '_details'
-     AND details.source_id = snapshots.source_id
     WHERE snapshots.area = ?
       AND snapshots.public_id IS NOT NULL
   )`;
+  const recordsSql = `${recordsCte}
+    SELECT public_id, source_id, first_seen_at, last_seen_at,
+           last_changed_at, is_current, change_kind
+    FROM dashboard_records AS record
+    ${whereSql}
+    ORDER BY ${sortColumn} ${direction}, record.public_id ${direction}`;
 
   try {
-    const [count, rows, storedColumns] = await Promise.all([
-      env.DB.prepare(
-        `${recordsCte}
-         SELECT COUNT(*) AS count
-         FROM dashboard_records AS record
-         ${whereSql}`
-      )
-        .bind(area, ...filterBindings)
-        .first<CountRow>(),
-      env.DB.prepare(
-        `${recordsCte}
-         SELECT public_id, payload_json, first_seen_at, last_seen_at,
-                last_changed_at, is_current, change_kind
-         FROM dashboard_records AS record
-         ${whereSql}
-         ORDER BY ${sortColumn} ${direction}, record.public_id ${direction}
-         LIMIT ? OFFSET ?`
-      )
-        .bind(
-          area,
-          ...filterBindings,
-          pagination.pageSize,
-          pagination.offset
-        )
-        .all<DashboardSnapshotRow>(),
-      env.DB.prepare(
-        // Die Spaltenliste muss Listen- UND Detailfelder umfassen, sonst
-        // faenden sich die zusammengefuehrten Werte in keiner Spalte wieder.
-        `SELECT DISTINCT fields.key AS field_key
-         FROM matool_snapshots AS snapshots,
-              json_each(
-                CASE WHEN json_valid(snapshots.payload_json)
-                     THEN snapshots.payload_json ELSE '{}' END
-              ) AS fields
-         WHERE snapshots.area IN (?, ? || '_details')
-         ORDER BY field_key`
-      )
-        .bind(area, area)
-        .all<DashboardColumnKeyRow>()
-    ]);
+    const cipher = await storedPayloadCipher(env);
+    let total: number;
+    let pageRows: DashboardRecordMetaRow[];
+    let payloads: Map<string, Record<string, unknown>>;
+    let fieldKeys: readonly string[];
 
-    const schemaPayload = Object.fromEntries(
-      storedColumns.results
-        .map((row) => row.field_key)
-        .filter(
-          (key): key is string =>
-            typeof key === "string" &&
-            /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key)
+    if (normalizedQuery) {
+      const [rows, stored] = await Promise.all([
+        env.DB.prepare(recordsSql)
+          .bind(area, ...filterBindings)
+          .all<DashboardRecordMetaRow>(),
+        readStoredAreaPayloads(env, cipher, area)
+      ]);
+      payloads = mergeAreaPayloads(area, stored);
+      const needle = normalizedQuery.toLowerCase();
+      // Die Tabelle zeigt die Referenz als "REC-D1BB1B64". Wer sie von dort
+      // kopiert, suchte sonst nach einem Praefix, den die Kennung selbst gar
+      // nicht enthaelt.
+      const referenceNeedle = needle.replace(/^rec-/u, "");
+      const matching = rows.results.filter(
+        (row) =>
+          row.public_id.toLowerCase().includes(referenceNeedle) ||
+          searchableFields.some((field) =>
+            searchableText(payloads.get(row.source_id)?.[field]).includes(
+              needle
+            )
+          )
+      );
+      total = matching.length;
+      pageRows = matching.slice(
+        pagination.offset,
+        pagination.offset + pagination.pageSize
+      );
+      fieldKeys = storedFieldKeys(stored);
+    } else {
+      const [count, rows, keys] = await Promise.all([
+        env.DB.prepare(
+          `${recordsCte}
+           SELECT COUNT(*) AS count
+           FROM dashboard_records AS record
+           ${whereSql}`
         )
+          .bind(area, ...filterBindings)
+          .first<CountRow>(),
+        env.DB.prepare(`${recordsSql}
+           LIMIT ? OFFSET ?`)
+          .bind(
+            area,
+            ...filterBindings,
+            pagination.pageSize,
+            pagination.offset
+          )
+          .all<DashboardRecordMetaRow>(),
+        dashboardFieldKeys(env, cipher, area)
+      ]);
+      total = normalizeCount(count?.count);
+      pageRows = rows.results;
+      payloads = mergeAreaPayloads(
+        area,
+        await readStoredAreaPayloads(
+          env,
+          cipher,
+          area,
+          pageRows.map((row) => row.source_id)
+        )
+      );
+      fieldKeys = keys;
+    }
+
+    // Die Spaltenliste muss Listen- UND Detailfelder umfassen, sonst
+    // faenden sich die zusammengefuehrten Werte in keiner Spalte wieder.
+    const schemaPayload = Object.fromEntries(
+      fieldKeys
+        .filter((key) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(key))
         .map((key) => [key, null])
     );
-    const plaintext = isDashboardPlaintext(env);
     const columns = dashboardColumns(area, [schemaPayload], plaintext);
-    const total = normalizeCount(count?.count);
     return {
       schemaVersion: 2,
       generatedAt: new Date().toISOString(),
@@ -1369,7 +1423,7 @@ export async function listDashboardRecords(
       total,
       totalPages: Math.ceil(total / pagination.pageSize),
       columns,
-      records: rows.results.map((row) => ({
+      records: pageRows.map((row) => ({
         publicId: row.public_id,
         recordRef: dashboardRecordRef(row.public_id),
         change: row.change_kind,
@@ -1379,7 +1433,7 @@ export async function listDashboardRecords(
         lastChangedAt: row.last_changed_at,
         values: dashboardValues(
           area,
-          parseStoredPayload(row.payload_json),
+          payloads.get(row.source_id) ?? {},
           columns,
           plaintext
         )
@@ -1397,6 +1451,186 @@ export async function listDashboardRecords(
   }
 }
 
+interface StoredAreaPayload {
+  area: string;
+  payload: Record<string, unknown>;
+  sourceId: string;
+}
+
+interface StoredAreaPayloadRow {
+  area: string;
+  payload_json: string;
+  source_id: string;
+}
+
+/**
+ * Liest und entschluesselt die Nutzlasten eines Bereichs samt Details.
+ * Ohne `sourceIds` den ganzen Bereich, sonst nur die genannten Datensaetze.
+ */
+async function readStoredAreaPayloads(
+  env: Env,
+  cipher: StoredPayloadCipher,
+  area: string,
+  sourceIds?: readonly string[]
+): Promise<StoredAreaPayload[]> {
+  if (sourceIds?.length === 0) {
+    return [];
+  }
+  const rows = sourceIds
+    ? await env.DB.prepare(
+        `SELECT area, source_id, payload_json
+         FROM matool_snapshots
+         WHERE area IN (?, ? || '_details')
+           AND source_id IN (SELECT value FROM json_each(?))`
+      )
+        .bind(area, area, JSON.stringify(sourceIds))
+        .all<StoredAreaPayloadRow>()
+    : await env.DB.prepare(
+        `SELECT area, source_id, payload_json
+         FROM matool_snapshots
+         WHERE area IN (?, ? || '_details')`
+      )
+        .bind(area, area)
+        .all<StoredAreaPayloadRow>();
+
+  return Promise.all(
+    rows.results.map(async (row) => ({
+      area: row.area,
+      payload: parseStoredPayload(
+        await cipher.open(
+          { area: row.area, sourceId: row.source_id },
+          row.payload_json
+        )
+      ),
+      sourceId: row.source_id
+    }))
+  );
+}
+
+/**
+ * Ein Interessent oder Mitglied ist fachlich EIN Datensatz. Listen- und
+ * Detailfelder werden deshalb zusammengefuehrt; die Details gewinnen bei
+ * gleichnamigen Feldern, weil sie aus dem Formular stammen.
+ */
+function mergeAreaPayloads(
+  area: string,
+  stored: readonly StoredAreaPayload[]
+): Map<string, Record<string, unknown>> {
+  const details = new Map(
+    stored
+      .filter((entry) => entry.area !== area)
+      .map((entry) => [entry.sourceId, entry.payload])
+  );
+  return new Map(
+    stored
+      .filter((entry) => entry.area === area)
+      .map((entry) => [
+        entry.sourceId,
+        mergeStoredPayloads(entry.payload, details.get(entry.sourceId))
+      ])
+  );
+}
+
+/** Verhaelt sich wie SQLite json_patch (RFC 7396) auf oberster Ebene. */
+function mergeStoredPayloads(
+  list: Record<string, unknown>,
+  details: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  return mergeJsonPatch(list, details ?? {}) as Record<string, unknown>;
+}
+
+function mergeJsonPatch(target: unknown, patch: unknown): unknown {
+  if (!isJsonObject(patch)) {
+    return patch;
+  }
+  const result: Record<string, unknown> = isJsonObject(target)
+    ? { ...target }
+    : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete result[key];
+    } else {
+      result[key] = mergeJsonPatch(result[key], value);
+    }
+  }
+  return result;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function storedFieldKeys(stored: readonly StoredAreaPayload[]): string[] {
+  const keys = new Set<string>();
+  for (const entry of stored) {
+    for (const key of Object.keys(entry.payload)) {
+      keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
+
+function searchableText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return (
+    typeof value === "object" ? JSON.stringify(value) : String(value)
+  ).toLowerCase();
+}
+
+interface StoredAreaFingerprintRow {
+  bytes: number | null;
+  count: number | null;
+  last_seen_at: string | null;
+  max_hash: string | null;
+  min_hash: string | null;
+}
+
+const fieldKeyCache = new Map<
+  string,
+  { fingerprint: string; keys: readonly string[] }
+>();
+
+/**
+ * Die Spaltenliste braucht die Feldnamen aller Datensaetze. Damit nicht jede
+ * Seite den ganzen Bereich entschluesselt, bleibt sie gecacht, bis sich der
+ * Bestand aendert.
+ */
+async function dashboardFieldKeys(
+  env: Env,
+  cipher: StoredPayloadCipher,
+  area: string
+): Promise<readonly string[]> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS count,
+            MAX(last_seen_at) AS last_seen_at,
+            MIN(content_hash) AS min_hash,
+            MAX(content_hash) AS max_hash,
+            TOTAL(length(payload_json)) AS bytes
+     FROM matool_snapshots
+     WHERE area IN (?, ? || '_details')`
+  )
+    .bind(area, area)
+    .first<StoredAreaFingerprintRow>();
+  const fingerprint = JSON.stringify([
+    row?.count ?? 0,
+    row?.last_seen_at ?? null,
+    row?.min_hash ?? null,
+    row?.max_hash ?? null,
+    row?.bytes ?? 0,
+    cipher.currentHeader
+  ]);
+  const cached = fieldKeyCache.get(area);
+  if (cached?.fingerprint === fingerprint) {
+    return cached.keys;
+  }
+
+  const keys = storedFieldKeys(await readStoredAreaPayloads(env, cipher, area));
+  fieldKeyCache.set(area, { fingerprint, keys });
+  return keys;
+}
+
 export async function getDashboardRecord(
   env: Env,
   areaInput: string,
@@ -1410,10 +1644,9 @@ export async function getDashboardRecord(
       env.DB.prepare(
         `SELECT
            snapshots.public_id,
-           json_patch(
-             snapshots.payload_json,
-             COALESCE(details.payload_json, '{}')
-           ) AS payload_json,
+           snapshots.source_id,
+           snapshots.payload_json AS list_payload_json,
+           details.payload_json AS details_payload_json,
            snapshots.first_seen_at,
            snapshots.last_seen_at,
            COALESCE(snapshots.last_changed_at, snapshots.first_seen_at) AS last_changed_at,
@@ -1475,6 +1708,23 @@ export async function getDashboardRecord(
       );
     }
 
+    const cipher = await storedPayloadCipher(env);
+    const payload = mergeStoredPayloads(
+      parseStoredPayload(
+        await cipher.open(
+          { area, sourceId: record.source_id },
+          record.list_payload_json
+        )
+      ),
+      record.details_payload_json === null
+        ? undefined
+        : parseStoredPayload(
+            await cipher.open(
+              { area: `${area}_details`, sourceId: record.source_id },
+              record.details_payload_json
+            )
+          )
+    );
     const historyTruncated = history.results.length > 100;
     return {
       schemaVersion: 2,
@@ -1500,7 +1750,7 @@ export async function getDashboardRecord(
       },
       fields: dashboardFieldValues(
         area,
-        parseStoredPayload(record.payload_json),
+        payload,
         isDashboardPlaintext(env)
       ),
       changeHistory: history.results.slice(0, 100).map((entry) => ({
@@ -1672,10 +1922,6 @@ function isDashboardPublicId(value: unknown): value is string {
 
 function dashboardRecordRef(publicId: string): string {
   return `REC-${publicId.slice(0, 8).toUpperCase()}`;
-}
-
-function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
 }
 
 function normalizeCount(value: unknown): number {

@@ -28,6 +28,27 @@ export interface Env {
   DASHBOARD_PASSWORD?: string;
   /** "true" sperrt das Dashboard, solange die beiden Secrets fehlen. */
   DASHBOARD_PASSWORD_REQUIRED?: string;
+  /**
+   * "true" verlangt zusaetzlich zum Passwort eine Cloudflare-Access-Anmeldung
+   * (zweiter Faktor, z. B. Einmalcode per E-Mail). Erst setzen, wenn Access
+   * die Worker-Adresse tatsaechlich schuetzt.
+   */
+  DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS?: string;
+
+  /**
+   * Zufallstext (mindestens 32 Zeichen) als Cloudflare Secret. Daraus
+   * entsteht der AES-256-GCM-Schluessel fuer alle MATOOL-Nutzlasten in D1.
+   */
+  DATA_ENCRYPTION_KEY?: string;
+  /** Vorheriger Schluessel, nur zum Lesen waehrend eines Schluesselwechsels. */
+  DATA_ENCRYPTION_KEY_PREVIOUS?: string;
+  /** "true" verweigert das Speichern neuer Nutzlasten ohne Schluessel. */
+  DATA_ENCRYPTION_REQUIRED?: string;
+  /**
+   * Tage, nach denen Kopien alter Datensatzstaende in der Aenderungshistorie
+   * geloescht werden. Standard: 30.
+   */
+  CHANGE_PAYLOAD_RETENTION_DAYS?: string;
 
   ADMIN_ORIGIN?: string;
   CSRF_SECRET?: string;

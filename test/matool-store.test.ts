@@ -5,6 +5,7 @@ import {
   persistMatoolSnapshotRun,
   recordMatoolSnapshotFailure
 } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 interface SnapshotRow {
   area: string;
@@ -31,6 +32,26 @@ interface SnapshotChangeRow {
   zapier_event_id: string;
 }
 
+/** Prueft, dass D1 nur Chiffrat enthaelt, und liefert die Zeilen im Klartext. */
+async function openedRows<T extends { payload_json: string; source_id: string }>(
+  area: string,
+  rows: readonly T[]
+): Promise<T[]> {
+  const cipher = await storedPayloadCipher(env);
+  return Promise.all(
+    rows.map(async (row) => {
+      expect(row.payload_json).toMatch(/^enc:v1:/u);
+      return {
+        ...row,
+        payload_json: await cipher.open(
+          { area, sourceId: row.source_id },
+          row.payload_json
+        )
+      };
+    })
+  );
+}
+
 describe("generische MATOOL-Snapshots", () => {
   it("upsertet nach Bereich und Quell-ID und loescht fehlende Datensaetze nie", async () => {
     const suffix = crypto.randomUUID();
@@ -45,57 +66,65 @@ describe("generische MATOOL-Snapshots", () => {
       "status"
     ];
 
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields,
-      area,
-      finishedAt: "2026-07-30T08:00:02.000Z",
-      observedAt: "2026-07-30T08:00:01.000Z",
-      records: [
-        {
-          sourceId: "900001",
-          payload: {
-            displayNumber: "4711",
-            createdDate: "30.07.2026",
-            firstName: "Alice",
-            lastName: "Beispiel",
-            status: "Neu"
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields,
+        area,
+        finishedAt: "2026-07-30T08:00:02.000Z",
+        observedAt: "2026-07-30T08:00:01.000Z",
+        records: [
+          {
+            sourceId: "900001",
+            payload: {
+              displayNumber: "4711",
+              createdDate: "30.07.2026",
+              firstName: "Alice",
+              lastName: "Beispiel",
+              status: "Neu"
+            }
+          },
+          {
+            sourceId: "900002",
+            payload: {
+              displayNumber: "4712",
+              createdDate: "30.07.2026",
+              firstName: "Bob",
+              lastName: "Muster",
+              status: "Neu"
+            }
           }
-        },
-        {
-          sourceId: "900002",
-          payload: {
-            displayNumber: "4712",
-            createdDate: "30.07.2026",
-            firstName: "Bob",
-            lastName: "Muster",
-            status: "Neu"
-          }
-        }
-      ],
-      runId: firstRunId,
-      startedAt: "2026-07-30T08:00:00.000Z"
-    });
+        ],
+        runId: firstRunId,
+        startedAt: "2026-07-30T08:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields,
-      area,
-      finishedAt: "2026-07-30T09:00:02.000Z",
-      observedAt: "2026-07-30T09:00:01.000Z",
-      records: [
-        {
-          sourceId: "900001",
-          payload: {
-            displayNumber: "4711",
-            createdDate: "30.07.2026",
-            firstName: "Alice",
-            lastName: "Beispiel",
-            status: "Kontaktiert"
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields,
+        area,
+        finishedAt: "2026-07-30T09:00:02.000Z",
+        observedAt: "2026-07-30T09:00:01.000Z",
+        records: [
+          {
+            sourceId: "900001",
+            payload: {
+              displayNumber: "4711",
+              createdDate: "30.07.2026",
+              firstName: "Alice",
+              lastName: "Beispiel",
+              status: "Kontaktiert"
+            }
           }
-        }
-      ],
-      runId: secondRunId,
-      startedAt: "2026-07-30T09:00:00.000Z"
-    });
+        ],
+        runId: secondRunId,
+        startedAt: "2026-07-30T09:00:00.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
 
     const snapshots = await env.DB.prepare(
       `SELECT area, source_id, first_seen_at, last_seen_at,
@@ -107,7 +136,8 @@ describe("generische MATOOL-Snapshots", () => {
       .bind(area)
       .all<SnapshotRow>();
     expect(snapshots.results).toHaveLength(2);
-    expect(snapshots.results[0]).toMatchObject({
+    const openedSnapshots = await openedRows(area, snapshots.results);
+    expect(openedSnapshots[0]).toMatchObject({
       area,
       source_id: "900001",
       first_seen_at: "2026-07-30T08:00:01.000Z",
@@ -153,24 +183,28 @@ describe("generische MATOOL-Snapshots", () => {
     const area = `interessenten_${suffix}`;
 
     await expect(
-      persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields: ["displayNumber", "status"],
-        area,
-        finishedAt: "2026-07-30T08:00:02.000Z",
-        observedAt: "2026-07-30T08:00:01.000Z",
-        records: [
-          {
-            sourceId: "900001",
-            payload: {
-              displayNumber: "4711",
-              secretBankData: "PRIVATE-BANK-DATA",
-              status: "Neu"
+      persistMatoolSnapshotRun(
+        env.DB,
+        {
+          allowedPayloadFields: ["displayNumber", "status"],
+          area,
+          finishedAt: "2026-07-30T08:00:02.000Z",
+          observedAt: "2026-07-30T08:00:01.000Z",
+          records: [
+            {
+              sourceId: "900001",
+              payload: {
+                displayNumber: "4711",
+                secretBankData: "PRIVATE-BANK-DATA",
+                status: "Neu"
+              }
             }
-          }
-        ],
-        runId: `run_${suffix}`,
-        startedAt: "2026-07-30T08:00:00.000Z"
-      })
+          ],
+          runId: `run_${suffix}`,
+          startedAt: "2026-07-30T08:00:00.000Z"
+        },
+        await storedPayloadCipher(env)
+      )
     ).rejects.toMatchObject({
       code: "invalid_matool_snapshot"
     });
@@ -194,37 +228,45 @@ describe("generische MATOOL-Snapshots", () => {
     const area = `schueler_details_${suffix}`;
     const acceptedValue = "x".repeat(32_000);
     await expect(
-      persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields: ["klassenliste"],
-        area,
-        finishedAt: "2026-08-24T10:00:02.000Z",
-        observedAt: "2026-08-24T10:00:01.000Z",
-        records: [
-          {
-            sourceId: "700001",
-            payload: { klassenliste: acceptedValue }
-          }
-        ],
-        runId: `large_${suffix}`,
-        startedAt: "2026-08-24T10:00:00.000Z"
-      })
+      persistMatoolSnapshotRun(
+        env.DB,
+        {
+          allowedPayloadFields: ["klassenliste"],
+          area,
+          finishedAt: "2026-08-24T10:00:02.000Z",
+          observedAt: "2026-08-24T10:00:01.000Z",
+          records: [
+            {
+              sourceId: "700001",
+              payload: { klassenliste: acceptedValue }
+            }
+          ],
+          runId: `large_${suffix}`,
+          startedAt: "2026-08-24T10:00:00.000Z"
+        },
+        await storedPayloadCipher(env)
+      )
     ).resolves.toMatchObject({ storedCount: 1 });
 
     await expect(
-      persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields: ["klassenliste"],
-        area,
-        finishedAt: "2026-08-24T11:00:02.000Z",
-        observedAt: "2026-08-24T11:00:01.000Z",
-        records: [
-          {
-            sourceId: "700002",
-            payload: { klassenliste: "x".repeat(256_001) }
-          }
-        ],
-        runId: `oversize_${suffix}`,
-        startedAt: "2026-08-24T11:00:00.000Z"
-      })
+      persistMatoolSnapshotRun(
+        env.DB,
+        {
+          allowedPayloadFields: ["klassenliste"],
+          area,
+          finishedAt: "2026-08-24T11:00:02.000Z",
+          observedAt: "2026-08-24T11:00:01.000Z",
+          records: [
+            {
+              sourceId: "700002",
+              payload: { klassenliste: "x".repeat(256_001) }
+            }
+          ],
+          runId: `oversize_${suffix}`,
+          startedAt: "2026-08-24T11:00:00.000Z"
+        },
+        await storedPayloadCipher(env)
+      )
     ).rejects.toMatchObject({ code: "invalid_matool_snapshot" });
   });
 
@@ -237,15 +279,19 @@ describe("generische MATOOL-Snapshots", () => {
     for (const [index, status] of statuses.entries()) {
       const hour = 8 + index;
       const timestamp = `2026-07-30T${hour.toString().padStart(2, "0")}:00:00.000Z`;
-      await persistMatoolSnapshotRun(env.DB, {
-        allowedPayloadFields: ["status"],
-        area,
-        finishedAt: timestamp,
-        observedAt: timestamp,
-        records: [{ sourceId, payload: { status } }],
-        runId: `run_${suffix}_${index + 1}`,
-        startedAt: timestamp
-      });
+      await persistMatoolSnapshotRun(
+        env.DB,
+        {
+          allowedPayloadFields: ["status"],
+          area,
+          finishedAt: timestamp,
+          observedAt: timestamp,
+          records: [{ sourceId, payload: { status } }],
+          runId: `run_${suffix}_${index + 1}`,
+          startedAt: timestamp
+        },
+        await storedPayloadCipher(env)
+      );
     }
 
     const changes = await env.DB
@@ -265,7 +311,14 @@ describe("generische MATOOL-Snapshots", () => {
       "updated",
       "updated"
     ]);
-    expect(changes.results.map((change) => change.payload_json)).toEqual([
+    const cipher = await storedPayloadCipher(env);
+    expect(
+      await Promise.all(
+        changes.results.map((change) =>
+          cipher.open({ area, sourceId }, change.payload_json)
+        )
+      )
+    ).toEqual([
       '{"status":"A"}',
       '{"status":"B"}',
       '{"status":"A"}'
@@ -345,7 +398,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
             { sourceId: sharedId, value: "old" }
           ],
           false
-        )
+        ),
+        await storedPayloadCipher(env)
       );
 
       const input = exactSnapshotInput(
@@ -357,8 +411,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
         ],
         true
       );
-      const first = await persistMatoolSnapshotRun(env.DB, input);
-      const retry = await persistMatoolSnapshotRun(env.DB, input);
+      const first = await persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env));
+      const retry = await persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env));
 
       expect(first, area).toEqual({
         createdCount: 1,
@@ -377,7 +431,7 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
         )
         .bind(area)
         .all<Pick<SnapshotRow, "last_run_id" | "payload_json" | "source_id">>();
-      expect(rows.results, area).toEqual([
+      expect(await openedRows(area, rows.results), area).toEqual([
         {
           last_run_id: input.runId,
           payload_json: '{"value":"new"}',
@@ -402,7 +456,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
         `artikel_seed_${suffix}`,
         [{ sourceId: artikelId, value: "unveraendert" }],
         false
-      )
+      ),
+      await storedPayloadCipher(env)
     );
     await persistMatoolSnapshotRun(
       env.DB,
@@ -411,7 +466,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
         `schueler_seed_${suffix}`,
         [{ sourceId: `schueler_alt_${suffix}`, value: "alt" }],
         false
-      )
+      ),
+      await storedPayloadCipher(env)
     );
 
     await persistMatoolSnapshotRun(
@@ -421,7 +477,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
         `schueler_replace_${suffix}`,
         [{ sourceId: `schueler_neu_${suffix}`, value: "neu" }],
         true
-      )
+      ),
+      await storedPayloadCipher(env)
     );
 
     const artikel = await env.DB
@@ -432,10 +489,12 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
       )
       .bind(artikelId)
       .first<Pick<SnapshotRow, "payload_json" | "source_id">>();
-    expect(artikel).toEqual({
-      payload_json: '{"value":"unveraendert"}',
-      source_id: artikelId
-    });
+    expect(await openedRows("artikel", artikel ? [artikel] : [])).toEqual([
+      {
+        payload_json: '{"value":"unveraendert"}',
+        source_id: artikelId
+      }
+    ]);
   });
 
   it("weist leere Ersatzmengen sowie unbekannte und noch nicht exakt belegte Bereiche vor DB-Schreibzugriff ab", async () => {
@@ -446,7 +505,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
     await expect(
       persistMatoolSnapshotRun(
         env.DB,
-        exactSnapshotInput("artikel", emptyRunId, [], true)
+        exactSnapshotInput("artikel", emptyRunId, [], true),
+        await storedPayloadCipher(env)
       )
     ).rejects.toMatchObject({ code: "invalid_matool_snapshot" });
     await expect(
@@ -457,7 +517,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
           `unverified_${suffix}`,
           [{ sourceId: `checkin_${suffix}`, value: "x" }],
           true
-        )
+        ),
+        await storedPayloadCipher(env)
       )
     ).rejects.toMatchObject({ code: "invalid_matool_snapshot" });
     await expect(
@@ -468,7 +529,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
           unknownRunId,
           [{ sourceId: `id_${suffix}`, value: "x" }],
           true
-        )
+        ),
+        await storedPayloadCipher(env)
       )
     ).rejects.toMatchObject({ code: "invalid_matool_snapshot" });
 
@@ -501,7 +563,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
           { sourceId: staleId, value: "stale" }
         ],
         false
-      )
+      ),
+      await storedPayloadCipher(env)
     );
 
     await env.DB
@@ -526,7 +589,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
               { sourceId: newId, value: "new" }
             ],
             true
-          )
+          ),
+          await storedPayloadCipher(env)
         )
       ).rejects.toMatchObject({
         code: "matool_snapshot_persistence_failed"
@@ -544,7 +608,7 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
       )
       .bind(keepId, staleId, newId)
       .all<Pick<SnapshotRow, "last_run_id" | "payload_json" | "source_id">>();
-    expect(snapshots.results).toEqual([
+    expect(await openedRows("lager", snapshots.results)).toEqual([
       {
         last_run_id: seedRunId,
         payload_json: '{"value":"before"}',
@@ -583,7 +647,8 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
           { sourceId: currentId, value: "current" }
         ],
         false
-      )
+      ),
+      await storedPayloadCipher(env)
     );
     const input = exactSnapshotInput(
       "interessenten",
@@ -592,14 +657,14 @@ describe.sequential("atomarer Ersatz vollstaendiger MATOOL-Listen", () => {
       true
     );
 
-    const first = await persistMatoolSnapshotRun(env.DB, input);
+    const first = await persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env));
     expect(first).toEqual({
       createdCount: 0,
       staleRemovedCount: 1,
       storedCount: 1,
       updatedCount: 0
     });
-    await expect(persistMatoolSnapshotRun(env.DB, input)).resolves.toEqual(
+    await expect(persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env))).resolves.toEqual(
       first
     );
 

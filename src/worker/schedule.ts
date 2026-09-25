@@ -6,6 +6,7 @@ import {
   type MatoolCredentials,
   type MatoolSafeAreaRecord
 } from "../matool/client";
+import { runDataProtectionMaintenanceSafely } from "./data-protection";
 import type { Env } from "./env";
 import {
   acquireExactSyncLease,
@@ -22,6 +23,7 @@ import {
   recordMatoolSnapshotFailure
 } from "./matool-store";
 import { processZapierOutbox } from "./outbox";
+import { storedPayloadCipher } from "./payload-encryption";
 import { getProcessMode } from "./repository";
 import { evaluateBerlinScheduleWindow } from "./schedule-window";
 import {
@@ -227,6 +229,10 @@ export async function handleScheduledInvocation(
   controller: ScheduledController,
   env: Env
 ): Promise<void> {
+  // Verschluesselung, Loeschfristen und Aufraeumen laufen bei jedem Aufruf,
+  // auch ausserhalb des MATOOL-Zeitfensters.
+  await runDataProtectionMaintenanceSafely(env);
+
   const scheduleWindow = evaluateBerlinScheduleWindow(
     controller.scheduledTime
   );
@@ -350,6 +356,9 @@ export async function collectMatoolSnapshots(
   if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
     return summary;
   }
+  // Vor dem Laufbeginn: Ein ungueltiger Schluessel darf keinen haengenden
+  // Lauf hinterlassen.
+  const cipher = await storedPayloadCipher(env);
 
   const startedAt = new Date().toISOString();
   const syncId = await beginMatoolSyncRun(env.DB, {
@@ -449,7 +458,8 @@ export async function collectMatoolSnapshots(
               runId,
               syncId,
               startedAt: areaStartedAt
-            }
+            },
+            cipher
           );
           summary.succeeded += 1;
           summary.storedTotal += result.storedCount;

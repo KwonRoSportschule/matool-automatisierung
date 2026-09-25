@@ -5,6 +5,7 @@ import {
   type MatoolSnapshotRunResult,
   type PersistMatoolSnapshotRunInput
 } from "./matool-store";
+import type { StoredPayloadCipher } from "./payload-encryption";
 
 const LEASE_NAME = "direct_snapshots";
 export const EXACT_SYNC_LEASE_MS = 20 * 60 * 1_000;
@@ -315,10 +316,11 @@ export async function assertExactSourceBaseline(
 export function persistFencedExactSnapshotRun(
   db: D1Database,
   lease: ExactSyncLease,
-  input: PersistMatoolSnapshotRunInput
+  input: PersistMatoolSnapshotRunInput,
+  cipher: StoredPayloadCipher
 ): Promise<MatoolSnapshotRunResult> {
   validateLease(lease);
-  return persistMatoolSnapshotRun(fencedDatabase(db, lease), input);
+  return persistMatoolSnapshotRun(fencedDatabase(db, lease), input, cipher);
 }
 
 function fencedDatabase(

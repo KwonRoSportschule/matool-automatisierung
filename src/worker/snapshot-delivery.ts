@@ -3,6 +3,10 @@ import { jsonResponse, methodNotAllowed } from "../core/http";
 import { validateZapierTargetUrl } from "../sinks/zapier";
 import type { Env } from "./env";
 import {
+  storedPayloadCipher,
+  type StoredPayloadCipher
+} from "./payload-encryption";
+import {
   claimNextSnapshotZapierDelivery,
   completeSnapshotZapierDelivery,
   createSnapshotZapierSubscription,
@@ -126,6 +130,7 @@ export async function processSnapshotZapierDeliveries(
     return summary;
   }
 
+  const cipher = await storedPayloadCipher(env);
   const leaseOwner = `snapshot_delivery_${crypto.randomUUID()}`;
   const deadline = Date.now() + DELIVERY_PROCESSING_BUDGET_MS;
 
@@ -157,7 +162,11 @@ export async function processSnapshotZapierDeliveries(
     const results = await Promise.all(
       leases.map(async (lease) => ({
         lease,
-        result: await deliverSnapshotEvent(lease, fetchImplementation)
+        result: await deliverSnapshotEvent(
+          lease,
+          cipher,
+          fetchImplementation
+        )
       }))
     );
     for (const { lease, result } of results) {
@@ -186,6 +195,7 @@ export async function processSnapshotZapierDeliveries(
 
 async function deliverSnapshotEvent(
   lease: SnapshotZapierDeliveryLease,
+  cipher: StoredPayloadCipher,
   fetchImplementation: typeof fetch
 ): Promise<DeliveryResult> {
   let targetUrl: URL;
@@ -206,7 +216,12 @@ async function deliverSnapshotEvent(
 
   let payload: Record<string, unknown>;
   try {
-    const parsed: unknown = JSON.parse(lease.payloadJson);
+    const parsed: unknown = JSON.parse(
+      await cipher.open(
+        { area: lease.area, sourceId: lease.sourceId },
+        lease.payloadJson
+      )
+    );
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new TypeError("invalid snapshot payload");
     }
