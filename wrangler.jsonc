@@ -60,7 +60,11 @@
         "ACCESS_SERVICE_AUD": "configure-with-cloudflare-access-service-app",
         "ACCESS_TEAM_DOMAIN": "soft-hill-4630.cloudflareaccess.com",
         "MATOOL_BASE_URL": "https://core.matool.de",
-        "OUTBOUND_DELIVERY_ENABLED": "false",
+        // Live-Zustellung an Zapier, freigegeben am 25.09.2026. Aenderungen vor
+        // dem Startzeitpunkt werden nie verschickt, damit kein Rueckstau alte
+        // Zaps ausloest.
+        "OUTBOUND_DELIVERY_ENABLED": "true",
+        "OUTBOUND_DELIVERY_START_AT": "2026-09-25T15:02:00Z",
         // Webseite und Admin-API nur mit Benutzername und Passwort. Beides
         // liegt ausschliesslich als Cloudflare Secret vor:
         //   wrangler secret put DASHBOARD_USERNAME --env staging
