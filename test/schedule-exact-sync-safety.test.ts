@@ -9,6 +9,7 @@ import {
   renewExactSyncLease
 } from "../src/worker/exact-sync-safety";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 describe.sequential("direkter Exact-Current-Set-Schutz", () => {
   beforeEach(async () => {
@@ -74,18 +75,22 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
   it("blockiert einen unplausiblen Rueckgang gegenueber dem letzten erfolgreichen Lauf", async () => {
     const suffix = crypto.randomUUID().replaceAll("-", "_");
     const timestamp = new Date().toISOString();
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["value"],
-      area: "newsletter",
-      finishedAt: timestamp,
-      observedAt: timestamp,
-      records: Array.from({ length: 100 }, (_, index) => ({
-        payload: { value: `baseline-${index}` },
-        sourceId: `baseline_${suffix}_${index}`
-      })),
-      runId: `baseline_${suffix}`,
-      startedAt: timestamp
-    });
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["value"],
+        area: "newsletter",
+        finishedAt: timestamp,
+        observedAt: timestamp,
+        records: Array.from({ length: 100 }, (_, index) => ({
+          payload: { value: `baseline-${index}` },
+          sourceId: `baseline_${suffix}_${index}`
+        })),
+        runId: `baseline_${suffix}`,
+        startedAt: timestamp
+      },
+      await storedPayloadCipher(env)
+    );
 
     await expect(
       assertExactSourceBaseline(env.DB, "newsletter", 79)
@@ -144,15 +149,19 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
     const currentRunId = `current_${suffix}`;
     const timestamp = new Date().toISOString();
 
-    await persistMatoolSnapshotRun(env.DB, {
-      allowedPayloadFields: ["value"],
-      area: "artikel",
-      finishedAt: timestamp,
-      observedAt: timestamp,
-      records: [{ sourceId: staleId, payload: { value: "stale" } }],
-      runId: seedRunId,
-      startedAt: timestamp
-    });
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["value"],
+        area: "artikel",
+        finishedAt: timestamp,
+        observedAt: timestamp,
+        records: [{ sourceId: staleId, payload: { value: "stale" } }],
+        runId: seedRunId,
+        startedAt: timestamp
+      },
+      await storedPayloadCipher(env)
+    );
 
     const oldLease = await acquireExactSyncLease(
       env.DB,
@@ -171,7 +180,8 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
       persistFencedExactSnapshotRun(
         env.DB,
         oldLease,
-        exactInput(blockedRunId, blockedId)
+        exactInput(blockedRunId, blockedId),
+        await storedPayloadCipher(env)
       )
     ).rejects.toMatchObject({
       code: "interessenten_sync_store_unavailable"
@@ -203,7 +213,8 @@ describe.sequential("direkter Exact-Current-Set-Schutz", () => {
       persistFencedExactSnapshotRun(
         env.DB,
         currentLease,
-        exactInput(currentRunId, currentId)
+        exactInput(currentRunId, currentId),
+        await storedPayloadCipher(env)
       )
     ).resolves.toMatchObject({ staleRemovedCount: 1, storedCount: 1 });
 

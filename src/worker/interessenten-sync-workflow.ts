@@ -16,6 +16,7 @@ import type {
   InteressentenSyncWorkflowParams
 } from "./env";
 import { persistMatoolSnapshotRun } from "./matool-store";
+import { storedPayloadCipher } from "./payload-encryption";
 import {
   addInteressentenSyncJobProgress,
   ensureInteressentenSyncSchema,
@@ -210,16 +211,20 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
     const listDigest = await snapshotDigest(extraction.records);
     const startedAt = new Date().toISOString();
     const listRunId = `${jobId}_list`;
-    const result = await persistMatoolSnapshotRun(this.env.DB, {
-      allowedPayloadFields: snapshotPayloadFields(extraction.records),
-      area: "interessenten",
-      finishedAt: new Date().toISOString(),
-      observedAt: startedAt,
-      records: extraction.records,
-      replaceCurrentSet: true,
-      runId: listRunId,
-      startedAt
-    });
+    const result = await persistMatoolSnapshotRun(
+      this.env.DB,
+      {
+        allowedPayloadFields: snapshotPayloadFields(extraction.records),
+        area: "interessenten",
+        finishedAt: new Date().toISOString(),
+        observedAt: startedAt,
+        records: extraction.records,
+        replaceCurrentSet: true,
+        runId: listRunId,
+        startedAt
+      },
+      await storedPayloadCipher(this.env)
+    );
     await startOrRestartInteressentenSyncJob(this.env.DB, {
       initialListCount: baseline.total_count,
       initialListUniqueCount: baseline.unique_count,
@@ -265,15 +270,19 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
     );
     validateReturnedDetailIds(sourceIds, extraction.records);
     const startedAt = new Date().toISOString();
-    const result = await persistMatoolSnapshotRun(this.env.DB, {
-      allowedPayloadFields: snapshotPayloadFields(extraction.records),
-      area: "interessenten_details",
-      finishedAt: new Date().toISOString(),
-      observedAt: startedAt,
-      records: extraction.records,
-      runId,
-      startedAt
-    });
+    const result = await persistMatoolSnapshotRun(
+      this.env.DB,
+      {
+        allowedPayloadFields: snapshotPayloadFields(extraction.records),
+        area: "interessenten_details",
+        finishedAt: new Date().toISOString(),
+        observedAt: startedAt,
+        records: extraction.records,
+        runId,
+        startedAt
+      },
+      await storedPayloadCipher(this.env)
+    );
     return {
       created: result.createdCount,
       processed: result.storedCount,
@@ -294,16 +303,20 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
 
     if (listDigest !== original.listDigest) {
       const finalRunId = `${original.jobId}_final`;
-      const persisted = await persistMatoolSnapshotRun(this.env.DB, {
-        allowedPayloadFields: snapshotPayloadFields(extraction.records),
-        area: "interessenten",
-        finishedAt: new Date().toISOString(),
-        observedAt,
-        records: extraction.records,
-        replaceCurrentSet: true,
-        runId: finalRunId,
-        startedAt: observedAt
-      });
+      const persisted = await persistMatoolSnapshotRun(
+        this.env.DB,
+        {
+          allowedPayloadFields: snapshotPayloadFields(extraction.records),
+          area: "interessenten",
+          finishedAt: new Date().toISOString(),
+          observedAt,
+          records: extraction.records,
+          replaceCurrentSet: true,
+          runId: finalRunId,
+          startedAt: observedAt
+        },
+        await storedPayloadCipher(this.env)
+      );
       const nextJobId = `${workflowInstanceId}_c${cycle + 1}`;
       const current = await getCurrentInteressentenSyncJob(this.env.DB);
       if (current?.jobId === nextJobId && current.status === "running") {

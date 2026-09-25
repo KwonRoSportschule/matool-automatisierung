@@ -11,6 +11,7 @@ import {
   startOrRestartInteressentenSyncJob
 } from "../src/worker/interessenten-sync-store";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 const ALLOWED_FIELDS = ["value"];
 
@@ -31,8 +32,8 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
       "2026-08-24T09:00:00.000Z",
       true
     );
-    const first = await persistMatoolSnapshotRun(env.DB, input);
-    const retry = await persistMatoolSnapshotRun(env.DB, input);
+    const first = await persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env));
+    const retry = await persistMatoolSnapshotRun(env.DB, input, await storedPayloadCipher(env));
 
     expect(first).toEqual({
       createdCount: 1,
@@ -73,7 +74,8 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
         ["201", "202", "203"],
         "2026-08-24T10:00:00.000Z",
         true
-      )
+      ),
+      await storedPayloadCipher(env)
     );
     const jobId = `job_${suffix}`;
     await startOrRestartInteressentenSyncJob(env.DB, {
@@ -153,7 +155,8 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
         ["301", "302"],
         "2026-08-24T11:00:00.000Z",
         true
-      )
+      ),
+      await storedPayloadCipher(env)
     );
     const jobId = `job_${suffix}`;
     await startOrRestartInteressentenSyncJob(env.DB, {
@@ -241,7 +244,8 @@ async function persistRecords(
 ): Promise<void> {
   await persistMatoolSnapshotRun(
     env.DB,
-    snapshotInput(area, runId, sourceIds, observedAt)
+    snapshotInput(area, runId, sourceIds, observedAt),
+    await storedPayloadCipher(env)
   );
 }
 

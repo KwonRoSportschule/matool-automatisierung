@@ -219,7 +219,7 @@ a { color: inherit; }
 .warning-item p { margin: .3rem 0 0; color: #5f5140; font-size: .78rem; line-height: 1.45; }
 .warning-item small { margin-top: .35rem; color: var(--muted); }
 
-.connection-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .9rem; }
+.connection-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .9rem; }
 .connection-card, .metric-card { min-width: 0; border: 1px solid rgb(23 35 29 / 8%); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
 .connection-card { padding: 1.15rem; border-top: 4px solid var(--line-strong); }
 .connection-card[data-state="healthy"] { border-top-color: var(--healthy); }

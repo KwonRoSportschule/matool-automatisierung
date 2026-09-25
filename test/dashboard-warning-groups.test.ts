@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDashboardOverview, listDashboardActivities } from "../src/worker/dashboard-repository";
 import { persistMatoolSnapshotRun, recordMatoolSnapshotFailure } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 import { MATOOL_SNAPSHOT_AREAS } from "../src/worker/schedule";
 import { beginMatoolSyncRun, finishMatoolSyncRun } from "../src/worker/sync-store";
 
@@ -50,7 +51,7 @@ async function seedSync(
         allowedPayloadFields: ["status"], area, finishedAt: at, observedAt: at,
         records: [{ payload: { status: "SYNTHETISCH" }, sourceId: "700001" }],
         runId, startedAt: at, syncId
-      });
+      }, await storedPayloadCipher(env));
     }
   }
   const failed = options.failedAreaCount ?? Object.keys(failures).length;

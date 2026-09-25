@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseCheckinPage } from "../src/matool/checkin";
 import { MatoolClient } from "../src/matool/client";
 import { persistMatoolSnapshotRun } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 import { collectMatoolSnapshots } from "../src/worker/schedule";
 
 const encoder = new TextEncoder();
@@ -68,7 +69,7 @@ describe("Check-in-Sync ohne Anwesenheiten zum Wochenbeginn", () => {
       records: [historicalRecord],
       runId: seedRunId,
       startedAt: "2026-09-11T17:00:00.000Z"
-    });
+    }, await storedPayloadCipher(testEnv));
     mockCheckinPage(checkinWeek(monday));
 
     const result = await collectMatoolSnapshots(

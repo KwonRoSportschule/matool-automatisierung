@@ -88,6 +88,153 @@ describe("Worker-Grenzen", () => {
     await waitOnExecutionContext(context);
   });
 
+  it("schützt Webseite und Admin-API mit dem Dashboard-Passwort", async () => {
+    const passwordEnv = {
+      ...env,
+      APP_ENV: "staging",
+      DASHBOARD_PASSWORD: "synthetic-dashboard-password",
+      DASHBOARD_PASSWORD_REQUIRED: "true",
+      DASHBOARD_USERNAME: "synthetic-trainer",
+      PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+      PUBLIC_DASHBOARD_READ_ONLY: "true"
+    } as Env;
+    const origin = "https://matool-middleware-staging.example.invalid";
+    const authorization = `Basic ${btoa(
+      "synthetic-trainer:synthetic-dashboard-password"
+    )}`;
+
+    const page = await dispatch(new Request(`${origin}/`), passwordEnv);
+    expect(page.status).toBe(401);
+    expect(page.headers.get("WWW-Authenticate")).toBe(
+      'Basic realm="Hey Yo, bitte Benutzername und Passwort eingeben", charset="UTF-8"'
+    );
+    expect(page.headers.get("Content-Type")).toContain("text/html");
+    expect(page.headers.get("Cache-Control")).toBe("no-store");
+    await expect(page.text()).resolves.toContain("Hey Yo");
+
+    const api = await dispatch(
+      new Request(`${origin}/api/admin/v1/dashboard/overview?range=7`),
+      passwordEnv
+    );
+    expect(api.status).toBe(401);
+    expect(api.headers.get("WWW-Authenticate")).toContain("Basic");
+    await expect(api.json()).resolves.toMatchObject({
+      error: { code: "dashboard_login_required" }
+    });
+
+    const health = await dispatch(
+      new Request(`${origin}/healthz`),
+      passwordEnv
+    );
+    expect(health.status).toBe(200);
+
+    const overview = await dispatch(
+      new Request(`${origin}/api/admin/v1/dashboard/overview?range=7`, {
+        headers: { Authorization: authorization }
+      }),
+      passwordEnv
+    );
+    expect(overview.status).toBe(200);
+    await expect(overview.json()).resolves.toMatchObject({
+      access: { authentication: "dashboard-password", canManage: true }
+    });
+
+    const csrf = await dispatch(
+      new Request(`${origin}/api/admin/v1/csrf`, {
+        headers: { Authorization: authorization }
+      }),
+      passwordEnv
+    );
+    expect(csrf.status).toBe(200);
+  });
+
+  it("bleibt gesperrt, solange das Dashboard-Passwort fehlt", async () => {
+    const response = await dispatch(
+      new Request("https://matool-middleware-staging.example.invalid/"),
+      {
+        ...env,
+        APP_ENV: "staging",
+        DASHBOARD_PASSWORD_REQUIRED: "true",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+      } as Env
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "dashboard_password_not_configured" }
+    });
+  });
+
+  it("leitet unverschluesseltes HTTP vor jeder Anmeldung auf HTTPS um", async () => {
+    const response = await dispatch(
+      new Request("http://matool-middleware-staging.example.invalid/api/admin/v1/status?x=1")
+    );
+    expect(response.status).toBe(308);
+    expect(response.headers.get("Location")).toBe(
+      "https://matool-middleware-staging.example.invalid/api/admin/v1/status?x=1"
+    );
+  });
+
+  it("setzt HSTS auf API-Antworten", async () => {
+    const response = await dispatch(
+      new Request("https://example.invalid/healthz")
+    );
+    expect(response.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000; includeSubDomains"
+    );
+  });
+
+  it("zeigt nach zu vielen Fehlversuchen eine Sperrseite mit Retry-After", async () => {
+    const passwordEnv = {
+      ...env,
+      APP_ENV: "staging",
+      DASHBOARD_PASSWORD: "synthetic-dashboard-password",
+      DASHBOARD_PASSWORD_REQUIRED: "true",
+      DASHBOARD_USERNAME: "synthetic-trainer"
+    } as Env;
+    const request = () =>
+      new Request("https://matool-middleware-staging.example.invalid/", {
+        headers: {
+          Authorization: `Basic ${btoa("synthetic-trainer:falsch-falsch-falsch")}`,
+          "CF-Connecting-IP": "203.0.113.77"
+        }
+      });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await dispatch(request(), passwordEnv)).status).toBe(401);
+    }
+
+    const locked = await dispatch(request(), passwordEnv);
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(locked.headers.get("WWW-Authenticate")).toBeNull();
+    await expect(locked.text()).resolves.toContain("Zu viele Fehlversuche");
+  });
+
+  it("meldet den Verschluesselungsstand als Datenschutz-Kachel", async () => {
+    const response = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/dashboard/overview?range=7")
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      connections: {
+        security: {
+          key: "security",
+          state: expect.stringMatching(/^(healthy|warning)$/u)
+        }
+      }
+    });
+
+    const unencrypted = await dispatch(
+      new Request("http://127.0.0.1/api/admin/v1/dashboard/overview?range=7"),
+      { ...env, DATA_ENCRYPTION_KEY: undefined } as unknown as Env
+    );
+    await expect(unencrypted.json()).resolves.toMatchObject({
+      connections: {
+        security: { state: "critical", statusLabel: "Nicht verschluesselt" }
+      },
+      overall: { state: "critical" }
+    });
+  });
+
   it("liefert lokal nur aggregierten Prozessstatus", async () => {
     const response = await dispatch(
       new Request("http://127.0.0.1/api/admin/v1/status")

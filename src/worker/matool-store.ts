@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import { ensureInteressentenSyncSchema } from "./interessenten-sync-store";
+import type { StoredPayloadCipher } from "./payload-encryption";
 
 const MAX_RECORDS_PER_RUN = 20_000;
 const EXACT_CURRENT_SET_AREAS = new Set([
@@ -26,16 +27,18 @@ const MAX_SNAPSHOT_BATCH_BYTES = 1_800_000;
  * verworfen wurde, weil sich die Zusammensetzung des Payloads geaendert hat
  * -- etwa beim Entfernen der Darstellungsfelder am 10.09.2026.
  *
- * Fuer einen so markierten Datensatz entscheidet der naechste Lauf nicht am
- * Hash, sondern am gespeicherten Payload selbst, ob sich etwas geaendert hat.
- * Der neu berechnete Hash wird danach uebernommen. So meldet die Umstellung
- * weder den gesamten Bestand als geaendert -- genau die Falschmeldung, die
- * sie beseitigen soll -- noch verschluckt sie eine echte Aenderung, die
- * zwischen Migration und naechstem Lauf in MATOOL passiert.
+ * Vor dem Schreiben berechnet der naechste Lauf den Hash eines so markierten
+ * Datensatzes aus dessen gespeichertem Klartext neu (siehe
+ * resolveDiscardedContentHashes); danach entscheidet der gewoehnliche
+ * Hash-Vergleich. So meldet die Umstellung weder den gesamten Bestand als
+ * geaendert -- genau die Falschmeldung, die sie beseitigen soll -- noch
+ * verschluckt sie eine echte Aenderung, die zwischen Migration und naechstem
+ * Lauf in MATOOL passiert.
  *
  * Ein leerer Wert kann kein SHA-256-Hex sein und ist deshalb eindeutig.
  */
 const REBASELINE_CONTENT_HASH = "";
+const REHASH_BATCH_SIZE = 50;
 
 export type MatoolSnapshotValue = boolean | number | string | null;
 
@@ -79,9 +82,15 @@ export interface RecordMatoolSnapshotFailureInput {
   startedAt: string;
 }
 
+/**
+ * `cipher` versiegelt jede Nutzlast vor dem Schreiben. Der Inhalts-Hash
+ * entsteht vorher aus dem Klartext, damit die Aenderungserkennung vom
+ * zufaelligen IV unabhaengig bleibt.
+ */
 export async function persistMatoolSnapshotRun(
   db: D1Database,
-  input: PersistMatoolSnapshotRunInput
+  input: PersistMatoolSnapshotRunInput,
+  cipher: StoredPayloadCipher
 ): Promise<MatoolSnapshotRunResult> {
   validateRunIdentity(input);
   if (input.syncId) {
@@ -118,7 +127,10 @@ export async function persistMatoolSnapshotRun(
     );
     snapshots.push({
       contentHash: await sha256Hex(payloadJson),
-      payloadJson,
+      payloadJson: await cipher.seal(
+        { area: input.area, sourceId: record.sourceId },
+        payloadJson
+      ),
       sourceId: record.sourceId,
       zapierEventId: await sha256Hex(
         JSON.stringify([input.area, record.sourceId, input.runId])
@@ -141,6 +153,8 @@ export async function persistMatoolSnapshotRun(
       return existing;
     }
   }
+
+  await resolveDiscardedContentHashes(db, input.area, chunks, cipher);
 
   const runStatement = db
     .prepare(
@@ -361,6 +375,99 @@ async function readIdempotentCompleteListResult(
   }
 }
 
+interface MarkedSnapshotRow {
+  payload_json: string;
+  source_id: string;
+}
+
+/**
+ * Loest die Marke REBASELINE_CONTENT_HASH fuer die Datensaetze dieses Laufs
+ * auf: Der Hash wird aus dem gespeicherten Klartext neu berechnet.
+ *
+ * Frueher verglich der Schreibpfad fuer markierte Datensaetze den
+ * gespeicherten mit dem neuen Payload direkt in SQL. Seit Nutzlasten mit
+ * zufaelligem IV versiegelt werden, unterscheiden sich zwei Chiffrate
+ * desselben Klartexts immer -- der Vergleich haette jeden markierten
+ * Datensatz als geaendert gemeldet und damit genau die Zapier-Falschmeldungen
+ * ausgeloest, die die Marke verhindern soll. Der Hash entsteht dagegen aus
+ * dem Klartext und ist vom IV unabhaengig. Gleicher Klartext ergibt gleichen
+ * Hash, weil Migration 0010 und der Store dieselbe minifizierte Schreibweise
+ * mit sortierten Schluesseln erzeugen.
+ *
+ * Das UPDATE greift nur, solange Marke und Nutzlast unveraendert sind; ein
+ * paralleler Lauf wird nie ueberschrieben. Es ist idempotent und bleibt auch
+ * dann korrekt, wenn der anschliessende Batch scheitert.
+ */
+async function resolveDiscardedContentHashes(
+  db: D1Database,
+  area: string,
+  chunks: readonly (readonly PreparedSnapshot[])[],
+  cipher: StoredPayloadCipher
+): Promise<void> {
+  if (chunks.length === 0) {
+    return;
+  }
+
+  try {
+    const marked = await db.batch<MarkedSnapshotRow>(
+      chunks.map((chunk) =>
+        db
+          .prepare(
+            `SELECT stored.source_id, stored.payload_json
+             FROM json_each(?) AS incoming
+             INNER JOIN matool_snapshots AS stored
+               ON stored.area = ?
+              AND stored.source_id = incoming.value
+             WHERE stored.content_hash = ?`
+          )
+          .bind(
+            JSON.stringify(chunk.map((snapshot) => snapshot.sourceId)),
+            area,
+            REBASELINE_CONTENT_HASH
+          )
+      )
+    );
+    const rows = marked.flatMap((result) => result.results);
+    if (rows.length === 0) {
+      return;
+    }
+
+    const statements = await Promise.all(
+      rows.map(async (row) =>
+        db
+          .prepare(
+            `UPDATE matool_snapshots
+             SET content_hash = ?
+             WHERE area = ?
+               AND source_id = ?
+               AND content_hash = ?
+               AND payload_json = ?`
+          )
+          .bind(
+            await sha256Hex(
+              await cipher.open(
+                { area, sourceId: row.source_id },
+                row.payload_json
+              )
+            ),
+            area,
+            row.source_id,
+            REBASELINE_CONTENT_HASH,
+            row.payload_json
+          )
+      )
+    );
+    for (let index = 0; index < statements.length; index += REHASH_BATCH_SIZE) {
+      await db.batch(statements.slice(index, index + REHASH_BATCH_SIZE));
+    }
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw snapshotPersistenceError();
+  }
+}
+
 function chunkSnapshots(
   snapshots: readonly PreparedSnapshot[]
 ): PreparedSnapshot[][] {
@@ -405,11 +512,7 @@ function buildSnapshotStatement(
        ON CONFLICT (area, source_id) DO UPDATE SET
          last_seen_at = excluded.last_seen_at,
          last_changed_at = CASE
-           WHEN CASE
-                  WHEN matool_snapshots.content_hash = ?
-                    THEN matool_snapshots.payload_json <> excluded.payload_json
-                  ELSE matool_snapshots.content_hash <> excluded.content_hash
-                END
+           WHEN matool_snapshots.content_hash <> excluded.content_hash
              THEN excluded.last_changed_at
            ELSE matool_snapshots.last_changed_at
          END,
@@ -423,8 +526,7 @@ function buildSnapshotStatement(
       input.observedAt,
       input.runId,
       input.observedAt,
-      JSON.stringify(chunk),
-      REBASELINE_CONTENT_HASH
+      JSON.stringify(chunk)
     );
 }
 
@@ -458,13 +560,8 @@ function buildSnapshotChangeStatement(
        WHERE json_type(incoming.value) = 'object'
          AND (
            existing.source_id IS NULL
-           OR CASE
-                WHEN existing.content_hash = ?
-                  THEN existing.payload_json <>
-                    json_extract(incoming.value, '$.payloadJson')
-                ELSE existing.content_hash <>
-                  json_extract(incoming.value, '$.contentHash')
-              END
+           OR existing.content_hash <>
+             json_extract(incoming.value, '$.contentHash')
          )
        ON CONFLICT (area, source_id, run_id) DO NOTHING`
     )
@@ -473,8 +570,7 @@ function buildSnapshotChangeStatement(
       input.runId,
       input.observedAt,
       JSON.stringify(chunk),
-      input.area,
-      REBASELINE_CONTENT_HASH
+      input.area
     );
 }
 

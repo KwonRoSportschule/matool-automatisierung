@@ -4,6 +4,10 @@ import { projectSnapshotPayloadForZapier } from "../core/zapier-payload";
 import { validateZapierTargetUrl } from "../sinks/zapier";
 import type { Env } from "./env";
 import {
+  storedPayloadCipher,
+  type StoredPayloadCipher
+} from "./payload-encryption";
+import {
   claimNextSnapshotZapierDelivery,
   completeSnapshotZapierDelivery,
   createSnapshotZapierSubscription,
@@ -131,6 +135,8 @@ export async function processSnapshotZapierDeliveries(
     return summary;
   }
 
+  const deliverFrom = outboundDeliveryStart(env);
+  const cipher = await storedPayloadCipher(env);
   const leaseOwner = `snapshot_delivery_${crypto.randomUUID()}`;
   const deadline = Date.now() + DELIVERY_PROCESSING_BUDGET_MS;
 
@@ -148,7 +154,8 @@ export async function processSnapshotZapierDeliveries(
         env.DB,
         leaseOwner,
         new Date(),
-        DELIVERY_LEASE_SECONDS
+        DELIVERY_LEASE_SECONDS,
+        deliverFrom
       );
       if (!lease) {
         break;
@@ -162,7 +169,11 @@ export async function processSnapshotZapierDeliveries(
     const results = await Promise.all(
       leases.map(async (lease) => ({
         lease,
-        result: await deliverSnapshotEvent(lease, fetchImplementation)
+        result: await deliverSnapshotEvent(
+          lease,
+          cipher,
+          fetchImplementation
+        )
       }))
     );
     for (const { lease, result } of results) {
@@ -189,8 +200,32 @@ export async function processSnapshotZapierDeliveries(
   return summary;
 }
 
+/**
+ * Aenderungen vor OUTBOUND_DELIVERY_START_AT werden nie zugestellt. Ein
+ * ungueltiger Wert stoppt die Zustellung, statt still alles zu senden.
+ */
+function outboundDeliveryStart(env: Env): string | null {
+  const configured = env.OUTBOUND_DELIVERY_START_AT?.trim() ?? "";
+  if (configured.length === 0) {
+    return null;
+  }
+  const start = new Date(configured);
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/u.test(configured) ||
+    !Number.isFinite(start.getTime())
+  ) {
+    throw new AppError(
+      "outbound_delivery_start_invalid",
+      503,
+      "OUTBOUND_DELIVERY_START_AT muss ein UTC-Zeitpunkt wie 2026-09-25T15:00:00Z sein."
+    );
+  }
+  return start.toISOString();
+}
+
 async function deliverSnapshotEvent(
   lease: SnapshotZapierDeliveryLease,
+  cipher: StoredPayloadCipher,
   fetchImplementation: typeof fetch
 ): Promise<DeliveryResult> {
   let targetUrl: URL;
@@ -211,7 +246,12 @@ async function deliverSnapshotEvent(
 
   let payload: Record<string, unknown>;
   try {
-    const parsed: unknown = JSON.parse(lease.payloadJson);
+    const parsed: unknown = JSON.parse(
+      await cipher.open(
+        { area: lease.area, sourceId: lease.sourceId },
+        lease.payloadJson
+      )
+    );
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new TypeError("invalid snapshot payload");
     }

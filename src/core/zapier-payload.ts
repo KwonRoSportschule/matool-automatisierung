@@ -26,6 +26,25 @@ const ZAPIER_MEMBER_DETAIL_FIELDS = [
 ] as const;
 
 /**
+ * Bank account and direct-debit identifiers never leave for Zapier, whatever
+ * the area. Today only member details carry them, and the allowlist above
+ * already drops them there; this guard keeps the guarantee if a list parser
+ * ever starts returning such a column.
+ */
+const ZAPIER_BLOCKED_BANK_FIELDS: ReadonlySet<string> = new Set([
+  "bank",
+  "bic",
+  "blz",
+  "iban",
+  "konto",
+  "kontoinhaber",
+  "mandatsref",
+  "mandatsreferenz",
+  "zahlart",
+  "zahlungsart"
+]);
+
+/**
  * Projects a stored MATOOL snapshot to the least-privilege Zapier payload.
  * The projection is intentionally applied at both the hook-delivery and
  * sample-list API boundaries.
@@ -35,7 +54,11 @@ export function projectSnapshotPayloadForZapier(
   payload: Readonly<Record<string, unknown>>
 ): Record<string, unknown> {
   if (area !== "schueler_details") {
-    return { ...payload };
+    return Object.fromEntries(
+      Object.entries(payload).filter(
+        ([field]) => !ZAPIER_BLOCKED_BANK_FIELDS.has(field.toLowerCase())
+      )
+    );
   }
 
   const projected: Record<string, unknown> = {};

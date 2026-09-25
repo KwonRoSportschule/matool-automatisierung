@@ -4,6 +4,7 @@ import {
   FIRST_TRIAL_EVENT_TYPE
 } from "../core/first-trial";
 import type { Env } from "./env";
+import { storedPayloadCipher } from "./payload-encryption";
 
 interface ProcessRow {
   process_key: string;
@@ -301,12 +302,18 @@ export async function listAreaSnapshots(
     );
   }
 
+  const cipher = await storedPayloadCipher(env);
+  const payloads = await Promise.all(
+    rows.results.map((row) =>
+      cipher.open({ area, sourceId: row.source_id }, row.payload_json)
+    )
+  );
   const columns = new Set<string>();
-  const records = rows.results.map((row) => {
+  const records = rows.results.map((row, index) => {
     const values: Record<string, string> = {};
     let payload: Record<string, unknown> = {};
     try {
-      const parsed: unknown = JSON.parse(row.payload_json);
+      const parsed: unknown = JSON.parse(payloads[index] ?? "");
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         payload = parsed as Record<string, unknown>;
       }

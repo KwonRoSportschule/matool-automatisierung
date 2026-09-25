@@ -40,4 +40,25 @@ describe("Zapier-Payload-Projektion", () => {
       payload
     );
   });
+
+  it("sperrt Bankverbindungsfelder in jedem Bereich", () => {
+    for (const area of ["schueler", "schueler_ex", "interessenten_details"]) {
+      const projected = projectSnapshotPayloadForZapier(area, {
+        BIC: "SYNTHETICBIC",
+        bank: "Synthetische Bank",
+        blz: "12345678",
+        iban: "DE00123456780000000000",
+        kontakt: "Telefon",
+        konto: "12345678",
+        kontoinhaber: "Beispiel",
+        mandatsreferenz: "MANDAT-1",
+        name: "Beispiel",
+        zahlart: "SEPA",
+        zahlungsart: "Lastschrift"
+      });
+
+      // "kontakt" bleibt: gesperrt werden exakte Feldnamen, keine Praefixe.
+      expect(projected, area).toEqual({ kontakt: "Telefon", name: "Beispiel" });
+    }
+  });
 });

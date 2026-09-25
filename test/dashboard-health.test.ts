@@ -5,6 +5,7 @@ import {
   persistMatoolSnapshotRun,
   recordMatoolSnapshotFailure
 } from "../src/worker/matool-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 import { MATOOL_SNAPSHOT_AREAS } from "../src/worker/schedule";
 import {
   beginMatoolSyncRun,
@@ -38,7 +39,7 @@ async function seedHealthySync(): Promise<void> {
       runId: `health_${area}_${crypto.randomUUID()}`,
       startedAt: scheduledFor,
       syncId
-    });
+    }, await storedPayloadCipher(env));
   }
   await finishMatoolSyncRun(env.DB, syncId, scheduledFor, {
     failed: 0,

@@ -187,11 +187,17 @@ export async function disableSnapshotZapierSubscription(
   return result.meta.changes === 1;
 }
 
+/**
+ * `deliverFrom` (ISO-Zeitpunkt) laesst aeltere Aenderungen aus: Nach dem
+ * Einschalten der Zustellung soll kein Rueckstau alter Ereignisse Zaps
+ * ausloesen. Der Cursor springt mit der ersten Zustellung darueber hinweg.
+ */
 export async function claimNextSnapshotZapierDelivery(
   db: D1Database,
   leaseOwner: string,
   now: Date,
-  leaseDurationSeconds: number
+  leaseDurationSeconds: number,
+  deliverFrom: string | null = null
 ): Promise<SnapshotZapierDeliveryLease | null> {
   validateLeaseOwner(leaseOwner);
   if (
@@ -207,6 +213,8 @@ export async function claimNextSnapshotZapierDelivery(
     now.getTime() + leaseDurationSeconds * 1_000
   ).toISOString();
   const uniqueLeaseOwner = `${leaseOwner}:${crypto.randomUUID()}`;
+  const deliverFromBound =
+    deliverFrom === null ? "" : validateDate(new Date(deliverFrom));
   const results = await db.batch<SnapshotDeliveryLeaseRow>([
     db
       .prepare(
@@ -219,6 +227,7 @@ export async function claimNextSnapshotZapierDelivery(
                    zapier_snapshot_subscriptions.last_delivered_change_id
                  AND changes.payload_json IS NOT NULL
                  AND changes.zapier_event_id IS NOT NULL
+                 AND changes.observed_at >= ?
                  AND (
                    zapier_snapshot_subscriptions.only_changed = 0
                    OR changes.change_kind = 'updated'
@@ -246,6 +255,7 @@ export async function claimNextSnapshotZapierDelivery(
                  AND changes.change_id > subscriptions.last_delivered_change_id
                  AND changes.payload_json IS NOT NULL
                  AND changes.zapier_event_id IS NOT NULL
+                 AND changes.observed_at >= ?
                  AND (
                    subscriptions.only_changed = 0
                    OR changes.change_kind = 'updated'
@@ -263,6 +273,7 @@ export async function claimNextSnapshotZapierDelivery(
                           subscriptions.last_delivered_change_id
                         AND changes.payload_json IS NOT NULL
                         AND changes.zapier_event_id IS NOT NULL
+                        AND changes.observed_at >= ?
                         AND (
                           subscriptions.only_changed = 0
                           OR changes.change_kind = 'updated'
@@ -277,7 +288,14 @@ export async function claimNextSnapshotZapierDelivery(
            LIMIT 1
          )`
       )
-      .bind(startedAt, startedAt),
+      // Leerer Zeitpunkt: jede ISO-Zeit ist >= "", also kein Filter.
+      .bind(
+        deliverFromBound,
+        startedAt,
+        startedAt,
+        deliverFromBound,
+        deliverFromBound
+      ),
     db
       .prepare(
         `UPDATE zapier_snapshot_subscriptions

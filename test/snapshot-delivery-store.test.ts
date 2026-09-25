@@ -11,6 +11,7 @@ import {
   retrySnapshotZapierDelivery,
   type SnapshotZapierDeliveryLease
 } from "../src/worker/snapshot-delivery-store";
+import { storedPayloadCipher } from "../src/worker/payload-encryption";
 
 interface SubscriptionStateRow {
   delivery_attempt_count: number;
@@ -19,6 +20,20 @@ interface SubscriptionStateRow {
   lease_owner: string | null;
   pending_change_id: number | null;
   status: "active" | "disabled";
+}
+
+/** Prueft, dass D1 nur Chiffrat enthaelt, und liefert den Klartext. */
+async function openedLeasePayload(
+  lease: { area: string; payloadJson: string; sourceId: string } | null
+): Promise<string | null> {
+  if (!lease) {
+    return null;
+  }
+  expect(lease.payloadJson).toMatch(/^enc:v1:/u);
+  return (await storedPayloadCipher(env)).open(
+    { area: lease.area, sourceId: lease.sourceId },
+    lease.payloadJson
+  );
 }
 
 function testIdentity(): { area: string; suffix: string } {
@@ -46,15 +61,19 @@ async function persistStatus(
   const timestamp = new Date(
     Date.UTC(2026, 7, 11, 8, sequence, 0)
   ).toISOString();
-  await persistMatoolSnapshotRun(env.DB, {
-    allowedPayloadFields: ["status"],
-    area,
-    finishedAt: timestamp,
-    observedAt: timestamp,
-    records: [{ sourceId, payload: { status } }],
-    runId: `run_${suffix}_${sequence}`,
-    startedAt: timestamp
-  });
+  await persistMatoolSnapshotRun(
+    env.DB,
+    {
+      allowedPayloadFields: ["status"],
+      area,
+      finishedAt: timestamp,
+      observedAt: timestamp,
+      records: [{ sourceId, payload: { status } }],
+      runId: `run_${suffix}_${sequence}`,
+      startedAt: timestamp
+    },
+    await storedPayloadCipher(env)
+  );
 }
 
 async function readSubscription(
@@ -121,9 +140,9 @@ describe("persistente Zapier-Snapshot-Cursor und Leases", () => {
     );
     expect(created).toMatchObject({
       changeKind: "created",
-      payloadJson: '{"status":"A"}',
       subscriptionId: all.id
     });
+    expect(await openedLeasePayload(created)).toBe('{"status":"A"}');
     expect(created?.eventId).toMatch(/^[a-f0-9]{64}$/u);
     if (!created) {
       throw new Error("synthetic created delivery missing");
@@ -164,9 +183,9 @@ describe("persistente Zapier-Snapshot-Cursor und Leases", () => {
       firstSeenAt: "2026-08-11T08:02:00.000Z",
       lastSeenAt: "2026-08-11T08:03:00.000Z",
       observedAt: "2026-08-11T08:03:00.000Z",
-      payloadJson: '{"status":"B"}',
       sourceId: "900002"
     });
+    expect(await openedLeasePayload(leases[0] ?? null)).toBe('{"status":"B"}');
   });
 
   it("vergibt bei parallelem Claim genau einen gueltigen Lease", async () => {

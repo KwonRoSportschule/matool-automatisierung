@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +8,11 @@ import {
   requireAccessIdentity
 } from "../src/worker/access";
 import type { Env } from "../src/worker/env";
+import {
+  LOGIN_MAX_FAILURES,
+  LoginLockedError,
+  loginThrottleBucket
+} from "../src/worker/login-throttle";
 
 describe("Cloudflare-Access-Konfiguration", () => {
   it("kennzeichnet die oeffentliche Ansicht als nicht verwaltbar", () => {
@@ -207,5 +213,210 @@ describe("Cloudflare-Access-Konfiguration", () => {
         "zapier-service"
       )
     ).toThrow();
+  });
+});
+
+describe("Dashboard-Passwortschutz", () => {
+  const passwordEnv = {
+    ...env,
+    APP_ENV: "staging",
+    DASHBOARD_PASSWORD: "synthetisches-Passwort-äöü",
+    DASHBOARD_PASSWORD_REQUIRED: "true",
+    DASHBOARD_USERNAME: "synthetic-trainer",
+    PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+    PUBLIC_DASHBOARD_READ_ONLY: "true"
+  } as Env;
+
+  function basicAuthorization(username: string, password: string): string {
+    const bytes = new TextEncoder().encode(`${username}:${password}`);
+    return `Basic ${btoa(String.fromCharCode(...bytes))}`;
+  }
+
+  /** Jede Anfrage bekommt eine eigene Herkunft, sonst teilen Tests die Sperre. */
+  function dashboardRequest(
+    authorization?: string,
+    origin = syntheticOrigin()
+  ): Request {
+    return new Request("https://middleware.example.invalid/", {
+      headers: {
+        "CF-Connecting-IP": origin,
+        ...(authorization ? { Authorization: authorization } : {})
+      }
+    });
+  }
+
+  function syntheticOrigin(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(2));
+    return `198.51.${bytes[0]}.${bytes[1]}`;
+  }
+
+  const correct = () =>
+    basicAuthorization("synthetic-trainer", "synthetisches-Passwort-äöü");
+  const wrong = () =>
+    basicAuthorization("synthetic-trainer", "falsches-Passwort-123");
+
+  it("meldet mit korrekten Zugangsdaten an und erlaubt Mitarbeiteraktionen", async () => {
+    const identity = await requireAccessIdentity(
+      dashboardRequest(correct()),
+      passwordEnv
+    );
+    expect(identity).toEqual({
+      authentication: "dashboard-password",
+      subject: "dashboard-password:synthetic-trainer"
+    });
+    expect(dashboardAccessSummary(identity).canManage).toBe(true);
+  });
+
+  it.each([
+    ["ohne Zugangsdaten", undefined],
+    [
+      "mit falschem Passwort",
+      basicAuthorization("synthetic-trainer", "falsches-Passwort-123")
+    ],
+    [
+      "mit falschem Benutzernamen",
+      basicAuthorization("someone-else", "synthetisches-Passwort-äöü")
+    ],
+    ["mit kaputtem Header", "Basic !!!"],
+    ["mit Bearer-Token", "Bearer synthetic-token"]
+  ])("verlangt %s eine Anmeldung trotz oeffentlicher Modi", async (_label, authorization) => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(authorization), passwordEnv)
+    ).rejects.toMatchObject({ code: "dashboard_login_required", status: 401 });
+  });
+
+  it.each([
+    ["ohne Secrets", {}],
+    ["mit zu kurzem Passwort", { DASHBOARD_USERNAME: "trainer", DASHBOARD_PASSWORD: "kurz" }],
+    ["nur mit Benutzername", { DASHBOARD_USERNAME: "trainer" }],
+    [
+      "mit Doppelpunkt im Benutzernamen",
+      { DASHBOARD_USERNAME: "trai:ner", DASHBOARD_PASSWORD: "synthetisches-Passwort" }
+    ]
+  ])("bleibt %s gesperrt", async (_label, secrets) => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(), {
+        APP_ENV: "staging",
+        DASHBOARD_PASSWORD_REQUIRED: "true",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+        ...secrets
+      } as Env)
+    ).rejects.toMatchObject({
+      code: "dashboard_password_not_configured",
+      status: 503
+    });
+  });
+
+  it("aktiviert den Schutz auch ohne Pflichtschalter, sobald Secrets gesetzt sind", async () => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(), {
+        APP_ENV: "staging",
+        DASHBOARD_PASSWORD: "synthetisches-Passwort",
+        DASHBOARD_USERNAME: "synthetic-trainer",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+      } as Env)
+    ).rejects.toMatchObject({ code: "dashboard_login_required" });
+  });
+
+  it("gilt nicht fuer die Zapier-Service-Pruefung", async () => {
+    await expect(
+      requireAccessIdentity(
+        new Request("https://middleware.example.invalid/api/zapier/v1/account"),
+        {
+          ...passwordEnv,
+          ACCESS_AUD: "configure-with-cloudflare-access",
+          ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
+          ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access"
+        } as Env,
+        "zapier-service"
+      )
+    ).rejects.toMatchObject({ code: "access_not_configured" });
+  });
+
+  it("sperrt eine Herkunft nach zehn Fehlversuchen, auch fuer richtige Zugangsdaten", async () => {
+    const origin = syntheticOrigin();
+    for (let attempt = 1; attempt <= LOGIN_MAX_FAILURES; attempt += 1) {
+      await expect(
+        requireAccessIdentity(dashboardRequest(wrong(), origin), passwordEnv)
+      ).rejects.toMatchObject({ code: "dashboard_login_required" });
+    }
+
+    const locked = requireAccessIdentity(
+      dashboardRequest(correct(), origin),
+      passwordEnv
+    );
+    await expect(locked).rejects.toBeInstanceOf(LoginLockedError);
+    await expect(locked).rejects.toMatchObject({
+      code: "dashboard_login_locked",
+      status: 429
+    });
+
+    // Andere Herkunft bleibt unberuehrt.
+    await expect(
+      requireAccessIdentity(dashboardRequest(correct()), passwordEnv)
+    ).resolves.toMatchObject({ authentication: "dashboard-password" });
+  });
+
+  it("hebt die Sperre nach Ablauf auf und setzt den Zaehler nach Erfolg zurueck", async () => {
+    const origin = syntheticOrigin();
+    for (let attempt = 1; attempt <= LOGIN_MAX_FAILURES; attempt += 1) {
+      await expect(
+        requireAccessIdentity(dashboardRequest(wrong(), origin), passwordEnv)
+      ).rejects.toMatchObject({ code: "dashboard_login_required" });
+    }
+    const bucket = await loginThrottleBucket(
+      dashboardRequest(undefined, origin),
+      passwordEnv
+    );
+    const row = await env.DB.prepare(
+      "SELECT failure_count, locked_until FROM dashboard_login_throttle WHERE bucket = ?"
+    )
+      .bind(bucket)
+      .first<{ failure_count: number; locked_until: number }>();
+    expect(row?.failure_count).toBe(LOGIN_MAX_FAILURES);
+    expect(row?.locked_until).toBeGreaterThan(Date.now() / 1000);
+    // Gespeichert ist nur ein HMAC, nie die Adresse selbst.
+    expect(bucket).not.toContain(origin);
+
+    await env.DB.prepare(
+      `UPDATE dashboard_login_throttle
+       SET locked_until = ?, window_started_at = ?
+       WHERE bucket = ?`
+    )
+      .bind(Math.floor(Date.now() / 1000) - 1, 0, bucket)
+      .run();
+
+    await expect(
+      requireAccessIdentity(dashboardRequest(correct(), origin), passwordEnv)
+    ).resolves.toMatchObject({ authentication: "dashboard-password" });
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dashboard_login_throttle WHERE bucket = ?")
+        .bind(bucket)
+        .first<{ count: number }>()
+    ).resolves.toEqual({ count: 0 });
+  });
+
+  it("verlangt als zweiten Faktor zuerst Cloudflare Access", async () => {
+    const origin = syntheticOrigin();
+    await expect(
+      requireAccessIdentity(dashboardRequest(correct(), origin), {
+        ...passwordEnv,
+        ACCESS_AUD: "synthetic-employee-audience",
+        ACCESS_SERVICE_AUD: "synthetic-service-audience",
+        ACCESS_TEAM_DOMAIN: "synthetic-team.cloudflareaccess.com",
+        DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS: "true"
+      } as Env)
+    ).rejects.toMatchObject({ code: "access_denied", status: 403 });
+
+    // Ohne Access-Anmeldung wird kein Passwortversuch gezaehlt.
+    const bucket = await loginThrottleBucket(
+      dashboardRequest(undefined, origin),
+      passwordEnv
+    );
+    await expect(
+      env.DB.prepare("SELECT COUNT(*) AS count FROM dashboard_login_throttle WHERE bucket = ?")
+        .bind(bucket)
+        .first<{ count: number }>()
+    ).resolves.toEqual({ count: 0 });
   });
 });

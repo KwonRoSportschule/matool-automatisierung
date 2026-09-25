@@ -3,6 +3,13 @@
 DEV_AUTH_BYPASS=allow-loopback-only
 CSRF_SECRET=replace-with-at-least-24-random-characters
 
+# Optional: Dashboard-Passwortschutz lokal testen (Passwort mind. 12 Zeichen).
+# DASHBOARD_USERNAME=
+# DASHBOARD_PASSWORD=
+
+# Optional: Verschluesselung lokal testen (Zufallstext, mind. 32 Zeichen).
+# DATA_ENCRYPTION_KEY=
+
 # Erst nach Passwortrotation und ausdrücklicher read-only-Freigabe lokal setzen:
 # MATOOL_EMAIL=
 # MATOOL_PASSWORD=

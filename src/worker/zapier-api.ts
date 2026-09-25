@@ -15,6 +15,7 @@ import {
 } from "./delivery-repository";
 import type { Env } from "./env";
 import { requireZapierServiceRequest } from "./integration-auth";
+import { storedPayloadCipher } from "./payload-encryption";
 import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
 import { handleSnapshotSubscriptionApiRequest } from "./snapshot-delivery";
 
@@ -22,6 +23,26 @@ const MAX_JSON_BODY_BYTES = 8_192;
 const SYNTHETIC_EVENT_ID = "0".repeat(64);
 const SYNTHETIC_CLAIM_ID =
   "zclaim_00000000-0000-4000-8000-000000000000";
+
+/**
+ * Bereiche, die Zapier lesen und abonnieren darf -- bewusst ausgeschrieben,
+ * damit ein kuenftig synchronisierter Bereich nicht automatisch nach aussen
+ * geht. Jeder Eintrag entspricht einem Trigger der Zapier-App.
+ *
+ * Die Schuelerdetails enthalten Bankverbindung und Geburtsdaten. Zapier
+ * erhaelt sie ausschliesslich ueber die Feld-Allowlist in
+ * projectSnapshotPayloadForZapier (Kontakt- und Vertragsfelder fuer den
+ * Mitglied-Trigger); Bankfelder sperrt die Projektion fuer jeden Bereich.
+ */
+const ZAPIER_SNAPSHOT_AREAS = [
+  "interessenten",
+  "interessenten_details",
+  "schueler",
+  "schueler_details",
+  "schueler_ex",
+  "checkin",
+  "graduierungen"
+] as const satisfies readonly (typeof MATOOL_SNAPSHOT_AREAS)[number][];
 
 export async function handleZapierApiRequest(
   request: Request,
@@ -35,7 +56,7 @@ export async function handleZapierApiRequest(
       request,
       url,
       env,
-      MATOOL_SNAPSHOT_AREAS
+      ZAPIER_SNAPSHOT_AREAS
     );
   }
 
@@ -48,7 +69,7 @@ export async function handleZapierApiRequest(
       id: "kwonro-matool-middleware",
       environment: env.APP_ENV,
       event_types: [],
-      snapshot_areas: MATOOL_SNAPSHOT_AREAS,
+      snapshot_areas: ZAPIER_SNAPSHOT_AREAS,
       token_scopes: ["snapshots:read"]
     });
   }
@@ -200,7 +221,7 @@ async function listSnapshotsForZapier(
   env: Env
 ): Promise<unknown> {
   const area = url.searchParams.get("area") ?? "";
-  if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+  if (!ZAPIER_SNAPSHOT_AREAS.includes(area as never)) {
     invalidPayload();
   }
 
@@ -279,10 +300,16 @@ async function listSnapshotsForZapier(
 
   const hasMore = rows.results.length > limit;
   const page = rows.results.slice(0, limit);
-  const records = page.map((row) => {
+  const cipher = await storedPayloadCipher(env);
+  const payloads = await Promise.all(
+    page.map((row) =>
+      cipher.open({ area, sourceId: row.source_id }, row.payload_json)
+    )
+  );
+  const records = page.map((row, index) => {
     let payload: Record<string, unknown> = {};
     try {
-      const parsed: unknown = JSON.parse(row.payload_json);
+      const parsed: unknown = JSON.parse(payloads[index] ?? "");
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         payload = parsed as Record<string, unknown>;
       }
