@@ -211,6 +211,27 @@ describe("Wartungslauf Datenschutz", () => {
     expect(after.snapshot).toMatch(/^enc:v1:/u);
   });
 
+  it("holt einen versehentlich geleerten neuesten Stand aus dem Snapshot zurueck", async () => {
+    const { area, suffix } = testArea();
+    const old = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    await persistPayload(env, area, `run_${suffix}`, "1", { status: "A" }, old);
+    // So hinterliess es die fruehere Fassung der Loeschfrist.
+    await env.DB.prepare(
+      "UPDATE matool_snapshot_changes SET payload_json = NULL WHERE area = ?"
+    )
+      .bind(area)
+      .run();
+
+    await runDataProtectionMaintenance(env);
+
+    const after = await storedPayloads(area);
+    expect(after.changes).toEqual([after.snapshot]);
+    const cipher = await storedPayloadCipher(env);
+    await expect(
+      cipher.open({ area, sourceId: "1" }, after.changes[0] ?? "")
+    ).resolves.toBe('{"status":"A"}');
+  });
+
   it("haelt die Loeschfrist konfigurierbar", async () => {
     const { area, suffix } = testArea();
     const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
