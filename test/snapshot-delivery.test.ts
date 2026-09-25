@@ -237,6 +237,95 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
     expect(unexpectedFetch).not.toHaveBeenCalled();
   });
 
+  it("stellt nach dem Einschalten keine Aenderungen vor dem Startzeitpunkt zu", async () => {
+    const targetUrl = zapierTargetUrl();
+    await subscribe("interessenten_details", targetUrl);
+    const sourceId = crypto.randomUUID().replaceAll("-", "");
+    // Rueckstau aus der Zeit, in der die Zustellung aus war.
+    await persistChange("interessenten_details", sourceId, "alt");
+
+    const start = new Date(Date.now() + 60_000);
+    const later = new Date(start.getTime() + 60_000).toISOString();
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["value"],
+        area: "interessenten_details",
+        finishedAt: later,
+        observedAt: later,
+        records: [{ sourceId, payload: { value: "neu" } }],
+        runId: `snapshot_start_${crypto.randomUUID()}`,
+        startedAt: later
+      },
+      await storedPayloadCipher(env)
+    );
+
+    const bodies: unknown[] = [];
+    const fetchImplementation = vi.fn(async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const request = new Request(input, init);
+      if (request.url === targetUrl) {
+        bodies.push(await request.json());
+      }
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const startedEnv = {
+      ...deliveryEnv(),
+      OUTBOUND_DELIVERY_START_AT: start.toISOString()
+    } as Env;
+
+    await processSnapshotZapierDeliveries(startedEnv, fetchImplementation);
+    await processSnapshotZapierDeliveries(startedEnv, fetchImplementation);
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      area: "interessenten_details",
+      change_kind: "updated",
+      source_id: sourceId,
+      value: "neu"
+    });
+  });
+
+  it("stellt bei ungueltigem Startzeitpunkt gar nichts zu", async () => {
+    const fetchImplementation = vi.fn(
+      async () => new Response(null, { status: 204 })
+    ) as unknown as typeof fetch;
+    await expect(
+      processSnapshotZapierDeliveries(
+        { ...deliveryEnv(), OUTBOUND_DELIVERY_START_AT: "morgen" } as Env,
+        fetchImplementation
+      )
+    ).rejects.toMatchObject({ code: "outbound_delivery_start_invalid" });
+    expect(fetchImplementation).not.toHaveBeenCalled();
+  });
+
+  it("gibt Schuelerdetails mit Bankdaten nicht an Zapier heraus", async () => {
+    const subscription = await dispatch(
+      serviceRequest("/api/zapier/v1/snapshot-subscriptions", {
+        body: JSON.stringify({
+          area: "schueler_details",
+          only_changed: false,
+          target_url: zapierTargetUrl()
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      })
+    );
+    expect(subscription.status).toBe(400);
+
+    const feed = await dispatch(
+      serviceRequest("/api/zapier/v1/snapshots?area=schueler_details")
+    );
+    expect(feed.status).toBe(400);
+
+    const account = await dispatch(serviceRequest("/api/zapier/v1/account"));
+    await expect(account.json()).resolves.toMatchObject({
+      snapshot_areas: ["interessenten", "interessenten_details", "schueler"]
+    });
+  });
+
   it("bleibt bei deaktivierter Ausgangszustellung ohne Netzwerkzugriff", async () => {
     const fetchImplementation = vi.fn(
       async () => new Response(null, { status: 204 })

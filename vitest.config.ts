@@ -21,6 +21,9 @@ export default defineConfig({
             // Staging verlangt das Dashboard-Passwort; die Tests schalten es
             // gezielt pro Fall ein.
             DASHBOARD_PASSWORD_REQUIRED: "false",
+            // Zustellung schalten die Tests gezielt ein; nie echtes Netz.
+            OUTBOUND_DELIVERY_ENABLED: "false",
+            OUTBOUND_DELIVERY_START_AT: "",
             // Alle Tests laufen mit verschluesselten Nutzlasten wie im Betrieb.
             DATA_ENCRYPTION_KEY:
               "synthetic-data-encryption-key-for-tests-only",

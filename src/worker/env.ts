@@ -9,6 +9,11 @@ export interface Env {
   ACCESS_TEAM_DOMAIN: string;
   MATOOL_BASE_URL: string;
   OUTBOUND_DELIVERY_ENABLED: string;
+  /**
+   * UTC-Zeitpunkt; aeltere Aenderungen stellt der Worker nie per Webhook zu.
+   * Verhindert, dass beim Einschalten ein Rueckstau alte Zaps ausloest.
+   */
+  OUTBOUND_DELIVERY_START_AT?: string;
   PUBLIC_DASHBOARD_FULL_ACCESS?: string;
   PUBLIC_DASHBOARD_READ_ONLY?: string;
   /**

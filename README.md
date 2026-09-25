@@ -104,6 +104,13 @@ Alternativ im Cloudflare-Dashboard unter Workers & Pages →
 503 statt öffentlich zu werden (`DASHBOARD_PASSWORD_REQUIRED=true`). Zum
 Abmelden den Browser vollständig schließen.
 
+Mit `OUTBOUND_DELIVERY_ENABLED=true` stellt der Worker neue und geänderte
+Datensätze stündlich nach jedem Sync live an abonnierte Zaps zu. Beim
+Einschalten gehört `OUTBOUND_DELIVERY_START_AT` (UTC-Zeitpunkt) dazu:
+Änderungen davor werden nie verschickt, ein Rückstau löst also keine Zaps für
+alte Vorgänge aus. Die automatische Kontaktaufnahme mit Interessenten bleibt
+davon getrennt und aus.
+
 Personendaten liegen in D1 nur AES-256-GCM-verschlüsselt. Den Schlüssel
 (Zufallstext, mindestens 32 Zeichen, zusätzlich im Passwortmanager ablegen)
 gibt es ebenfalls nur als Secret:

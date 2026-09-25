@@ -23,6 +23,15 @@ const SYNTHETIC_EVENT_ID = "0".repeat(64);
 const SYNTHETIC_CLAIM_ID =
   "zclaim_00000000-0000-4000-8000-000000000000";
 
+/**
+ * Bereiche, die Zapier lesen und abonnieren darf. Die Schuelerdetails mit
+ * Bankverbindung und Geburtsdaten bleiben aussen vor; die Zapier-App bietet
+ * sie ohnehin nicht an.
+ */
+const ZAPIER_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
+  (area) => area !== "schueler_details"
+);
+
 export async function handleZapierApiRequest(
   request: Request,
   url: URL,
@@ -35,7 +44,7 @@ export async function handleZapierApiRequest(
       request,
       url,
       env,
-      MATOOL_SNAPSHOT_AREAS
+      ZAPIER_SNAPSHOT_AREAS
     );
   }
 
@@ -48,7 +57,7 @@ export async function handleZapierApiRequest(
       id: "kwonro-matool-middleware",
       environment: env.APP_ENV,
       event_types: [],
-      snapshot_areas: MATOOL_SNAPSHOT_AREAS,
+      snapshot_areas: ZAPIER_SNAPSHOT_AREAS,
       token_scopes: ["snapshots:read"]
     });
   }
@@ -200,7 +209,7 @@ async function listSnapshotsForZapier(
   env: Env
 ): Promise<unknown> {
   const area = url.searchParams.get("area") ?? "";
-  if (!MATOOL_SNAPSHOT_AREAS.includes(area as never)) {
+  if (!ZAPIER_SNAPSHOT_AREAS.includes(area as never)) {
     invalidPayload();
   }
 
