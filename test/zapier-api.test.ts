@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { FIRST_TRIAL_EVENT_TYPE } from "../src/core/first-trial";
 import worker from "../src/worker";
+import { runDataProtectionMaintenance } from "../src/worker/data-protection";
 
 const serviceToken =
   "synthetic-service-token-at-least-32-characters";
@@ -499,5 +500,179 @@ describe("Zapier-Service-API", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: { code: "invalid_integration_payload" }
     });
+  });
+});
+
+describe("Zapier nach Verschluesselung und Loeschfrist", () => {
+  const daysAgo = (days: number) =>
+    new Date(Date.now() - days * 86_400_000).toISOString();
+
+  async function feedFor(
+    area: string,
+    sourceIds: readonly string[]
+  ): Promise<Array<Record<string, unknown>>> {
+    const response = await dispatch(
+      serviceRequest(`/api/zapier/v1/snapshots?area=${area}&limit=300`)
+    );
+    expect(response.status).toBe(200);
+    const page = (await response.json()) as ZapierSnapshotPage;
+    return page.records.filter((record) =>
+      sourceIds.includes(String(record.source_id))
+    );
+  }
+
+  async function storedChangePayloads(
+    area: string,
+    sourceId: string
+  ): Promise<Array<string | null>> {
+    const rows = await env.DB.prepare(
+      `SELECT payload_json FROM matool_snapshot_changes
+       WHERE area = ? AND source_id = ? ORDER BY change_id`
+    )
+      .bind(area, sourceId)
+      .all<{ payload_json: string | null }>();
+    return rows.results.map((row) => row.payload_json);
+  }
+
+  it("liefert Zapier vor und nach der Umstellung auf Verschluesselung exakt dieselben Datensaetze", async () => {
+    const seed = crypto.randomUUID().replaceAll("-", "");
+    const sourceId = `enc-${seed}`;
+    // Altbestand liegt noch im Klartext, wie vor dieser Aenderung.
+    await seedSnapshotChanges("interessenten_details", [
+      {
+        changeKind: "created",
+        contentHash: "c".repeat(64),
+        eventId: `${seed}${"1".padStart(32, "0")}`,
+        observedAt: daysAgo(2),
+        payload: { email: "synthetisch@example.invalid", vorname: "Ida" },
+        sourceId
+      },
+      {
+        changeKind: "updated",
+        contentHash: "d".repeat(64),
+        eventId: `${seed}${"2".padStart(32, "0")}`,
+        observedAt: daysAgo(1),
+        payload: { email: "neu@example.invalid", vorname: "Ida" },
+        sourceId
+      }
+    ]);
+    const before = await feedFor("interessenten_details", [sourceId]);
+    expect(before).toHaveLength(2);
+    expect(before[0]).toMatchObject({ email: "neu@example.invalid", vorname: "Ida" });
+
+    await runDataProtectionMaintenance(env);
+    const stored = await storedChangePayloads("interessenten_details", sourceId);
+    expect(stored).toHaveLength(2);
+    for (const payload of stored) {
+      expect(payload).toMatch(/^enc:v1:/u);
+    }
+
+    await expect(feedFor("interessenten_details", [sourceId])).resolves.toEqual(
+      before
+    );
+  });
+
+  it("behaelt nach der Loeschfrist den neuesten Stand jedes Datensatzes fuer Zapier-Beispieldaten", async () => {
+    const seed = crypto.randomUUID().replaceAll("-", "");
+    const unchanged = `alt-${seed}`;
+    const changed = `neu-${seed}`;
+    await seedSnapshotChanges("schueler", [
+      {
+        changeKind: "created",
+        contentHash: "e".repeat(64),
+        eventId: `${seed}${"1".padStart(32, "0")}`,
+        observedAt: daysAgo(90),
+        payload: { name: "Seit Monaten unveraendert" },
+        sourceId: unchanged
+      },
+      {
+        changeKind: "created",
+        contentHash: "f".repeat(64),
+        eventId: `${seed}${"2".padStart(32, "0")}`,
+        observedAt: daysAgo(60),
+        payload: { name: "Alter Stand" },
+        sourceId: changed
+      },
+      {
+        changeKind: "updated",
+        contentHash: "0".repeat(64),
+        eventId: `${seed}${"3".padStart(32, "0")}`,
+        observedAt: daysAgo(40),
+        payload: { name: "Aktueller Stand" },
+        sourceId: changed
+      }
+    ]);
+
+    await runDataProtectionMaintenance(env);
+
+    // Nur der ueberholte Stand ist geleert; die Zeile selbst bleibt.
+    const changedPayloads = await storedChangePayloads("schueler", changed);
+    expect(changedPayloads).toHaveLength(2);
+    expect(changedPayloads[0]).toBeNull();
+    expect(changedPayloads[1]).toMatch(/^enc:v1:/u);
+
+    const records = await feedFor("schueler", [unchanged, changed]);
+    expect(records.map((record) => record.name).sort()).toEqual([
+      "Aktueller Stand",
+      "Seit Monaten unveraendert"
+    ]);
+  });
+
+  it("loescht nichts, was eine aktive Zapier-Subscription noch nicht bekommen hat", async () => {
+    const seed = crypto.randomUUID().replaceAll("-", "");
+    const subscribedArea = "interessenten";
+    const otherArea = "schueler_details";
+    const sourceId = `schutz-${seed}`;
+    const subscription = await dispatch(
+      serviceRequest("/api/zapier/v1/snapshot-subscriptions", {
+        body: JSON.stringify({
+          area: subscribedArea,
+          only_changed: false,
+          target_url: [
+            "https://hooks.",
+            "zapier.com/hooks/catch/",
+            seed.slice(0, 8),
+            "/",
+            seed.slice(8, 16)
+          ].join("")
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST"
+      })
+    );
+    expect(subscription.status).toBe(201);
+
+    for (const area of [subscribedArea, otherArea]) {
+      await seedSnapshotChanges(area, [
+        {
+          changeKind: "created",
+          contentHash: "1".repeat(64),
+          eventId: `${seed}${area.length}${"1".padStart(31, "0")}`,
+          observedAt: daysAgo(45),
+          payload: { status: "A" },
+          sourceId
+        },
+        {
+          changeKind: "updated",
+          contentHash: "2".repeat(64),
+          eventId: `${seed}${area.length}${"2".padStart(31, "0")}`,
+          observedAt: daysAgo(44),
+          payload: { status: "B" },
+          sourceId
+        }
+      ]);
+    }
+
+    await runDataProtectionMaintenance(env);
+
+    const pending = await storedChangePayloads(subscribedArea, sourceId);
+    expect(pending).toHaveLength(2);
+    expect(pending.every((payload) => payload?.startsWith("enc:v1:"))).toBe(
+      true
+    );
+    // Gegenprobe ohne Subscription: der ueberholte Stand wird geleert.
+    const other = await storedChangePayloads(otherArea, sourceId);
+    expect(other[0]).toBeNull();
+    expect(other[1]).toMatch(/^enc:v1:/u);
   });
 });

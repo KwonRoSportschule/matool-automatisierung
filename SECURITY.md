@@ -101,7 +101,7 @@ Schichten; fällt eine aus, schützen die übrigen weiter.
 | Zugang (optional) | Zweiter Faktor | `DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS=true` verlangt zusätzlich eine Cloudflare-Access-Anmeldung, z. B. Einmalcode per E-Mail. Access wird vor dem Passwort geprüft. |
 | Speicherung | Verschlüsselung in D1 | Jede MATOOL-Nutzlast liegt als AES-256-GCM-Chiffrat vor (Schlüssel per HKDF-SHA-256 aus `DATA_ENCRYPTION_KEY`, zufälliger 96-Bit-IV je Schreibvorgang). Die Authentisierung bindet das Chiffrat an Bereich und Datensatz; ein vertauschtes oder verändertes Chiffrat wird abgelehnt. |
 | Speicherung | Kein Klartext durch Fehlkonfiguration | `DATA_ENCRYPTION_REQUIRED=true`: Ohne Schlüssel schlägt der Sync fehl, statt Klartext zu schreiben. |
-| Speicherbegrenzung | Löschfrist | Kopien alter Datensatzstände in der Änderungshistorie werden nach 30 Tagen gelöscht (`CHANGE_PAYLOAD_RETENTION_DAYS`); nur die Metadaten bleiben. |
+| Speicherbegrenzung | Löschfrist | Überholte Datensatzstände in der Änderungshistorie werden nach 30 Tagen geleert (`CHANGE_PAYLOAD_RETENTION_DAYS`); die Metadaten bleiben. Der neueste Stand jedes Datensatzes und alles, was eine aktive Zapier-Subscription noch nicht bekommen hat, bleiben unangetastet. |
 | Anzeige | Datenminimierung | IBAN und Kontonummer zeigt das Dashboard auch im Klartextbetrieb nur mit den letzten vier Stellen; Bankdaten sind nicht durchsuchbar. |
 | Protokolle | Keine Personendaten in Logs | Cloudflare-Request-Logs (volle URL samt Suchbegriff) sind abgeschaltet; eigene Logs enthalten nur Zähler und Fehlercodes. |
 
@@ -131,9 +131,10 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
 - Der Inhalts-Hash (SHA-256 des Klartexts) bleibt zur Änderungserkennung
   unverschlüsselt. Er verrät keinen Inhalt, erlaubt aber die Bestätigung
   eines vollständig erratenen Datensatzes.
-- Die Zapier-Schnittstelle liefert freigegebene Bereiche vollständig aus,
-  auch `schueler_details` mit Bankdaten. Welche Felder Zapier wirklich
-  braucht, ist fachlich zu entscheiden und dann per Allowlist zu begrenzen.
+- Die private Zapier-App bietet `schueler_details` nicht an, Bankdaten
+  erreichen Zapier darüber also nicht. Die Service-API würde den Bereich mit
+  gültigem Service-Token aber vollständig ausliefern; soll das dauerhaft
+  ausgeschlossen sein, gehört er aus der Allowlist der Zapier-Routen.
 - Rechtliche Pflichten bleiben organisatorisch: Auftragsverarbeitungsverträge
   mit Cloudflare und Zapier, Verzeichnis der Verarbeitungstätigkeiten,
   Löschkonzept und Datenschutzhinweise. Das ersetzt keine Prüfung durch

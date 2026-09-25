@@ -46,6 +46,7 @@ export async function runDataProtectionMaintenance(
   env: Env,
   now = new Date()
 ): Promise<DataProtectionMaintenanceResult> {
+  await restoreLatestChangePayloads(env);
   const expiredChangePayloads = await expireChangePayloads(env, now);
   const cipher = await storedPayloadCipher(env);
   const sealedPayloads = cipher.currentHeader
@@ -101,9 +102,14 @@ export async function dataProtectionStatus(
 
 /**
  * Die Aenderungshistorie speichert jeden alten Stand vollstaendig, also auch
- * alte IBANs und Anschriften. Nach Ablauf der Frist bleibt nur die
- * Metadatenzeile (wann, was fuer eine Aenderung) erhalten. Ein noch
- * ausstehender Zapier-Versand behaelt seine Nutzlast.
+ * alte IBANs und Anschriften. Nach Ablauf der Frist bleibt von einem
+ * ueberholten Stand nur die Metadatenzeile (wann, was fuer eine Aenderung).
+ *
+ * Unangetastet bleiben, damit Zapier unveraendert funktioniert:
+ * - der neueste Stand jedes Datensatzes; Zapier-Beispieldaten und der
+ *   Aenderungsfeed brauchen ihn, sonst liefe "Test trigger" ins Leere;
+ * - jede Aenderung, die eine aktive Zapier-Subscription noch nicht
+ *   zugestellt hat, auch wenn die Ausgangszustellung gerade abgeschaltet ist.
  */
 async function expireChangePayloads(env: Env, now: Date): Promise<number> {
   const cutoff = new Date(
@@ -114,14 +120,59 @@ async function expireChangePayloads(env: Env, now: Date): Promise<number> {
      SET payload_json = NULL
      WHERE payload_json IS NOT NULL
        AND observed_at < ?
-       AND change_id NOT IN (
-         SELECT pending_change_id
-         FROM zapier_snapshot_subscriptions
-         WHERE pending_change_id IS NOT NULL
+       AND EXISTS (
+         SELECT 1
+         FROM matool_snapshot_changes AS newer
+         WHERE newer.area = matool_snapshot_changes.area
+           AND newer.source_id = matool_snapshot_changes.source_id
+           AND newer.change_id > matool_snapshot_changes.change_id
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM zapier_snapshot_subscriptions AS subscriptions
+         WHERE subscriptions.status = 'active'
+           AND subscriptions.area = matool_snapshot_changes.area
+           AND subscriptions.last_delivered_change_id
+             < matool_snapshot_changes.change_id
        )`
   )
     .bind(cutoff)
     .run();
+  return result.meta.changes ?? 0;
+}
+
+/**
+ * Eine fruehere Fassung der Loeschfrist leerte auch den neuesten Stand eines
+ * Datensatzes. Er ist inhaltsgleich mit dem aktuellen Snapshot (gleicher
+ * Inhalts-Hash, gleiche Bindung an Bereich und Datensatz) und wird von dort
+ * zurueckgeholt, damit der Zapier-Feed wieder vollstaendig ist.
+ */
+async function restoreLatestChangePayloads(env: Env): Promise<number> {
+  const result = await env.DB.prepare(
+    `UPDATE matool_snapshot_changes
+     SET payload_json = (
+       SELECT snapshots.payload_json
+       FROM matool_snapshots AS snapshots
+       WHERE snapshots.area = matool_snapshot_changes.area
+         AND snapshots.source_id = matool_snapshot_changes.source_id
+         AND snapshots.content_hash = matool_snapshot_changes.content_hash
+     )
+     WHERE payload_json IS NULL
+       AND NOT EXISTS (
+         SELECT 1
+         FROM matool_snapshot_changes AS newer
+         WHERE newer.area = matool_snapshot_changes.area
+           AND newer.source_id = matool_snapshot_changes.source_id
+           AND newer.change_id > matool_snapshot_changes.change_id
+       )
+       AND EXISTS (
+         SELECT 1
+         FROM matool_snapshots AS snapshots
+         WHERE snapshots.area = matool_snapshot_changes.area
+           AND snapshots.source_id = matool_snapshot_changes.source_id
+           AND snapshots.content_hash = matool_snapshot_changes.content_hash
+       )`
+  ).run();
   return result.meta.changes ?? 0;
 }
 
