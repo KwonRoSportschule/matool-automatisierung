@@ -14,19 +14,22 @@ export const SNAPSHOT_AREA_CHOICES = {
   interessenten: "Interessenten",
   interessenten_details: "Interessenten-Details",
   schueler: "Schüler / Mitglieder",
-  pruefungen: "Prüfungen",
+  schueler_details: "Mitglieder-Details (minimiert)",
+  schueler_ex: "Ehemalige Mitglieder (Kündigung abgeschlossen)",
   checkin: "Check-ins",
-  newsletter: "Newsletter",
-  klassen: "Klassen",
-  artikel: "Artikel",
-  lager: "Lager",
-  archiv: "Archiv",
-  telemetrie: "Telemetrie",
-  berichte: "Berichte",
-  karte: "Karte"
+  graduierungen: "Prüfungen / Graduierungen"
 } as const;
 
 export const inputFields = defineInputFields([
+  {
+    key: "only_new",
+    label: "Nur neue Datensätze",
+    type: "boolean",
+    required: false,
+    default: "false",
+    helpText:
+      "Aktiviert: nur Datensätze melden, die erstmals in MATOOL erscheinen. Änderungen an bestehenden Datensätzen werden nicht gemeldet."
+  },
   {
     key: "area",
     label: "MATOOL-Bereich",
@@ -66,7 +69,7 @@ interface SubscriptionResponse {
   id?: unknown;
 }
 
-interface ZapierRecord {
+export interface ZapierRecord {
   id: string;
   [field: string]: unknown;
 }
@@ -94,6 +97,17 @@ function isEnabled(value: unknown): boolean {
   return value === true || value === "true";
 }
 
+function changeSelection(inputData: Record<string, unknown>): {
+  onlyChanged: boolean;
+  onlyNew: boolean;
+} {
+  const onlyNew = isEnabled(inputData.only_new);
+  return {
+    onlyChanged: !onlyNew && isEnabled(inputData.only_changed),
+    onlyNew
+  };
+}
+
 function selectedArea(z: ZObject, value: unknown): string {
   const area = String(value ?? "interessenten_details");
   if (!Object.hasOwn(SNAPSHOT_AREA_CHOICES, area)) {
@@ -116,7 +130,7 @@ function subscriptionId(z: ZObject, value: unknown): string {
   return value;
 }
 
-function normalizedRecords(
+export function normalizeSnapshotRecords(
   z: ZObject,
   value: unknown,
   area: string
@@ -186,13 +200,15 @@ export const performSubscribe = (async (z, bundle) => {
     );
   }
 
+  const selection = changeSelection(bundle.inputData);
   const response = await z.request<SubscriptionResponse>({
     method: "POST",
     url: middlewareApiUrl(SNAPSHOT_SUBSCRIPTIONS_PATH),
     body: {
       target_url: targetUrl,
       area,
-      only_changed: isEnabled(bundle.inputData.only_changed)
+      only_changed: selection.onlyChanged,
+      only_new: selection.onlyNew
     }
   });
   response.throwForStatus();
@@ -217,17 +233,19 @@ export const performUnsubscribe = (async (z, bundle) => {
 
 export const perform = (async (z, bundle) => {
   const area = selectedArea(z, bundle.inputData.area);
-  return normalizedRecords(z, bundle.cleanedRequest, area);
+  return normalizeSnapshotRecords(z, bundle.cleanedRequest, area);
 }) satisfies WebhookTriggerPerform<typeof inputFields, ZapierRecord>;
 
 export const performList = (async (z, bundle) => {
   const area = selectedArea(z, bundle.inputData.area);
+  const selection = changeSelection(bundle.inputData);
   const query = new URLSearchParams({
     area,
     limit: String(SAMPLE_LIMIT),
-    ...(isEnabled(bundle.inputData.only_changed)
+    ...(selection.onlyChanged
       ? { only_changed: "true" }
-      : {})
+      : {}),
+    ...(selection.onlyNew ? { only_new: "true" } : {})
   });
   const response = await z.request<SnapshotResponse>({
     method: "GET",
@@ -243,7 +261,7 @@ export const performList = (async (z, bundle) => {
   ) {
     invalidSnapshotResponse(z);
   }
-  return normalizedRecords(z, response.data.records, area);
+  return normalizeSnapshotRecords(z, response.data.records, area);
 }) satisfies WebhookTriggerPerformList<typeof inputFields, ZapierRecord>;
 
 export const sample = {
