@@ -175,9 +175,12 @@ function interessentRow(input: {
   `;
 }
 
-type PaginatedListArea = "interessenten" | "schueler";
+type PaginatedListArea = "interessenten" | "schueler" | "schueler_ex";
 
 function paginationHref(area: PaginatedListArea, offset: number): string {
+  if (area === "schueler_ex") {
+    return `/index.php?show=schueler&amp;ex_schueler_auswahl=show&amp;todo=&amp;offset=${offset}`;
+  }
   return area === "schueler"
     ? `/index.php?show=schueler&amp;todo=&amp;offset=${offset}`
     : `/index.php?show=interessenten&amp;offset=${offset}`;
@@ -199,7 +202,7 @@ function paginatedListPage(input: {
     )
     .join("");
   const headers =
-    input.area === "schueler"
+    input.area === "schueler" || input.area === "schueler_ex"
       ? ["NR.", "VORNAME", "NAME", "VERTRAG"]
       : ["Nr.", "Datum", "Vorname", "Name", "Status"];
   const rows =
@@ -1737,11 +1740,63 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       datum: "11.07.2026",
       vorname: "Laura",
       name: "Beispiel",
-      status: "Termin",
-      columnCount: 5,
-      tableIndex: 1
+      status: "Termin"
     });
     expect(JSON.stringify(result)).not.toContain("PRIVATE-HIDDEN-DETAIL");
+  });
+
+  it("haelt den Payload stabil, wenn ein neuer Interessent die Zeile verschiebt", async () => {
+    // MATOOL sortiert die Liste absteigend nach Nummer: ein neuer Interessent
+    // steht ganz oben und schiebt jeden aelteren Datensatz eine Zeile nach
+    // unten. Enthielte der Payload noch die Zeilenposition, meldete allein
+    // dieser Zulauf den kompletten Bestand als geaendert -- am 09./10.09.2026
+    // taeglich rund 3.500 vorgetaeuschte Aenderungen bei 2 echten Zugaengen.
+    const bestand = {
+      createdDate: "11.07.2026",
+      displayNumber: "5304",
+      firstName: "Laura",
+      lastName: "Beispiel",
+      sourceId: "900001",
+      status: "Termin"
+    };
+    const zulauf = {
+      createdDate: "12.07.2026",
+      displayNumber: "5305",
+      firstName: "Mika",
+      lastName: "Neuzugang",
+      sourceId: "900002",
+      status: "Kontakt"
+    };
+    const extract = async (rows: string) =>
+      (
+        await clientForInteressentenPage(
+          paginatedListPage({
+            area: "interessenten",
+            currentOffset: 0,
+            offsets: [0],
+            rows
+          })
+        ).extractSafeArea(
+          {
+            email: "service-account@example.invalid",
+            password: "synthetic-password"
+          },
+          "interessenten"
+        )
+      ).records;
+
+    const vorher = await extract(paginatedInteressentRows(bestand));
+    const nachher = await extract(
+      `${paginatedInteressentRows(zulauf)}${paginatedInteressentRows(bestand)}`
+    );
+
+    expect(vorher).toHaveLength(1);
+    expect(nachher).toHaveLength(2);
+    const verschoben = nachher.find(
+      ({ sourceId }) => sourceId === bestand.sourceId
+    );
+    expect(verschoben?.payload).toEqual(vorher[0]?.payload);
+    expect(JSON.stringify(nachher)).not.toContain("tableIndex");
   });
 
   it("verwirft fehlende, mehrdeutige und verwaiste Interessenten-ID-Zeilen", async () => {
@@ -1858,9 +1913,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       datum: "11.07.2026",
       vorname: "Laura",
       name: "Beispiel",
-      status: "Termin",
-      columnCount: 5,
-      tableIndex: 1
+      status: "Termin"
     });
   });
 
@@ -2256,9 +2309,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         datum: "01.08.2026",
         vorname: "Alice",
         name: "Beispiel",
-        status: "",
-        columnCount: 5,
-        tableIndex: 1
+        status: ""
       }
     });
     expect(result.records.every(({ sourceId }) => /^\d+$/u.test(sourceId))).toBe(
@@ -2409,6 +2460,209 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       });
   });
 
+  it("liest nur abgeschlossene Kuendigungen als Ex-Mitglieder", async () => {
+    const area = "schueler_ex" as const;
+    const offsets = [0, 30];
+    const pages = new Map<string, { body: string }>();
+    for (const [index, offset] of offsets.entries()) {
+      const sourceId = String(720_001 + index);
+      pages.set(paginationHref(area, offset).replaceAll("&amp;", "&"), {
+        body: paginatedListPage({
+          area,
+          currentOffset: offset,
+          offsets,
+          rows: schuelerRow(sourceId, index + 1)
+        })
+      });
+    }
+
+    const result = await clientForPaginatedPages(pages).extractSafeArea(
+      {
+        email: "service-account@example.invalid",
+        password: "synthetic-password"
+      },
+      area
+    );
+
+    expect(result).toMatchObject({ area, rowCount: 2 });
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual([
+      "720001",
+      "720002"
+    ]);
+  });
+
+  it("liest die live belegten 67 Ex-Mitglieder-Seiten ohne Linkfilter mit explizitem Abruffilter", async () => {
+    const area = "schueler_ex" as const;
+    const offsets = Array.from({ length: 67 }, (_, index) => index * 30);
+    const pages = new Map<string, { body: string }>();
+    const requests: string[] = [];
+    const ids: string[] = [];
+    for (const offset of offsets) {
+      // Synthetic people only; the live evidence establishes page/link shape,
+      // not the exact count or private contents of the final page.
+      const rows = Array.from({ length: offset === 1980 ? 7 : 30 }, (_, index) => {
+        const id = String(800_000 + offset + index);
+        ids.push(id);
+        return schuelerRow(id, offset + index + 1);
+      }).join("");
+      pages.set(paginationHref(area, offset).replaceAll("&amp;", "&"), {
+        body: paginatedListPage({ area, currentOffset: offset, offsets, rows })
+          .replaceAll("&amp;ex_schueler_auswahl=show", "")
+      });
+    }
+    const result = await clientForPaginatedPages(pages, requests).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area);
+    expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
+    expect(result.rowCount).toBe(1987);
+    const listRequests = requests.filter((path) => path.includes("offset="));
+    expect(listRequests).toEqual(offsets.map((offset) =>
+      paginationHref(area, offset).replaceAll("&amp;", "&")));
+  }, 60_000);
+
+  it.each([
+    "/index.php?show=schueler&todo=&offset=30&ex_schueler_auswahl=hide",
+    "/index.php?show=schueler&todo=&offset=30&ex_schueler_auswahl=",
+    "/index.php?show=schueler&todo=&offset=30&ex_schueler_auswahl=show&ex_schueler_auswahl=show",
+    "/index.php?show=schueler&todo=&offset=30&offset=60",
+    "/index.php?show=schueler&offset=30",
+    "/index.php?show=schueler&todo=delete&offset=30",
+    "/index.php?show=schueler&todo=&offset=30&unknown=1",
+    "https://attacker.invalid/index.php?show=schueler&todo=&offset=30"
+  ])("verwirft weiterhin widerspruechliche oder unsichere Ex-Seitenlinks: %s", async (href) => {
+    const area = "schueler_ex" as const;
+    const body = paginatedListPage({
+      area, currentOffset: 0, offsets: [0, 30], rows: schuelerRow("720001", 1)
+    }).replace(paginationHref(area, 30), href);
+    const requests: string[] = [];
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    await expect(clientForPaginatedPages(pages, requests).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area)).rejects.toMatchObject({ code: "matool_paginated_list_schema_mismatch" });
+    expect(requests.filter((path) => path.includes("offset="))).toHaveLength(1);
+  });
+
+  it("verwirft eine unbestaetigt leere Ex-Mitgliederliste weiterhin als Sicherheitsfehler", async () => {
+    const area = "schueler_ex" as const;
+    const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows: "" });
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    await expect(clientForPaginatedPages(pages).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area)).rejects.toMatchObject({
+      code: "matool_paginated_list_schema_mismatch",
+      shape: { pagination: { stage: "nonempty", parsedRecordCount: 0 } }
+    });
+  });
+
+  it("diagnostiziert Pagination-Fehler ohne URLs, Feldwerte oder Personenkennungen", async () => {
+    const area = "schueler_ex" as const;
+    const body = paginatedListPage({
+      area,
+      currentOffset: 0,
+      offsets: [0, 30],
+      rows: schuelerRow("720001", 1)
+    }).replace(paginationHref(area, 30),
+      "/index.php?show=schueler&amp;todo=&amp;offset=30&amp;private-name=private-value");
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    const error = await clientForPaginatedPages(pages).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(MatoolShapeMismatchError);
+    expect(error).toMatchObject({
+      code: "matool_paginated_list_schema_mismatch",
+      shape: {
+        area,
+        pagination: {
+          detected: true, invalidElement: false,
+          requestedOffset: 0, parsedRecordCount: 1, stage: "pagination",
+          selectedPageNumbers: [1],
+          links: [{ expectedLocation: true, offsetState: "valid",
+            queryKeys: ["<other>", "offset", "show", "todo"], exFilter: "absent",
+            show: "valid", todo: "valid", valid: false, occurrences: 1 }]
+        }
+      }
+    });
+    const serialized = JSON.stringify(error);
+    for (const forbidden of ["720001", "Vorname", "Größmann", "private-name", "private-value", "index.php", "synthetic-password"]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("erfasst einen fehlerhaften spaeten Link auch bei 250 Seiten ohne private Werte", async () => {
+    const area = "schueler_ex" as const;
+    const offsets = Array.from({ length: 250 }, (_, index) => index * 30);
+    const lastOffset = offsets.at(-1)!;
+    const body = paginatedListPage({
+      area, currentOffset: 0, offsets, rows: schuelerRow("720001", 1)
+    }).replace(paginationHref(area, lastOffset),
+      `/index.php?show=PRIVATE-SHOW&amp;ex_schueler_auswahl=show&amp;todo=PRIVATE-TODO&amp;offset=${lastOffset}`);
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    const error = await clientForPaginatedPages(pages).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(MatoolShapeMismatchError);
+    const { shape } = error as MatoolShapeMismatchError;
+    expect(shape.pagination).toMatchObject({
+      linkCount: 249, invalidLinkCount: 1, omittedLinkShapes: 0,
+      stage: "pagination", requestedOffset: 0,
+      links: [
+        { show: "other", todo: "other", valid: false, occurrences: 1 },
+        { show: "valid", todo: "valid", valid: true, occurrences: 248 }
+      ]
+    });
+    expect(shape.pagination?.offsets).toEqual(offsets.slice(1));
+    const serialized = JSON.stringify(shape);
+    expect(new TextEncoder().encode(serialized).byteLength).toBeLessThan(16_000);
+    for (const value of ["PRIVATE-SHOW", "PRIVATE-TODO", "720001", "index.php", "Größmann"]) {
+      expect(serialized).not.toContain(value);
+    }
+  });
+
+  it("kennzeichnet fehlende show- und todo-Parameter ohne Querywerte", async () => {
+    const area = "schueler_ex" as const;
+    const body = paginatedListPage({
+      area, currentOffset: 0, offsets: [0, 30], rows: schuelerRow("720001", 1)
+    }).replace(paginationHref(area, 30), "/index.php?ex_schueler_auswahl=show&amp;offset=30");
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    const error = await clientForPaginatedPages(pages).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({
+      shape: { pagination: { links: [{ show: "absent", todo: "absent", valid: false }] } }
+    });
+  });
+
+  it("maskiert unbekannte Diagnose-Kopfzeilen und begrenzt die gesamte Form auf 16 KB", async () => {
+    const area = "schueler" as const;
+    const body = paginatedListPage({
+      area, currentOffset: 0, offsets: [0], rows: schuelerIdentifierRow("720001")
+    }).replace("VORNAME", "PRIVATE-PERSON");
+    const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+    const error = await clientForPaginatedPages(pages).extractSafeArea({
+      email: "service-account@example.invalid", password: "synthetic-password"
+    }, area).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(MatoolShapeMismatchError);
+    const { shape } = error as MatoolShapeMismatchError;
+    expect(shape.headerNamesByColumnCount?.["4"]).toEqual(["nr", "<other>", "name", "vertrag"]);
+    expect(JSON.stringify(shape)).not.toContain("private_person");
+
+    // Worst-case diverse header widths used to silently discard the complete
+    // diagnostic in recordMatoolResponseShape. Pagination evidence must survive.
+    const oversized = new MatoolShapeMismatchError(
+      new AppError("matool_paginated_list_schema_mismatch", 502, "Schema mismatch"),
+      {
+        ...shape,
+        headerNamesByColumnCount: Object.fromEntries(Array.from({ length: 64 }, (_, index) => [
+          String(index + 1), Array.from({ length: index + 1 }, () => "PRIVATE-PERSON")
+        ]))
+      }
+    );
+    expect(oversized.shape.truncated).toBe(true);
+    expect(oversized.shape.pagination).toEqual(shape.pagination);
+    expect(new TextEncoder().encode(JSON.stringify(oversized.shape)).byteLength).toBeLessThan(16_000);
+    expect(JSON.stringify(oversized.shape)).not.toContain("PRIVATE-PERSON");
+  });
+
   it("liest eine Schuelerliste mit mehr als 500 stabilen Datensaetzen vollstaendig", async () => {
     const offsets = Array.from({ length: 17 }, (_, index) => index * 30);
     const pages = new Map<string, { body: string }>();
@@ -2487,6 +2741,56 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         status: 502
       });
     }
+  });
+
+  describe.each(["schueler", "schueler_ex"] as const)("Kennungszuordnung fuer %s", (area) => {
+    const validRows = schuelerRow("710001", 1);
+    const orphan = schuelerIdentifierRow("710002");
+    const invalidCases = [
+      ["verwaiste Kennung vor gueltigem Paar", orphan + validRows],
+      ["verwaiste Kennung nach gueltigem Paar", validRows + orphan],
+      ["ungueltige Aktion neben gueltigem Paar", validRows + schuelerDataRow(2)
+        + schuelerIdentifierRow("710002", "formular_fuellen(710002)")],
+      ["Drei-Zellen-Datenzeile mit Kennung", validRows
+        + "<tr><td>2</td><td>Synthetic</td><td>Person</td></tr>" + orphan],
+      ["mehrere Aktionen in Kennungszeile", validRows + schuelerDataRow(2)
+        + orphan.replace("<td><img", "<td><img onclick=\"formular_fuellen(710003,'Synthetic')\"><img")],
+      ["Kennung unter unzugeordnetem Layout", validRows
+        + `<tr><td><table>${orphan}</table></td></tr>`],
+      ["ungueltige Aktion unter unzugeordnetem Layout", validRows
+        + "<tr><td><table><tr><td><img onclick=\"formular_fuellen(710004)\"></td></tr></table></td></tr>"]
+    ];
+
+    it.each(invalidCases)("verwirft gemischte Seite: %s", async (_description, rows) => {
+      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows: rows! });
+      const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+      await expect(clientForPaginatedPages(pages).extractSafeArea({
+        email: "service-account@example.invalid", password: "synthetic-password"
+      }, area)).rejects.toMatchObject({
+        code: "matool_paginated_list_schema_mismatch", status: 502,
+        shape: { area, pagination: { stage: "rows" } }
+      });
+    });
+
+    it("erlaubt kennungsfreies Layout und mehrstufig verschachtelte zugeordnete Details", async () => {
+      // Both a valid-looking and an invalid action inside an accepted member's
+      // detail subtree are details, not additional list entries. The accepted
+      // identifier is two parentRow hops away from these actions.
+      const details = schuelerIdentifierRow("710001").replace(
+        "PRIVATE-HIDDEN-DETAIL-A-710001",
+        "<table><tr><td><img onclick=\"formular_fuellen(799998,'Synthetic')\"><img onclick=\"formular_fuellen(799999)\"></td></tr></table>"
+      );
+      const rows = schuelerDataRow(900) + schuelerDataRow(1) + details
+        + schuelerRow("710002", 2) + schuelerDataRow(901);
+      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows });
+      const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+      const result = await clientForPaginatedPages(pages).extractSafeArea({
+        email: "service-account@example.invalid", password: "synthetic-password"
+      }, area);
+      expect(result.records.map(({ sourceId }) => sourceId)).toEqual(["710001", "710002"]);
+      expect(result.rowCount).toBe(2);
+      expect(result.records[0]?.payload).toMatchObject({ vorname: "Vorname 1", name: "Größmann 1" });
+    });
   });
 
   it("verwirft eine vollstaendig gelesene paginierte Liste ohne Datensaetze", async () => {

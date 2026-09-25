@@ -10,7 +10,8 @@ const EXACT_CURRENT_SET_AREAS = new Set([
   "klassen",
   "lager",
   "newsletter",
-  "schueler"
+  "schueler",
+  "schueler_ex"
 ]);
 const MAX_PAYLOAD_FIELDS = 80;
 // Schuelerdetails enthalten 67 Felder sowie vollstaendige Listenwerte. Das
@@ -20,6 +21,21 @@ const MAX_PAYLOAD_FIELDS = 80;
 const MAX_PAYLOAD_BYTES = 512_000;
 const MAX_PAYLOAD_STRING_LENGTH = 256_000;
 const MAX_SNAPSHOT_BATCH_BYTES = 1_800_000;
+
+/**
+ * Felder, die bis zum 10.09.2026 nur die Position einer Zeile auf der
+ * gerenderten MATOOL-Seite festhielten. Sie flossen in den Inhaltshash ein,
+ * sodass schon ein neuer Interessent den ganzen Bestand als geaendert
+ * erscheinen liess. Neue Laeufe schreiben sie nicht mehr; gespeicherte
+ * Altstaende koennen sie noch enthalten.
+ */
+const LEGACY_DISPLAY_FIELDS = ["columnCount", "tableIndex"] as const;
+
+/**
+ * Datensaetze je Neuberechnungs-Anweisung. Ein Eintrag sind rund 150 Byte;
+ * das haelt jeden gebundenen Parameter weit unter den D1-Grenzen.
+ */
+const MAX_REBASELINE_ENTRIES_PER_STATEMENT = 500;
 
 export type MatoolSnapshotValue = boolean | number | string | null;
 
@@ -135,6 +151,18 @@ export async function persistMatoolSnapshotRun(
     }
   }
 
+  const rebaselineStatements = await buildRebaselineStatements(
+    db,
+    input.area,
+    chunks,
+    cipher
+  );
+  const firstImport =
+    (await db
+      .prepare("SELECT 1 AS present FROM matool_snapshots WHERE area = ? LIMIT 1")
+      .bind(input.area)
+      .first<{ present: number }>()) === null;
+
   const runStatement = db
     .prepare(
       `INSERT INTO matool_snapshot_runs (
@@ -157,11 +185,36 @@ export async function persistMatoolSnapshotRun(
     // muss dabei den vorherigen Snapshot sehen; erst danach folgt der Upsert.
     // Ein einziger Batch verhindert zudem Teilstaende, falls ein spaeterer
     // Datenblock scheitert.
-    const statements: D1PreparedStatement[] = [runStatement];
+    const statements: D1PreparedStatement[] = [
+      runStatement,
+      ...rebaselineStatements
+    ];
     for (const chunk of chunks) {
       statements.push(
         buildSnapshotChangeStatement(db, input, chunk),
         buildSnapshotStatement(db, input, chunk)
+      );
+    }
+    if (firstImport) {
+      // Ein Erstimport baut nur eine Baseline auf und loest keine
+      // Kundenaktion aus. Aktive Abos -- etwa aus einer Zeit, in der der
+      // Bereich schon einmal abonnierbar war -- ruecken deshalb ueber die
+      // eben angelegten Datensaetze hinweg. Sichtbar bleiben diese trotzdem,
+      // etwa als Beispiele im Zap-Editor.
+      statements.push(
+        db
+          .prepare(
+            `UPDATE zapier_snapshot_subscriptions
+                SET last_delivered_change_id = COALESCE((
+                      SELECT MAX(change_id)
+                      FROM matool_snapshot_changes
+                      WHERE area = ?
+                    ), last_delivered_change_id)
+              WHERE area = ?
+                AND status = 'active'
+                AND pending_change_id IS NULL`
+          )
+          .bind(input.area, input.area)
       );
     }
     if (input.replaceCurrentSet === true) {
@@ -457,6 +510,138 @@ function buildSnapshotChangeStatement(
       JSON.stringify(chunk),
       input.area
     );
+}
+
+interface RebaselineCandidateRow {
+  content_hash: string;
+  incoming_hash: string;
+  payload_json: string;
+  source_id: string;
+}
+
+interface RebaselineEntry {
+  newHash: string;
+  oldHash: string;
+  sourceId: string;
+}
+
+/**
+ * Uebernimmt fuer Datensaetze, die sich fachlich nicht geaendert haben, still
+ * den neuen Inhaltshash -- ohne Aenderungseintrag und damit ohne Zapier-Ereignis.
+ *
+ * Betroffen sind gespeicherte Staende mit den frueheren Darstellungsfeldern
+ * sowie Staende, deren Hash Migration 0010 bewusst geleert hat. Weil die
+ * Nutzlasten in D1 verschluesselt liegen, laesst sich das nicht in SQL
+ * entscheiden: Der Vergleich zweier Chiffrate mit zufaelligem IV faende immer
+ * einen Unterschied, und jeder Lauf meldete den kompletten Bestand als
+ * geaendert. Deshalb wird hier jeder abweichende Stand entschluesselt, um die
+ * Darstellungsfelder bereinigt und kanonisch neu gehasht. Nur wenn das Ergebnis
+ * exakt dem neuen Hash entspricht, gilt er als unveraendert; jede echte
+ * Aenderung bleibt eine Aenderung.
+ *
+ * Gelesen wird ausserhalb des Batches; die Anweisungen pruefen den alten Hash
+ * deshalb erneut und aendern nichts, was inzwischen jemand anderes schrieb.
+ */
+async function buildRebaselineStatements(
+  db: D1Database,
+  area: string,
+  chunks: readonly (readonly PreparedSnapshot[])[],
+  cipher: StoredPayloadCipher
+): Promise<D1PreparedStatement[]> {
+  const entries: RebaselineEntry[] = [];
+  for (const chunk of chunks) {
+    const candidates = await db
+      .prepare(
+        `SELECT stored.source_id,
+                stored.content_hash,
+                stored.payload_json,
+                json_extract(incoming.value, '$.contentHash') AS incoming_hash
+         FROM json_each(?) AS incoming
+         INNER JOIN matool_snapshots AS stored
+           ON stored.area = ?
+          AND stored.source_id = json_extract(incoming.value, '$.sourceId')
+         WHERE stored.content_hash <> json_extract(incoming.value, '$.contentHash')`
+      )
+      .bind(
+        JSON.stringify(
+          chunk.map(({ contentHash, sourceId }) => ({ contentHash, sourceId }))
+        ),
+        area
+      )
+      .all<RebaselineCandidateRow>();
+
+    for (const row of candidates.results) {
+      const normalizedHash = await legacyNormalizedContentHash(
+        area,
+        row,
+        cipher
+      );
+      if (normalizedHash !== null && normalizedHash === row.incoming_hash) {
+        entries.push({
+          newHash: row.incoming_hash,
+          oldHash: row.content_hash,
+          sourceId: row.source_id
+        });
+      }
+    }
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  for (
+    let offset = 0;
+    offset < entries.length;
+    offset += MAX_REBASELINE_ENTRIES_PER_STATEMENT
+  ) {
+    statements.push(
+      db
+        .prepare(
+          `UPDATE matool_snapshots
+              SET content_hash = json_extract(entry.value, '$.newHash')
+             FROM json_each(?) AS entry
+            WHERE matool_snapshots.area = ?
+              AND matool_snapshots.source_id = json_extract(entry.value, '$.sourceId')
+              AND matool_snapshots.content_hash = json_extract(entry.value, '$.oldHash')`
+        )
+        .bind(
+          JSON.stringify(
+            entries.slice(offset, offset + MAX_REBASELINE_ENTRIES_PER_STATEMENT)
+          ),
+          area
+        )
+    );
+  }
+  return statements;
+}
+
+/**
+ * Hash des gespeicherten Stands ohne Darstellungsfelder, genauso kanonisch
+ * gebildet wie beim Schreiben. null, wenn sich der Stand nicht lesen laesst;
+ * dann entscheidet wie bisher der Hash, und der neue Stand ersetzt ihn.
+ */
+async function legacyNormalizedContentHash(
+  area: string,
+  row: RebaselineCandidateRow,
+  cipher: StoredPayloadCipher
+): Promise<string | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      await cipher.open({ area, sourceId: row.source_id }, row.payload_json)
+    );
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const stored = parsed as Record<string, unknown>;
+  const canonical: Record<string, unknown> = {};
+  for (const key of Object.keys(stored).sort()) {
+    if (!(LEGACY_DISPLAY_FIELDS as readonly string[]).includes(key)) {
+      canonical[key] = stored[key];
+    }
+  }
+  return sha256Hex(JSON.stringify(canonical));
 }
 
 /**

@@ -1,4 +1,5 @@
 import { ActivityView } from "./activity";
+import { buildInfoText } from "./build-info";
 import {
   getOverview,
   isAbortError,
@@ -40,6 +41,7 @@ import type {
 
 const elements = {
   environment: byId("environment"),
+  buildInfo: byId("build-info"),
   refresh: byId<HTMLButtonElement>("refresh"),
   privacyShort: byId("privacy-short"),
   privacyNotice: byId("privacy-notice"),
@@ -159,6 +161,7 @@ async function loadOverview(): Promise<boolean> {
 }
 
 function renderOverview(overview: DashboardOverview): void {
+  elements.buildInfo.textContent = buildInfoText(overview.build);
   elements.environment.textContent =
     `${formatEnvironment(overview.environment)} · Nur Lesen`;
   elements.privacyShort.textContent = overview.privacy.masked
@@ -199,9 +202,11 @@ function renderOverall(overview: DashboardOverview): void {
   elements.overallReasons.textContent =
     overall.reasonCount === 0
       ? "Keine offenen Hinweise"
-      : overall.reasonCount === 1
-        ? "1 Hinweis beeinflusst den Status"
-        : `${formatNumber(overall.reasonCount)} Hinweise beeinflussen den Status`;
+      : overall.state === "unknown"
+        ? `${formatNumber(overall.reasonCount)} Statusprüfungen noch unbestätigt`
+        : overall.reasonCount === 1
+          ? "1 offene Ursache beeinflusst den Status"
+          : `${formatNumber(overall.reasonCount)} offene Ursachen beeinflussen den Status`;
   elements.lastUpdated.textContent =
     `Datenstand: ${formatDateTime(overview.generatedAt)}`;
   if (elements.lastUpdated instanceof HTMLTimeElement) {
@@ -215,8 +220,8 @@ function renderWarnings(warnings: readonly WarningSummary[]): void {
   elements.warningCount.textContent = empty
     ? "Keine Warnungen"
     : warnings.length === 1
-      ? "1 Hinweis"
-      : `${formatNumber(warnings.length)} Hinweise`;
+      ? "1 offene Ursache"
+      : `${formatNumber(warnings.length)} offene Ursachen`;
   if (empty) {
     elements.warningsList.replaceChildren(
       createEmptyState("Aktuell gibt es keine Warnungen oder offenen Störungen.")
@@ -244,6 +249,17 @@ function warningCard(warning: WarningSummary): HTMLElement {
   const impact = document.createElement("p");
   impact.textContent = warning.impact;
   copy.append(title, impact);
+
+  if (warning.occurrenceCount !== undefined) {
+    const recurrence = document.createElement("p");
+    recurrence.textContent = warning.occurrenceCount === 0
+      ? "Letzter Fehler außerhalb des gewählten Zeitraums."
+      : `${formatNumber(warning.occurrenceCount)} fehlgeschlagene${warning.occurrenceCount === 1 ? "r Abruf" : " Abrufe"} im gewählten Zeitraum.`;
+    if (warning.firstOccurredAt && warning.lastOccurredAt) {
+      recurrence.textContent += ` Zuerst: ${formatDateTime(warning.firstOccurredAt)} · Zuletzt: ${formatDateTime(warning.lastOccurredAt)}.`;
+    }
+    copy.append(recurrence);
+  }
 
   const details = [warning.action, warning.technicalCode]
     .filter((value): value is string => Boolean(value))

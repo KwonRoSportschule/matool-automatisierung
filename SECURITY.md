@@ -131,16 +131,23 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
 - Der Inhalts-Hash (SHA-256 des Klartexts) bleibt zur Änderungserkennung
   unverschlüsselt. Er verrät keinen Inhalt, erlaubt aber die Bestätigung
   eines vollständig erratenen Datensatzes.
-- `schueler_details` (Bankverbindung, Geburtsdaten) ist für alle
-  Zapier-Routen gesperrt: weder abonnierbar noch abrufbar. Zapier erhält
-  die übrigen Bereiche vollständig; welche Felder dort wirklich gebraucht
-  werden, bleibt fachlich zu prüfen.
-- Einzige Ausnahme ist die Beitragsübersicht (`/api/zapier/v1/beitraege`).
-  Sie liest aus `schueler_details` ausschließlich eine feste Feldliste
-  (Name, Mitgliedsnummer, Vertrag, Kundenart, Beitrag, Zahlungsperiode,
-  Zahlart, Jahresgebühr); IBAN, Bankdaten, Geburts- und Kontaktdaten
-  verlassen den Hub auch hier nicht. Ein Test belegt das mit
-  synthetischen Kontrollwerten.
+- `schueler_details` (Bankverbindung, Geburtsdaten) erreicht Zapier nur
+  minimiert: `projectSnapshotPayloadForZapier` (`src/core/zapier-payload.ts`)
+  lässt auf beiden Wegen, Hook-Zustellung und Datensatzliste, ausschließlich
+  eine feste Feldliste durch (Name, Anrede, Mitgliedsnummer, E-Mail,
+  Telefon, Handy, Vertrags-, Klassen-, Sparten- und Statusfelder). IBAN,
+  BIC, Konto, Mandat, Kontoinhaber, Beitrag, Zahlart, Geburts- und
+  Adressdaten verlassen den Hub nicht; Tests belegen das mit synthetischen
+  Kontrollwerten. Die übrigen Bereiche erhält Zapier vollständig; welche
+  Felder dort wirklich gebraucht werden, bleibt fachlich zu prüfen.
+- Die Beitragsübersicht (`/api/zapier/v1/beitraege`) liest aus
+  `schueler_details` ausschließlich eine eigene feste Feldliste (Name,
+  Mitgliedsnummer, Vertrag, Kundenart, Beitrag, Zahlungsperiode, Zahlart,
+  Jahresgebühr); IBAN, Bankdaten, Geburts- und Kontaktdaten verlassen den
+  Hub auch hier nicht.
+- Ein Erstimport eines Bereichs wird nie per Webhook zugestellt: Aktive Abos
+  rücken über die Baseline hinweg. Erst danach neu erscheinende oder
+  geänderte Datensätze lösen Zaps aus.
 - Die Live-Zustellung an Zapier (`OUTBOUND_DELIVERY_ENABLED`) verschickt nur
   Änderungen ab `OUTBOUND_DELIVERY_START_AT`. Ein Rückstau aus der Zeit, in
   der sie aus war, löst so keine Zaps für alte Vorgänge aus.
