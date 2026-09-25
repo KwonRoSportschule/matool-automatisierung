@@ -80,9 +80,16 @@
           "class_name": "InteressentenSyncWorkflow"
         }
       ],
-      // Hinweis: "limits": { "cpu_ms": ... } benoetigt Workers Paid.
-      // Auf dem Free-Tarif bricht ein Lauf nach etwa fuenf Bereichen mit
-      // "exceededCpu" ab.
+      // Spiegelt die im Cloudflare-Dashboard gesetzten Limits (Workers Paid).
+      // Ohne sie wuerde jedes Deploy sie entfernen, und ein Lauf bricht nach
+      // etwa fuenf Bereichen mit "exceededCpu" ab.
+      "limits": {
+        "cpu_ms": 300000,
+        "subrequests": 10000
+      },
+      "version_metadata": {
+        "binding": "VERSION_METADATA"
+      },
       "triggers": {
         "crons": ["0 7-18 * * mon-fri"]
       }
