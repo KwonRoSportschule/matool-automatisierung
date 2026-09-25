@@ -8,6 +8,8 @@ import {
 import { MatoolClient } from "../matool/client";
 import {
   dashboardAccessSummary,
+  dashboardLoginRequiredResponse,
+  isDashboardLoginRequired,
   requireAccessIdentity
 } from "./access";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
@@ -86,6 +88,9 @@ const worker = {
 
       return hardenAssetResponse(await env.ASSETS.fetch(request));
     } catch (error) {
+      if (isDashboardLoginRequired(error)) {
+        return dashboardLoginRequiredResponse(request, error);
+      }
       return apiErrorResponse(error);
     }
   },

@@ -18,6 +18,17 @@ export interface Env {
    */
   PUBLIC_DASHBOARD_PLAINTEXT?: string;
 
+  /**
+   * Benutzername und Passwort fuer das Dashboard (HTTP Basic Auth).
+   * Ausschliesslich als Cloudflare Secret setzen. Sind beide gesetzt, gilt
+   * der Passwortschutz fuer Webseite und Admin-API; die oeffentlichen
+   * PUBLIC_DASHBOARD_*-Modi greifen dann nicht mehr.
+   */
+  DASHBOARD_USERNAME?: string;
+  DASHBOARD_PASSWORD?: string;
+  /** "true" sperrt das Dashboard, solange die beiden Secrets fehlen. */
+  DASHBOARD_PASSWORD_REQUIRED?: string;
+
   ADMIN_ORIGIN?: string;
   CSRF_SECRET?: string;
   DEV_AUTH_BYPASS?: string;

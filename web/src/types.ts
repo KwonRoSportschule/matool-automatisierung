@@ -117,6 +117,7 @@ export interface ScheduleSummary {
 export interface DashboardAccessSummary {
   authentication:
     | "cloudflare-access"
+    | "dashboard-password"
     | "local-development"
     | "public-full-access"
     | "public-read-only";

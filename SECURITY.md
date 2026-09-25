@@ -53,6 +53,9 @@ inhaltliche Prüfung vor einem Commit.
 ## Laufzeitregeln
 
 - Admin-Webseite und Admin-API werden mit Cloudflare Access geschützt.
+- Bis dahin schützt Staging beide per HTTP Basic Auth. Benutzername und
+  Passwort (`DASHBOARD_USERNAME`, `DASHBOARD_PASSWORD`) existieren nur als
+  Cloudflare Secret; fehlen sie, bleibt das Dashboard gesperrt.
 - Service-Endpunkte erhalten eine eigene Authentifizierung und eng begrenzte
   Rechte.
 - `/api/zapier/v1/*` liegt zusätzlich hinter einer Cloudflare-Access-

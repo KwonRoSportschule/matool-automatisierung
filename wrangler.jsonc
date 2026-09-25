@@ -22,6 +22,7 @@
     "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
     "MATOOL_BASE_URL": "https://core.matool.de",
     "OUTBOUND_DELIVERY_ENABLED": "false",
+    "DASHBOARD_PASSWORD_REQUIRED": "false",
     "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
     "PUBLIC_DASHBOARD_READ_ONLY": "false",
     "PUBLIC_DASHBOARD_PLAINTEXT": "false"
@@ -53,8 +54,15 @@
         "ACCESS_TEAM_DOMAIN": "soft-hill-4630.cloudflareaccess.com",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
-        "PUBLIC_DASHBOARD_FULL_ACCESS": "true",
-        "PUBLIC_DASHBOARD_READ_ONLY": "true",
+        // Webseite und Admin-API nur mit Benutzername und Passwort. Beides
+        // liegt ausschliesslich als Cloudflare Secret vor:
+        //   wrangler secret put DASHBOARD_USERNAME --env staging
+        //   wrangler secret put DASHBOARD_PASSWORD --env staging
+        // Solange die Secrets fehlen, bleibt das Dashboard gesperrt.
+        "DASHBOARD_PASSWORD_REQUIRED": "true",
+        "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
+        "PUBLIC_DASHBOARD_READ_ONLY": "false",
+        // Klartext nur noch hinter dem Passwortschutz sichtbar.
         "PUBLIC_DASHBOARD_PLAINTEXT": "true"
       },
       "d1_databases": [
@@ -94,6 +102,7 @@
         "ACCESS_TEAM_DOMAIN": "configure-with-cloudflare-access",
         "MATOOL_BASE_URL": "https://core.matool.de",
         "OUTBOUND_DELIVERY_ENABLED": "false",
+        "DASHBOARD_PASSWORD_REQUIRED": "false",
         "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "false",
         "PUBLIC_DASHBOARD_PLAINTEXT": "false"

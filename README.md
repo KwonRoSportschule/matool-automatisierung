@@ -84,11 +84,25 @@ Weitere Regeln stehen in [SECURITY.md](SECURITY.md).
 ## Erste Staging-Version hosten
 
 Die erste Version läuft über
-`matool-middleware-staging.<account>.workers.dev`. Das Staging-Dashboard und
-seine aggregierte Laufhistorie sind vorübergehend öffentlich lesbar. Aktionen,
-MATOOL-Zugriffe und alle Zapier-Endpunkte bleiben geschützt. Außerdem bleibt
-die Outbound-Zustellung deaktiviert, Cron leer und der Prozess im Modus
-`disabled`.
+`matool-middleware-staging.<account>.workers.dev`. Webseite und Admin-API sind
+dort per Benutzername und Passwort geschützt (HTTP Basic Auth): Wer den Link
+öffnet, bekommt vom Browser ein Anmeldefenster. Die Zapier-Endpunkte behalten
+ihre eigene Token-Prüfung; `/healthz` bleibt ohne Daten öffentlich.
+
+Benutzername und Passwort liegen ausschließlich als Cloudflare Secrets vor,
+nie im Repository. Das Passwort braucht mindestens 12 Zeichen, der
+Benutzername darf keinen Doppelpunkt enthalten:
+
+```text
+pnpm exec wrangler secret put DASHBOARD_USERNAME --env staging
+pnpm exec wrangler secret put DASHBOARD_PASSWORD --env staging
+```
+
+Alternativ im Cloudflare-Dashboard unter Workers & Pages →
+`matool-middleware-staging` → Settings → Variables and Secrets → Add, Typ
+„Secret“. Solange eines der beiden Secrets fehlt, antwortet das Dashboard mit
+503 statt öffentlich zu werden (`DASHBOARD_PASSWORD_REQUIRED=true`). Zum
+Abmelden den Browser vollständig schließen.
 
 Nach Cloudflare-Login, Anlage der EU-D1-Datenbank und Einsetzen ihrer ID:
 
