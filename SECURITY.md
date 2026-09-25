@@ -131,10 +131,13 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
 - Der Inhalts-Hash (SHA-256 des Klartexts) bleibt zur Änderungserkennung
   unverschlüsselt. Er verrät keinen Inhalt, erlaubt aber die Bestätigung
   eines vollständig erratenen Datensatzes.
-- Die private Zapier-App bietet `schueler_details` nicht an, Bankdaten
-  erreichen Zapier darüber also nicht. Die Service-API würde den Bereich mit
-  gültigem Service-Token aber vollständig ausliefern; soll das dauerhaft
-  ausgeschlossen sein, gehört er aus der Allowlist der Zapier-Routen.
+- `schueler_details` (Bankverbindung, Geburtsdaten) ist für alle
+  Zapier-Routen gesperrt: weder abonnierbar noch abrufbar. Zapier erhält
+  die übrigen Bereiche vollständig; welche Felder dort wirklich gebraucht
+  werden, bleibt fachlich zu prüfen.
+- Die Live-Zustellung an Zapier (`OUTBOUND_DELIVERY_ENABLED`) verschickt nur
+  Änderungen ab `OUTBOUND_DELIVERY_START_AT`. Ein Rückstau aus der Zeit, in
+  der sie aus war, löst so keine Zaps für alte Vorgänge aus.
 - Rechtliche Pflichten bleiben organisatorisch: Auftragsverarbeitungsverträge
   mit Cloudflare und Zapier, Verzeichnis der Verarbeitungstätigkeiten,
   Löschkonzept und Datenschutzhinweise. Das ersetzt keine Prüfung durch
