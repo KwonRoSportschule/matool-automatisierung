@@ -2,9 +2,10 @@ name: Zapier-App veröffentlichen
 
 # Laedt die private Zapier-App (App 244882, siehe zapier-app/.zapierapprc)
 # hoch, sobald sich ihr Code auf main aendert, oder manuell ueber
-# "Run workflow". Die Version aus zapier-app/package.json wird dabei
-# ueberschrieben; bestehende Zaps und der App-Umgebungswert
-# MATOOL_MIDDLEWARE_ORIGIN dieser Version bleiben erhalten.
+# "Run workflow". Hochgeladen wird die Version aus zapier-app/package.json;
+# jede Aenderung bekommt dort eine neue Nummer. Aeltere Versionen und die
+# Zaps darauf bleiben unberuehrt, bis sie in Zapier migriert werden.
+# Freischalten ("Promote") bleibt ein bewusster Klick in Zapier.
 #
 # Voraussetzung: Repository-Secret ZAPIER_DEPLOY_KEY (Zapier Developer
 # Platform -> Settings -> Deploy Keys). Fehlt es, wird der automatische
@@ -83,3 +84,20 @@ jobs:
         env:
           ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
         run: pnpm run zapier:push
+
+      # Eine neue Version hat noch keine Middleware-Adresse; ohne sie lehnt
+      # die App jede Anfrage ab. Vorhandene Werte werden nie ueberschrieben.
+      - name: Middleware-Adresse der Version sicherstellen
+        if: steps.deploy_key.outputs.present == 'true'
+        working-directory: zapier-app
+        env:
+          ZAPIER_DEPLOY_KEY: ${{ secrets.ZAPIER_DEPLOY_KEY }}
+          MIDDLEWARE_ORIGIN: ${{ vars.MATOOL_MIDDLEWARE_ORIGIN || 'https://matool-middleware-staging.soft-hill-4630.workers.dev' }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if pnpm exec zapier-platform env:get "$VERSION" | grep -q MATOOL_MIDDLEWARE_ORIGIN; then
+            echo "MATOOL_MIDDLEWARE_ORIGIN ist fuer Version $VERSION bereits gesetzt."
+          else
+            pnpm exec zapier-platform env:set "$VERSION" "MATOOL_MIDDLEWARE_ORIGIN=$MIDDLEWARE_ORIGIN"
+          fi
+          echo "::notice title=Zapier-App $VERSION hochgeladen::In der Zapier Developer Platform unter Versions auf Promote klicken, damit neue Zap-Schritte diese Version nutzen."

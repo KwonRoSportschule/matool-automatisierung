@@ -1,11 +1,20 @@
 # Private Zapier-App: MATOOL Middleware
 
-Diese interne Zapier-Platform-CLI-App liest Daten aus dem MATOOL Middleware
-Hub. Sie enthält einen Trigger und eine Aktion:
+Diese interne Zapier-Platform-CLI-App liest neue oder geänderte Datensätze aus
+dem MATOOL Middleware Hub. Sie enthält einen generischen und fünf klar
+benannte REST-Hook-Trigger:
 
-- Trigger `Neuer oder geänderter MATOOL-Datensatz`
-- Aktion `Beitragsübersicht erstellen`: Monatssumme aller nicht
-  stillgelegten Mitglieder plus XML-Datei, siehe
+- `Neuer oder geänderter MATOOL-Datensatz` (Bereich auswählbar)
+- `Neuer oder geänderter MATOOL-Interessent`
+- `Neues oder geändertes MATOOL-Mitglied`
+- `MATOOL-Mitglied ausgeschieden`
+- `Neuer MATOOL-Check-in`
+- `Neue oder geänderte MATOOL-Prüfung`
+
+Dazu kommt eine lesende Aktion:
+
+- `Beitragsübersicht erstellen`: Monatssumme aller nicht stillgelegten
+  Mitglieder plus XML-Datei, siehe
   [docs/beitraege-zapier.md](../docs/beitraege-zapier.md)
 
 Die App nimmt keinen Kontakt zu Interessenten oder Mitgliedern auf, versendet
@@ -23,14 +32,27 @@ werden niemals in Zapier gespeichert.
 
 ## Trigger
 
-Im Zap wird ein gespeicherter MATOOL-Bereich ausgewählt. Zapier ruft höchstens
-100 Datensätze pro Poll ab. Eine stabile technische ID aus Bereich,
-MATOOL-Quell-ID und Inhaltshash sorgt dafür, dass unveränderte Datensätze nicht
-erneut auslösen und echte Änderungen als neuer Vorgang erkannt werden.
+Alle Trigger verwenden REST Hooks mit dynamischer An- und Abmeldung. Der
+generische Trigger erlaubt nur tatsächlich und datenschutzgerecht in der
+Middleware gespeicherte Bereiche: Interessenten, Interessenten-Details,
+Mitglieder-Stammdaten, minimierte Mitglieder-Details, abgeschlossene
+Kündigungen (Ex-Mitglieder), Check-ins sowie Prüfungen/Graduierungen. Eine stabile
+technische Ereignis-ID sorgt dafür, dass unveränderte Datensätze nicht erneut
+auslösen und echte Änderungen als neuer Vorgang erkannt werden.
 
 `Interessenten-Details` stellt zusätzlich alle 34 lesend erfassten Detailfelder
-für das Zapier-Mapping bereit. Die hinterlegten Beispieldaten sind vollständig
-synthetisch.
+für das Zapier-Mapping bereit. Mitglieder-Details werden serverseitig auf eine
+minimierte Auswahl von Kontakt-, Vertrags-, Klassen- und Statusfeldern
+reduziert; Bank-, Konto-, Mandats- und Zahlungsdaten werden nicht an Zapier
+ausgeliefert. Check-ins liefern ausschließlich Mitglieds- und Klassen-ID
+sowie Zeitpunkt. Prüfungen liefern Mitglieds- und Graduierungs-ID, Datum,
+Grad/Sparte, PDF-Hinweis und Storno-Status. Die hinterlegten Beispieldaten
+sind vollständig synthetisch.
+
+Für die Trigger kann zusätzlich **Nur neue Datensätze** gewählt werden. Dann
+läuft der Zap ausschließlich beim erstmaligen Erscheinen eines Datensatzes
+(beim Mitglieder-Trigger also nur bei neuen Mitgliedern), nie bei späteren
+Änderungen.
 
 ## Lokale Prüfung
 
@@ -46,7 +68,14 @@ pnpm run validate:offline
 Regulär lädt der GitHub-Workflow „Zapier-App veröffentlichen“
 (`.github/workflows/zapier-app.yml`) die App nach jedem Merge nach `main`
 hoch, der `zapier-app/` ändert. Er braucht das Repository-Secret
-`ZAPIER_DEPLOY_KEY` (Zapier Developer Platform → Settings → Deploy Keys).
+`ZAPIER_DEPLOY_KEY` (Zapier Developer Platform → Settings → Deploy Keys) und
+setzt für eine neue Version `MATOOL_MIDDLEWARE_ORIGIN`, falls der Wert fehlt.
+
+Jede Änderung bekommt eine neue Versionsnummer in `package.json`. Die
+neue Version ist danach hochgeladen, aber noch nicht freigeschaltet: In der
+Zapier Developer Platform unter „Versions“ auf „Promote“ klicken und bei
+Bedarf bestehende Zaps per „Migrate“ nachziehen. Ältere Versionen bleiben
+unverändert, bis sie migriert werden.
 
 Manuell:
 
@@ -58,7 +87,7 @@ zapier-platform login
 zapier-platform register "KwonRo MATOOL Middleware"
 pnpm run zapier:build
 zapier-platform push
-zapier-platform env:set 0.0.0 MATOOL_MIDDLEWARE_ORIGIN=https://<staging-hostname>
+zapier-platform env:set <version> MATOOL_MIDDLEWARE_ORIGIN=https://<staging-hostname>
 ```
 
 Produktive Tokens gehören ausschließlich in die Zapier-Verbindung und in

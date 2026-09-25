@@ -178,8 +178,19 @@ einzurichten:
    veröffentlichen“ → **Run workflow**.
 
 Ohne Secret überspringt der automatische Lauf den Upload mit einer Warnung.
-Die Version bleibt `0.0.0` und wird überschrieben; bestehende Zaps und der
-hinterlegte `MATOOL_MIDDLEWARE_ORIGIN` laufen unverändert weiter.
+
+Hochgeladen wird die Version aus `zapier-app/package.json` (die
+Beitragsübersicht kam mit **1.2.0**). Eine neue Version bekommt automatisch
+`MATOOL_MIDDLEWARE_ORIGIN`, ist aber noch nicht freigeschaltet:
+
+4. Zapier Developer Platform → App „KwonRo MATOOL Middleware“ → **Versions**
+   → bei der neuen Version **Promote**. Neue Zap-Schritte nutzen dann diese
+   Version.
+5. Optional **Migrate** von der alten auf die neue Version, damit auch
+   bestehende Zaps umziehen. Ohne Migration laufen sie unverändert auf der
+   alten Version weiter.
+
+Für jede spätere App-Änderung die Versionsnummer in `package.json` erhöhen.
 
 Lokal geht es weiterhin mit `zapier-platform login` und danach
 `pnpm --dir zapier-app run zapier:push`.
