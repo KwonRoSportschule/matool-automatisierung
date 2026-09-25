@@ -18,6 +18,9 @@ export default defineConfig({
             ACCESS_SERVICE_AUD: "test-service-audience",
             ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com",
             CSRF_SECRET: "synthetic-test-secret-that-is-not-used-anywhere-else",
+            // Staging verlangt das Dashboard-Passwort; die Tests schalten es
+            // gezielt pro Fall ein.
+            DASHBOARD_PASSWORD_REQUIRED: "false",
             DEV_AUTH_BYPASS: "allow-loopback-only",
             ZAPIER_SERVICE_TOKEN:
               "synthetic-service-token-at-least-32-characters",

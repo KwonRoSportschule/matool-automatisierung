@@ -209,3 +209,105 @@ describe("Cloudflare-Access-Konfiguration", () => {
     ).toThrow();
   });
 });
+
+describe("Dashboard-Passwortschutz", () => {
+  const passwordEnv = {
+    APP_ENV: "staging",
+    DASHBOARD_PASSWORD: "synthetisches-Passwort-äöü",
+    DASHBOARD_PASSWORD_REQUIRED: "true",
+    DASHBOARD_USERNAME: "synthetic-trainer",
+    PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+    PUBLIC_DASHBOARD_READ_ONLY: "true"
+  } as Env;
+
+  function basicAuthorization(username: string, password: string): string {
+    const bytes = new TextEncoder().encode(`${username}:${password}`);
+    return `Basic ${btoa(String.fromCharCode(...bytes))}`;
+  }
+
+  function dashboardRequest(authorization?: string): Request {
+    return new Request("https://middleware.example.invalid/", {
+      headers: authorization ? { Authorization: authorization } : {}
+    });
+  }
+
+  it("meldet mit korrekten Zugangsdaten an und erlaubt Mitarbeiteraktionen", async () => {
+    const identity = await requireAccessIdentity(
+      dashboardRequest(
+        basicAuthorization("synthetic-trainer", "synthetisches-Passwort-äöü")
+      ),
+      passwordEnv
+    );
+    expect(identity).toEqual({
+      authentication: "dashboard-password",
+      subject: "dashboard-password:synthetic-trainer"
+    });
+    expect(dashboardAccessSummary(identity).canManage).toBe(true);
+  });
+
+  it.each([
+    ["ohne Zugangsdaten", undefined],
+    [
+      "mit falschem Passwort",
+      basicAuthorization("synthetic-trainer", "falsches-Passwort-123")
+    ],
+    [
+      "mit falschem Benutzernamen",
+      basicAuthorization("someone-else", "synthetisches-Passwort-äöü")
+    ],
+    ["mit kaputtem Header", "Basic !!!"],
+    ["mit Bearer-Token", "Bearer synthetic-token"]
+  ])("verlangt %s eine Anmeldung trotz oeffentlicher Modi", async (_label, authorization) => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(authorization), passwordEnv)
+    ).rejects.toMatchObject({ code: "dashboard_login_required", status: 401 });
+  });
+
+  it.each([
+    ["ohne Secrets", {}],
+    ["mit zu kurzem Passwort", { DASHBOARD_USERNAME: "trainer", DASHBOARD_PASSWORD: "kurz" }],
+    ["nur mit Benutzername", { DASHBOARD_USERNAME: "trainer" }],
+    [
+      "mit Doppelpunkt im Benutzernamen",
+      { DASHBOARD_USERNAME: "trai:ner", DASHBOARD_PASSWORD: "synthetisches-Passwort" }
+    ]
+  ])("bleibt %s gesperrt", async (_label, secrets) => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(), {
+        APP_ENV: "staging",
+        DASHBOARD_PASSWORD_REQUIRED: "true",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+        ...secrets
+      } as Env)
+    ).rejects.toMatchObject({
+      code: "dashboard_password_not_configured",
+      status: 503
+    });
+  });
+
+  it("aktiviert den Schutz auch ohne Pflichtschalter, sobald Secrets gesetzt sind", async () => {
+    await expect(
+      requireAccessIdentity(dashboardRequest(), {
+        APP_ENV: "staging",
+        DASHBOARD_PASSWORD: "synthetisches-Passwort",
+        DASHBOARD_USERNAME: "synthetic-trainer",
+        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+      } as Env)
+    ).rejects.toMatchObject({ code: "dashboard_login_required" });
+  });
+
+  it("gilt nicht fuer die Zapier-Service-Pruefung", async () => {
+    await expect(
+      requireAccessIdentity(
+        new Request("https://middleware.example.invalid/api/zapier/v1/account"),
+        {
+          ...passwordEnv,
+          ACCESS_AUD: "configure-with-cloudflare-access",
+          ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
+          ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access"
+        } as Env,
+        "zapier-service"
+      )
+    ).rejects.toMatchObject({ code: "access_not_configured" });
+  });
+});

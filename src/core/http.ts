@@ -41,6 +41,22 @@ export function jsonResponse(
   });
 }
 
+export function htmlResponse(
+  html: string,
+  init: ResponseInit = {}
+): Response {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  for (const [name, value] of Object.entries(API_SECURITY_HEADERS)) {
+    headers.set(name, value);
+  }
+
+  return new Response(html, {
+    ...init,
+    headers
+  });
+}
+
 export function apiErrorResponse(error: unknown): Response {
   const appError = toAppError(error);
   return jsonResponse(

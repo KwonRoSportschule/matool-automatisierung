@@ -5,6 +5,8 @@ import {
 } from "jose";
 
 import { AppError } from "../core/app-error";
+import { base64UrlDecodeText, timingSafeEqual } from "../core/crypto";
+import { apiErrorResponse, htmlResponse } from "../core/http";
 import type { Env } from "./env";
 
 export interface AccessIdentity {
@@ -12,6 +14,7 @@ export interface AccessIdentity {
   email?: string;
   authentication:
     | "cloudflare-access"
+    | "dashboard-password"
     | "local-development"
     | "public-full-access"
     | "public-read-only";
@@ -35,11 +38,21 @@ export function dashboardAccessSummary(
     canManage,
     notice: identity.authentication === "public-full-access"
       ? "Oeffentlicher Vollzugriff ist aktiviert; eine Anmeldung ist nicht erforderlich."
+      : identity.authentication === "dashboard-password"
+      ? "Mit Dashboard-Passwort angemeldet; Mitarbeiteraktionen sind verfuegbar."
       : canManage
       ? "Geschuetzte Mitarbeiteraktionen sind verfuegbar."
       : "Oeffentliche Nur-Lese-Ansicht: Mitarbeiteraktionen erfordern eine Cloudflare-Access-Anmeldung."
   };
 }
+
+const DASHBOARD_LOGIN_REQUIRED = "dashboard_login_required";
+
+const DASHBOARD_PASSWORD_MIN_LENGTH = 12;
+// Nur ASCII: Header-Werte muessen ByteStrings sein. Die meisten Browser
+// zeigen den Realm nicht mehr an; die 401-Seite traegt deshalb denselben Text.
+const DASHBOARD_LOGIN_REALM =
+  "Hey Yo, bitte Benutzername und Passwort eingeben";
 
 const jwksByIssuer = new Map<
   string,
@@ -51,6 +64,12 @@ export async function requireAccessIdentity(
   env: Env,
   scope: AccessScope = "employee"
 ): Promise<AccessIdentity> {
+  // Ein gesetztes Dashboard-Passwort ersetzt alle oeffentlichen Modi.
+  const passwordIdentity = getDashboardPasswordIdentity(request, env, scope);
+  if (passwordIdentity) {
+    return passwordIdentity;
+  }
+
   const publicFullAccessIdentity = getPublicFullAccessIdentity(env, scope);
   if (publicFullAccessIdentity) {
     return publicFullAccessIdentity;
@@ -115,6 +134,114 @@ export async function requireAccessIdentity(
       "Der Mitarbeiterzugriff konnte nicht bestätigt werden."
     );
   }
+}
+
+export function isDashboardLoginRequired(error: unknown): boolean {
+  return error instanceof AppError && error.code === DASHBOARD_LOGIN_REQUIRED;
+}
+
+export function dashboardLoginRequiredResponse(
+  request: Request,
+  error: unknown
+): Response {
+  const response = new URL(request.url).pathname.startsWith("/api/")
+    ? apiErrorResponse(error)
+    : htmlResponse(
+        [
+          "<!doctype html>",
+          '<html lang="de">',
+          '<meta charset="utf-8">',
+          '<meta name="viewport" content="width=device-width, initial-scale=1">',
+          "<title>Anmeldung erforderlich</title>",
+          "<h1>Hey Yo, hier geht es nur mit Zugangsdaten weiter.</h1>",
+          "<p>Bitte die Seite neu laden und im Anmeldefenster Benutzername und Passwort eingeben.</p>",
+          "</html>"
+        ].join("\n"),
+        { status: 401 }
+      );
+  response.headers.set(
+    "WWW-Authenticate",
+    `Basic realm="${DASHBOARD_LOGIN_REALM}", charset="UTF-8"`
+  );
+  return response;
+}
+
+function getDashboardPasswordIdentity(
+  request: Request,
+  env: Env,
+  scope: AccessScope
+): AccessIdentity | null {
+  if (scope !== "employee") {
+    return null;
+  }
+
+  const username = env.DASHBOARD_USERNAME ?? "";
+  const password = env.DASHBOARD_PASSWORD ?? "";
+  if (
+    username.length === 0 &&
+    password.length === 0 &&
+    env.DASHBOARD_PASSWORD_REQUIRED !== "true"
+  ) {
+    return null;
+  }
+
+  // Basic Auth trennt Benutzername und Passwort am ersten Doppelpunkt.
+  if (
+    username.trim().length === 0 ||
+    username.includes(":") ||
+    password.length < DASHBOARD_PASSWORD_MIN_LENGTH
+  ) {
+    throw new AppError(
+      "dashboard_password_not_configured",
+      503,
+      `Der Passwortschutz ist aktiv, aber DASHBOARD_USERNAME (ohne Doppelpunkt) und DASHBOARD_PASSWORD (mindestens ${DASHBOARD_PASSWORD_MIN_LENGTH} Zeichen) sind nicht als Cloudflare Secret gesetzt.`
+    );
+  }
+
+  const credentials = parseBasicCredentials(
+    request.headers.get("Authorization")
+  );
+  // Beide Vergleiche laufen immer, damit die Antwortzeit nichts verraet.
+  const usernameMatches = timingSafeEqual(credentials?.username ?? "", username);
+  const passwordMatches = timingSafeEqual(credentials?.password ?? "", password);
+  if (!credentials || !usernameMatches || !passwordMatches) {
+    throw new AppError(
+      DASHBOARD_LOGIN_REQUIRED,
+      401,
+      `${DASHBOARD_LOGIN_REALM}.`
+    );
+  }
+
+  return {
+    subject: `dashboard-password:${username}`,
+    authentication: "dashboard-password"
+  };
+}
+
+function parseBasicCredentials(
+  header: string | null
+): { password: string; username: string } | null {
+  const match = /^Basic +([A-Za-z0-9+/]+={0,2}) *$/iu.exec(header ?? "");
+  if (!match?.[1]) {
+    return null;
+  }
+
+  let decoded: string;
+  try {
+    decoded = base64UrlDecodeText(match[1]);
+  } catch {
+    return null;
+  }
+
+  const separator = decoded.indexOf(":");
+  if (separator < 0) {
+    return null;
+  }
+
+  return {
+    username: decoded.slice(0, separator),
+    password: decoded.slice(separator + 1)
+  };
 }
 
 function getPublicFullAccessIdentity(
