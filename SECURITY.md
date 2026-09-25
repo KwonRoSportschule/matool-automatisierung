@@ -135,6 +135,12 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
   Zapier-Routen gesperrt: weder abonnierbar noch abrufbar. Zapier erhält
   die übrigen Bereiche vollständig; welche Felder dort wirklich gebraucht
   werden, bleibt fachlich zu prüfen.
+- Einzige Ausnahme ist die Beitragsübersicht (`/api/zapier/v1/beitraege`).
+  Sie liest aus `schueler_details` ausschließlich eine feste Feldliste
+  (Name, Mitgliedsnummer, Vertrag, Kundenart, Beitrag, Zahlungsperiode,
+  Zahlart, Jahresgebühr); IBAN, Bankdaten, Geburts- und Kontaktdaten
+  verlassen den Hub auch hier nicht. Ein Test belegt das mit
+  synthetischen Kontrollwerten.
 - Die Live-Zustellung an Zapier (`OUTBOUND_DELIVERY_ENABLED`) verschickt nur
   Änderungen ab `OUTBOUND_DELIVERY_START_AT`. Ein Rückstau aus der Zeit, in
   der sie aus war, löst so keine Zaps für alte Vorgänge aus.

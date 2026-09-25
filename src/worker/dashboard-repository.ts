@@ -895,6 +895,17 @@ function buildFunctionCatalogue(
       dependencies: ["Cloudflare D1"]
     },
     {
+      key: "beitragsuebersicht",
+      name: "Beitragsuebersicht",
+      description:
+        "Summiert die Monatsbeitraege aller nicht stillgelegten Mitglieder und erzeugt die XML-Datei fuer Dashboard und Zapier.",
+      areas: MATOOL_SNAPSHOT_AREAS.filter((area) => area.startsWith("schueler")),
+      state: "enabled",
+      execution: "on_demand",
+      lastRunAt: null,
+      dependencies: ["Mitglieder-Stammdaten", "Cloudflare D1"]
+    },
+    {
       key: "zapier_snapshot_polling",
       name: "Zapier-Datenabholung",
       description: "Stellt gespeicherte MATOOL-Snapshots fuer die private Zapier-App bereit.",
@@ -1038,11 +1049,11 @@ const DASHBOARD_PRIVACY_PLAINTEXT = {
  * die Testphase mit MATOOL-Testdaten freigegeben; fuer echte Personendaten
  * muss der Schalter wieder auf "false" stehen.
  */
-function isDashboardPlaintext(env: Env): boolean {
+export function isDashboardPlaintext(env: Env): boolean {
   return env.PUBLIC_DASHBOARD_PLAINTEXT === "true";
 }
 
-function dashboardPrivacyNotice(
+export function dashboardPrivacyNotice(
   env: Env
 ): typeof DASHBOARD_PRIVACY | typeof DASHBOARD_PRIVACY_PLAINTEXT {
   return isDashboardPlaintext(env)

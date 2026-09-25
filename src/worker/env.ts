@@ -59,6 +59,20 @@ export interface Env {
   CSRF_SECRET?: string;
   DEV_AUTH_BYPASS?: string;
 
+  /**
+   * Beitragsuebersicht: "monat" (Standard), wenn der MATOOL-Wert `beitrag`
+   * bereits der Monatsbetrag ist; "zahlungsperiode", wenn er je
+   * Zahlungsperiode gilt und auf einen Monat umgerechnet werden muss.
+   */
+  BEITRAEGE_BETRAGSBEZUG?: string;
+  /** Kommagetrennte Felder, in denen eine Stilllegung steht. */
+  BEITRAEGE_STILLLEGUNG_FELDER?: string;
+  /**
+   * Kommagetrennte Muster fuer stillgelegte Mitglieder, ohne Gross- und
+   * Kleinschreibung. "=wert" verlangt eine exakte Uebereinstimmung.
+   */
+  BEITRAEGE_STILLLEGUNG_MUSTER?: string;
+
   MATOOL_EMAIL?: string;
   MATOOL_PASSWORD?: string;
   MATOOL_REAL_RUNS_ENABLED?: string;

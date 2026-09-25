@@ -274,3 +274,68 @@ export interface SyncResponse {
     succeeded: number;
   };
 }
+
+export interface BeitragsPosition {
+  beitragCent: number;
+  jahresgebuehrCent: number | null;
+  kundenart: string;
+  matoolId: string;
+  mitgliedsnummer: string;
+  monatsbeitragCent: number;
+  nachname: string;
+  stammdatenStand: string | null;
+  vertrag: string;
+  vorname: string;
+  zahlart: string;
+  zahlungsperiode: string;
+}
+
+export type NichtEingerechnetGrund =
+  | "stillgelegt"
+  | "stammdaten_fehlen"
+  | "beitrag_unlesbar"
+  | "zahlungsperiode_unbekannt";
+
+export interface NichtEingerechnetePosition {
+  detail: string;
+  grund: NichtEingerechnetGrund;
+  kundenart: string;
+  matoolId: string;
+  mitgliedsnummer: string;
+  nachname: string;
+  vertrag: string;
+  vorname: string;
+}
+
+export interface BeitraegeResponse {
+  feldwerte: Array<{ feld: string; werte: Array<{ anzahl: number; wert: string }> }>;
+  generatedAt: string;
+  masked: boolean;
+  privacy: PrivacySummary;
+  schemaVersion: number;
+  uebersicht: {
+    erstelltAm: string;
+    nichtEingerechnet: NichtEingerechnetePosition[];
+    positionen: BeitragsPosition[];
+    regeln: {
+      betragsBezug: "monat" | "zahlungsperiode";
+      stilllegungFelder: string[];
+      stilllegungMuster: string[];
+    };
+    stichtag: string;
+    zusammenfassung: {
+      datenstandAeltester: string | null;
+      datenstandNeuester: string | null;
+      eingerechnet: number;
+      jahresgebuehrSummeCent: number;
+      mitBeitrag: number;
+      mitgliederGesamt: number;
+      monatssummeCent: number;
+      nichtBerechenbar: number;
+      ohneBeitrag: number;
+      stammdatenFehlen: number;
+      stillgelegt: number;
+      vollstaendig: boolean;
+    };
+  };
+}

@@ -1,4 +1,5 @@
 import type {
+  BeitraegeResponse,
   DashboardActivityResponse,
   DashboardOverview,
   DashboardRecordDetail,
@@ -96,6 +97,22 @@ export function getRecordDetail(
   const parameters = new URLSearchParams({ area });
   return getMaskedJson<DashboardRecordDetail>(
     `/api/admin/v1/dashboard/records/${encodeURIComponent(publicId)}?${parameters.toString()}`,
+    signal
+  );
+}
+
+export function beitraegeQuery(stichtag: string): string {
+  return stichtag.length > 0
+    ? `?${new URLSearchParams({ stichtag }).toString()}`
+    : "";
+}
+
+export function getBeitraege(
+  stichtag: string,
+  signal?: AbortSignal
+): Promise<BeitraegeResponse> {
+  return getMaskedJson<BeitraegeResponse>(
+    `/api/admin/v1/beitraege${beitraegeQuery(stichtag)}`,
     signal
   );
 }

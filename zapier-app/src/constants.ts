@@ -1,5 +1,6 @@
 export const API_PATHS = {
   account: "/api/zapier/v1/account",
+  beitraege: "/api/zapier/v1/beitraege",
   snapshots: "/api/zapier/v1/snapshots"
 } as const;
 

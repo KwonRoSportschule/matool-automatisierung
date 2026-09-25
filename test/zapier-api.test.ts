@@ -173,7 +173,7 @@ describe("Zapier-Service-API", () => {
       id: "kwonro-matool-middleware",
       environment: "test",
       event_types: [],
-      token_scopes: ["snapshots:read"]
+      token_scopes: ["snapshots:read", "beitraege:read"]
     });
     expect(payload).not.toHaveProperty("subscription_limit_per_event_type");
     expect(serialized).not.toContain(serviceToken);

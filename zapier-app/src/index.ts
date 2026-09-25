@@ -5,6 +5,7 @@ import {
 import packageJson from "../package.json" with { type: "json" };
 
 import authentication from "./authentication.js";
+import beitragsuebersicht from "./creates/beitragsuebersicht.js";
 import { addMiddlewareCredentials } from "./middleware.js";
 import matoolRecord from "./triggers/matool-record.js";
 import matoolRecordLegacy from "./triggers/matool-record-legacy.js";
@@ -20,5 +21,8 @@ export default defineApp({
   triggers: {
     [matoolRecordLegacy.key]: matoolRecordLegacy,
     [matoolRecord.key]: matoolRecord
+  },
+  creates: {
+    [beitragsuebersicht.key]: beitragsuebersicht
   }
 });

@@ -145,6 +145,7 @@ sowie die Team-Domain werden in `env.staging` eingetragen und nochmals mit
 - [Inbetriebnahme-Runbook](docs/deployment-runbook.md)
 - [Sanitisierte HAR-Analyse](docs/har-analysis.md)
 - [Aktiver Pilot: Interessenten vor dem ersten Probetraining](docs/pilot-interessenten.md)
+- [Beitragsübersicht: Monatssumme und XML für Zapier](docs/beitraege-zapier.md)
 - [Offene Entscheidungen](docs/open-decisions.md)
 - [Spätere Prozessnotiz: Verlängerung nach GLZ](docs/pilot-glz.md)
 - [ADR 0001: Workers Static Assets](docs/adr/0001-worker-static-assets.md)
