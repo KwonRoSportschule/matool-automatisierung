@@ -140,11 +140,21 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
   Adressdaten verlassen den Hub nicht; Tests belegen das mit synthetischen
   Kontrollwerten. Die übrigen Bereiche erhält Zapier vollständig; welche
   Felder dort wirklich gebraucht werden, bleibt fachlich zu prüfen.
-- Die Beitragsübersicht (`/api/zapier/v1/beitraege`) liest aus
-  `schueler_details` ausschließlich eine eigene feste Feldliste (Name,
-  Mitgliedsnummer, Vertrag, Kundenart, Beitrag, Zahlungsperiode, Zahlart,
-  Jahresgebühr); IBAN, Bankdaten, Geburts- und Kontaktdaten verlassen den
-  Hub auch hier nicht.
+- Die Beitragsübersicht (`/api/zapier/v1/beitraege` und
+  `/api/checkin/v1/beitraege`) liest aus `schueler_details` ausschließlich
+  eine eigene feste Feldliste (Name, Mitgliedsnummer, Schule, Sparten,
+  Vertrag samt Beginn und Ende, Kundenart, Beitrag, Zahlungsperiode,
+  Zahlart, Einzugstag, Jahresgebühr samt Datum); IBAN, Bankdaten, Geburts- und Kontaktdaten
+  verlassen den Hub auch hier nicht. Von den Ex-Mitgliedern wird nur die
+  Anzahl gezählt.
+- Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
+  Beitragsübersicht mit einem eigenen Token (`CHECKIN_SERVICE_TOKEN`), der
+  nichts anderes öffnet; der Zapier-Token gilt dort nicht und umgekehrt.
+  Die Gegenseite zeigt die Daten nur hinter einem eigenen Passwort und
+  speichert sie nicht.
+- Die Stichtagsstände (`beitrags_stichtage`, nur 1. und 15.) liegen wie alle
+  Nutzlasten AES-256-GCM-verschlüsselt in D1; nur die Kennzahlenspalten
+  (Summen, Anzahlen) stehen im Klartext und nennen niemanden.
 - Ein Erstimport eines Bereichs wird nie per Webhook zugestellt: Aktive Abos
   rücken über die Baseline hinweg. Erst danach neu erscheinende oder
   geänderte Datensätze lösen Zaps aus.

@@ -73,6 +73,25 @@ export interface Env {
    * Kleinschreibung. "=wert" verlangt eine exakte Uebereinstimmung.
    */
   BEITRAEGE_STILLLEGUNG_MUSTER?: string;
+  /**
+   * Kommagetrennte Zuordnung MATOOL-Schulkennung=Name, z. B.
+   * "273=Rosenheim,1734=Raubling". Ohne Angabe gelten die bekannten
+   * Standorte.
+   */
+  BEITRAEGE_SCHULEN?: string;
+  /**
+   * Stammdatenfeld mit einem abweichenden Einzugstag. Standard:
+   * "abweichenderEinzug"; ohne Eintrag gilt der Tag des Vertragsbeginns.
+   * Nur Felder aus EINZUG_FELDER in src/core/beitraege.ts sind erlaubt.
+   */
+  BEITRAEGE_EINZUG_FELD?: string;
+
+  /**
+   * Bearer-Token (mindestens 32 Zeichen) der Klassenauswertung
+   * (Check-in-/Telemetrieseite). Berechtigt ausschliesslich zum Lesen der
+   * Beitragsuebersicht unter /api/checkin/v1/. Als Cloudflare Secret setzen.
+   */
+  CHECKIN_SERVICE_TOKEN?: string;
 
   MATOOL_EMAIL?: string;
   MATOOL_PASSWORD?: string;

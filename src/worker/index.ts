@@ -11,13 +11,7 @@ import {
   dashboardLoginErrorResponse,
   requireAccessIdentity
 } from "./access";
-import {
-  beitragsStichtag,
-  beitragsXmlResponse,
-  dashboardBeitragsUebersicht,
-  erstelleAktuelleBeitragsUebersicht,
-  maskiereBeitragsUebersicht
-} from "./beitraege";
+import { handleCheckinApiRequest } from "./checkin-api";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import { requireDashboardPublicId } from "./dashboard-privacy";
 import {
@@ -88,6 +82,13 @@ const worker = {
       // policy below.
       if (url.pathname.startsWith("/api/zapier/v1/")) {
         return await handleZapierApiRequest(request, url, env);
+      }
+
+      // Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
+      // Beitragsuebersicht mit ihrem eigenen Bearer-Token; die Mitarbeiter-
+      // Anmeldung des Dashboards gilt dort nicht.
+      if (url.pathname.startsWith("/api/checkin/v1/")) {
+        return await handleCheckinApiRequest(request, url, env);
       }
 
       const identity = await requireAccessIdentity(request, env, "employee");
@@ -177,35 +178,6 @@ async function handleApiRequest(
         parseDashboardRecordDetailQuery(url),
         requireDashboardPublicId(dashboardRecordMatch[1])
       )
-    );
-  }
-
-  if (url.pathname === "/api/admin/v1/beitraege") {
-    if (request.method !== "GET") {
-      methodNotAllowed(["GET"]);
-    }
-    const plaintext = isDashboardPlaintext(env);
-    return jsonResponse({
-      schemaVersion: 1,
-      generatedAt: new Date().toISOString(),
-      privacy: dashboardPrivacyNotice(env),
-      masked: !plaintext,
-      ...(await dashboardBeitragsUebersicht(env, url, plaintext))
-    });
-  }
-
-  if (url.pathname === "/api/admin/v1/beitraege.xml") {
-    if (request.method !== "GET") {
-      methodNotAllowed(["GET"]);
-    }
-    const { uebersicht } = await erstelleAktuelleBeitragsUebersicht(
-      env,
-      beitragsStichtag(url)
-    );
-    return beitragsXmlResponse(
-      isDashboardPlaintext(env)
-        ? uebersicht
-        : maskiereBeitragsUebersicht(uebersicht)
     );
   }
 

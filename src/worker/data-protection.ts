@@ -1,4 +1,5 @@
 import { toAppError } from "../core/app-error";
+import { ensureBeitragsArchivSchema } from "./beitrags-archiv";
 import type { Env } from "./env";
 import { pruneLoginThrottle } from "./login-throttle";
 import {
@@ -84,15 +85,18 @@ export async function dataProtectionStatus(
   const activeCipher = cipher ?? (await storedPayloadCipher(env));
   // Ohne Schluessel zaehlt alles als ungeschuetzt, was nicht versiegelt ist.
   const header = activeCipher.currentHeader ?? "enc:";
+  await ensureBeitragsArchivSchema(env.DB);
   const row = await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM matool_snapshots
         WHERE substr(payload_json, 1, ?) <> ?)
        + (SELECT COUNT(*) FROM matool_snapshot_changes
           WHERE payload_json IS NOT NULL
-            AND substr(payload_json, 1, ?) <> ?) AS count`
+            AND substr(payload_json, 1, ?) <> ?)
+       + (SELECT COUNT(*) FROM beitrags_stichtage
+          WHERE substr(payload_json, 1, ?) <> ?) AS count`
   )
-    .bind(header.length, header, header.length, header)
+    .bind(header.length, header, header.length, header, header.length, header)
     .first<CountRow>();
   return {
     encryptionConfigured: activeCipher.currentHeader !== null,
