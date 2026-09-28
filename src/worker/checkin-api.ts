@@ -21,9 +21,11 @@ import { requireCheckinServiceRequest } from "./integration-auth";
  * vom Dashboard-Passwort.
  *
  * - GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT
- *     heute: live aus dem aktuellen Bestand; frueher: gesicherter Tagesstand
+ *     heute: live aus dem aktuellen Bestand; frueher: gesicherter Stand
+ *     (nur der 1. und 15. eines Monats werden gesichert)
  * - GET /api/checkin/v1/beitraege/stichtage
- *     alle gesicherten Tage mit Kennzahlen (ohne Personen), neueste zuerst
+ *     alle gesicherten Stichtage mit Kennzahlen (ohne Personen), neueste
+ *     zuerst, inklusive Summen je Einzugstag (1 bis 31)
  */
 export async function handleCheckinApiRequest(
   request: Request,
@@ -84,7 +86,9 @@ export async function handleCheckinApiRequest(
         mit_beitrag: eintrag.mitBeitrag,
         ohne_beitrag: eintrag.ohneBeitrag,
         stillgelegt: eintrag.stillgelegt,
-        ex_mitglieder: eintrag.exMitglieder
+        ex_mitglieder: eintrag.exMitglieder,
+        einzug_nach_tag: eintrag.einzugNachTag,
+        einzug_unklar: eintrag.einzugUnklar
       }))
     });
   }

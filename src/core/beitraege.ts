@@ -50,6 +50,43 @@ export interface BeitragsRegeln {
    * stehen, erscheinen unveraendert.
    */
   schulen: Readonly<Record<string, string>>;
+  /**
+   * Stammdatenfeld mit einem abweichenden Einzugstag. Ist dort ein Tag
+   * eingetragen, gilt er; sonst der Tag des Vertragsbeginns.
+   */
+  einzugFeld: EinzugFeld;
+}
+
+/**
+ * Felder, die als Quelle fuer den abweichenden Einzugstag in Frage kommen.
+ * Bewusst eine feste Liste: Die Rohwerte des gewaehlten Felds erscheinen in
+ * der Feldwerte-Pruefung, deshalb darf dort nie IBAN, Geburtstag o. Ae.
+ * landen.
+ */
+export const EINZUG_FELDER = [
+  "abweichenderEinzug",
+  "autPreisDatum",
+  "autPreisTurnus",
+  "kundenart",
+  "vertrag",
+  "zahlart",
+  "zahlungsperiode"
+] as const;
+export type EinzugFeld = (typeof EINZUG_FELDER)[number];
+
+/**
+ * Woher der Einzugstag stammt: aus dem abweichenden Einzug, aus dem
+ * Vertragsbeginn oder -- leer -- nirgends eindeutig lesbar.
+ */
+export type EinzugsQuelle = "abweichend" | "vertragsbeginn" | "";
+
+export interface EinzugsTagSumme {
+  /** Tag im Monat, 1 bis 31. */
+  tag: number;
+  /** Summe der Monatsbeitraege, die an diesem Tag eingezogen werden. */
+  cent: number;
+  /** Anzahl zahlender Mitglieder (Beitrag ungleich 0) mit diesem Tag. */
+  zahler: number;
 }
 
 /**
@@ -66,7 +103,8 @@ export const DEFAULT_BEITRAGS_REGELN: BeitragsRegeln = {
   betragsBezug: "monat",
   stilllegungFelder: DEFAULT_STILLLEGUNG_FELDER,
   stilllegungMuster: DEFAULT_STILLLEGUNG_MUSTER,
-  schulen: DEFAULT_SCHULEN
+  schulen: DEFAULT_SCHULEN,
+  einzugFeld: "abweichenderEinzug"
 };
 
 /**
@@ -75,8 +113,10 @@ export const DEFAULT_BEITRAGS_REGELN: BeitragsRegeln = {
  * unberuehrt.
  */
 export const BEITRAGS_STAMMDATEN_FELDER = [
+  "abweichenderEinzug",
   "beitrag",
   "jahresgebuehr",
+  "jahresgebuehrdatum",
   "kundenart",
   "mitgliednr",
   "name",
@@ -133,6 +173,11 @@ export interface BeitragsPosition {
   sparten: string[];
   vertragsbeginn: string;
   vertragsende: string;
+  /** Einzugstag im Monat (1 bis 31); null, wenn nicht eindeutig lesbar. */
+  einzugstag: number | null;
+  einzugsquelle: EinzugsQuelle;
+  /** Faelligkeit der Jahresgebuehr, wie in MATOOL hinterlegt. */
+  jahresgebuehrdatum: string;
   zahlungsperiode: string;
   zahlart: string;
   /** Beitrag wie in MATOOL hinterlegt, in Cent. */
@@ -155,6 +200,9 @@ export interface NichtEingerechnetePosition {
   sparten: string[];
   vertragsbeginn: string;
   vertragsende: string;
+  einzugstag: number | null;
+  einzugsquelle: EinzugsQuelle;
+  jahresgebuehrdatum: string;
   grund: NichtEingerechnetGrund;
   /** Rohwert, der zum Ausschluss gefuehrt hat (z. B. der Kundenart-Text). */
   detail: string;
@@ -180,6 +228,10 @@ export interface BeitragsZusammenfassung {
    * null, solange diese Liste nicht gelesen wurde.
    */
   exMitglieder: number | null;
+  /** Monatssumme je Einzugstag, nur Tage mit Betrag, aufsteigend. */
+  einzugNachTag: EinzugsTagSumme[];
+  /** Zahlende Mitglieder, deren Einzugstag nicht lesbar ist. */
+  einzugUnklar: { cent: number; zahler: number };
   /**
    * true, wenn die Mitgliederliste gelesen ist und jedes nicht stillgelegte
    * Mitglied eingerechnet wurde.
@@ -306,6 +358,18 @@ export function erstelleBeitragsUebersicht(
   const mitBeitrag = positionen.filter(
     (position) => position.monatsbeitragCent !== 0
   ).length;
+  const zahlende = positionen.filter((position) => position.monatsbeitragCent !== 0);
+  const tage = new Map<number, EinzugsTagSumme>();
+  for (const position of zahlende) {
+    if (position.einzugstag === null) {
+      continue;
+    }
+    const eintrag = tage.get(position.einzugstag) ?? { tag: position.einzugstag, cent: 0, zahler: 0 };
+    eintrag.cent += position.monatsbeitragCent;
+    eintrag.zahler += 1;
+    tage.set(position.einzugstag, eintrag);
+  }
+  const unklar = zahlende.filter((position) => position.einzugstag === null);
 
   return {
     schemaVersion: BEITRAGS_SCHEMA_VERSION,
@@ -330,6 +394,8 @@ export function erstelleBeitragsUebersicht(
       stammdatenFehlen,
       nichtBerechenbar,
       exMitglieder: optionen.exMitglieder ?? null,
+      einzugNachTag: [...tage.values()].sort((links, rechts) => links.tag - rechts.tag),
+      einzugUnklar: { cent: summe(unklar), zahler: unklar.length },
       // Ohne gelesene Mitgliederliste waere eine Summe von 0 irrefuehrend.
       vollstaendig:
         quellen.length > 0 && stammdatenFehlen === 0 && nichtBerechenbar === 0,
@@ -339,6 +405,10 @@ export function erstelleBeitragsUebersicht(
     positionen,
     nichtEingerechnet
   };
+}
+
+function summe(positionen: readonly BeitragsPosition[]): number {
+  return positionen.reduce((gesamt, position) => gesamt + position.monatsbeitragCent, 0);
 }
 
 const GRUND_REIHENFOLGE: Readonly<Record<NichtEingerechnetGrund, number>> = {
@@ -377,6 +447,9 @@ function personAngaben(
   vertrag: string;
   vertragsbeginn: string;
   vertragsende: string;
+  einzugstag: number | null;
+  einzugsquelle: EinzugsQuelle;
+  jahresgebuehrdatum: string;
   vorname: string;
 } {
   const stammdaten = quelle.stammdaten ?? {};
@@ -390,8 +463,67 @@ function personAngaben(
     schule: schulName(stammdaten.schule, regeln.schulen),
     sparten: spartenAus(stammdaten.spartenliste),
     vertragsbeginn: textWert(stammdaten.vertragsbeginn),
-    vertragsende: textWert(stammdaten.vertragsende)
+    vertragsende: textWert(stammdaten.vertragsende),
+    // Ohne Stammdaten ist auch der Einzugstag unbekannt.
+    ...(quelle.stammdaten === null
+      ? { einzugstag: null, einzugsquelle: "" as const }
+      : einzugAus(stammdaten, regeln.einzugFeld)),
+    jahresgebuehrdatum: textWert(stammdaten.jahresgebuehrdatum)
   };
+}
+
+const NEIN_WERTE = new Set(["", "0", "nein", "n", "false", "off", "no", "-"]);
+
+/**
+ * Bestimmt den Einzugstag eines Mitglieds.
+ *
+ * 1. Ist im Feld fuer den abweichenden Einzug ein Tag eingetragen (Zahl,
+ *    "zum 7.", "07.03.", "2026-03-07"), gilt dieser Tag.
+ * 2. Sonst gilt der Tag des Vertragsbeginns. Neuere Vertraege beginnen am
+ *    1. oder 15.; aeltere auch an anderen Tagen und werden dann an diesem
+ *    Tag eingezogen.
+ *
+ * Ist ein abweichender Einzug gesetzt, aber ohne lesbaren Tag (nur ein
+ * Haekchen), bleibt der Tag leer statt auf den Vertragsbeginn zu fallen:
+ * Dann weicht der Einzug ja gerade davon ab.
+ */
+export function einzugAus(
+  stammdaten: Readonly<Record<string, unknown>>,
+  feld: string = DEFAULT_BEITRAGS_REGELN.einzugFeld
+): { einzugstag: number | null; einzugsquelle: EinzugsQuelle } {
+  const abweichend = stammdaten[feld];
+  const abweichendText = normalisiereVergleich(textWert(abweichend));
+  const nichtGesetzt =
+    abweichend === null ||
+    abweichend === undefined ||
+    abweichend === false ||
+    abweichend === 0 ||
+    NEIN_WERTE.has(abweichendText);
+  if (!nichtGesetzt) {
+    return { einzugstag: tagImMonat(abweichend), einzugsquelle: "abweichend" };
+  }
+  const tag = tagImMonat(stammdaten.vertragsbeginn);
+  return tag === null
+    ? { einzugstag: null, einzugsquelle: "" }
+    : { einzugstag: tag, einzugsquelle: "vertragsbeginn" };
+}
+
+/**
+ * Tag im Monat aus einer Zahl oder einem Datum: 7, "7", "zum 7.", "07.03.",
+ * "07.03.2026", "2026-03-07", "2026-03-07 00:00:00". Liefert null fuer alles
+ * andere, auch fuer Nulldaten wie "0000-00-00".
+ */
+export function tagImMonat(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 1 && value <= 31 ? value : null;
+  }
+  const text = normalisiereVergleich(textWert(value));
+  const tag =
+    /^\d{4}-\d{2}-(\d{2})(?:$|[t\s])/u.exec(text)?.[1] ??
+    /^(\d{1,2})\.\d{1,2}\.(?:\d{2,4})?$/u.exec(text)?.[1] ??
+    /^(?:zum\s+|am\s+)?(\d{1,2})\.?$/u.exec(text)?.[1];
+  const zahl = tag === undefined ? Number.NaN : Number(tag);
+  return Number.isInteger(zahl) && zahl >= 1 && zahl <= 31 ? zahl : null;
 }
 
 /**
@@ -559,6 +691,7 @@ export function erkenneStilllegung(
  */
 export function beitragsRegelnAusUmgebung(werte: {
   BEITRAEGE_BETRAGSBEZUG?: string | undefined;
+  BEITRAEGE_EINZUG_FELD?: string | undefined;
   BEITRAEGE_SCHULEN?: string | undefined;
   BEITRAEGE_STILLLEGUNG_FELDER?: string | undefined;
   BEITRAEGE_STILLLEGUNG_MUSTER?: string | undefined;
@@ -589,7 +722,15 @@ export function beitragsRegelnAusUmgebung(werte: {
     }
     schulen[kennung] = name;
   }
+  const einzugFeld = (werte.BEITRAEGE_EINZUG_FELD ?? "").trim();
+  if (einzugFeld !== "" && !(EINZUG_FELDER as readonly string[]).includes(einzugFeld)) {
+    throw new Error(
+      `BEITRAEGE_EINZUG_FELD muss eines dieser Felder sein: ${EINZUG_FELDER.join(", ")}.`
+    );
+  }
   return {
+    einzugFeld:
+      einzugFeld === "" ? DEFAULT_BEITRAGS_REGELN.einzugFeld : (einzugFeld as EinzugFeld),
     betragsBezug: bezug === "" ? DEFAULT_BEITRAGS_REGELN.betragsBezug : bezug,
     stilllegungFelder: felder.length > 0 ? felder : DEFAULT_BEITRAGS_REGELN.stilllegungFelder,
     stilllegungMuster: muster.length > 0 ? muster : DEFAULT_BEITRAGS_REGELN.stilllegungMuster,

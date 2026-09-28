@@ -62,6 +62,8 @@ async function seedMitglieder(
         name: "Beispiel",
         schule: "273",
         spartenliste: '["Kickboxen"]',
+        abweichenderEinzug: "15",
+        vertragsbeginn: "2025-02-01",
         vname: "Erika",
         zahlungsperiode: "monatlich"
       }
@@ -74,6 +76,7 @@ async function seedMitglieder(
         kundenart: "Mitglied",
         mitgliednr: "M-2",
         name: "Muster",
+        vertragsbeginn: "2019-03-07",
         vname: "Max",
         zahlungsperiode: "monatlich"
       }
@@ -265,7 +268,21 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
       nachname: "Beispiel",
       schule: "Rosenheim",
       sparten: ["Kickboxen"],
-      monatsbeitrag_cent: 5990
+      monatsbeitrag_cent: 5990,
+      einzugstag: 15,
+      einzugsquelle: "abweichend"
+    });
+    expect(body.mitglieder[1]).toMatchObject({
+      nachname: "Muster",
+      einzugstag: 7,
+      einzugsquelle: "vertragsbeginn"
+    });
+    expect(body.zusammenfassung).toMatchObject({
+      einzug_nach_tag: [
+        { tag: 7, cent: 3950, zahler: 1 },
+        { tag: 15, cent: 5990, zahler: 1 }
+      ],
+      einzug_unklar: { cent: 0, zahler: 0 }
     });
     // Der ruhende Beitrag ist sichtbar, aber nicht in der Summe.
     expect(body.nicht_eingerechnet).toEqual(
@@ -348,7 +365,17 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     expect(listenText).not.toContain("Erika");
     expect(JSON.parse(listenText)).toMatchObject({
       schema_version: 1,
-      stichtage: [expect.objectContaining({ stichtag: "2026-09-01", monatssumme_cent: expect.any(Number) })]
+      stichtage: [
+        expect.objectContaining({
+          stichtag: "2026-09-01",
+          monatssumme_cent: 9940,
+          einzug_nach_tag: [
+            { tag: 7, cent: 3950, zahler: 1 },
+            { tag: 15, cent: 5990, zahler: 1 }
+          ],
+          einzug_unklar: { cent: 0, zahler: 0 }
+        })
+      ]
     });
   });
 
@@ -374,7 +401,7 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     expect(gesichert?.uebersicht.zusammenfassung.vollstaendig).toBe(true);
   });
 
-  it("behaelt den 1. und 15. dauerhaft, andere Tage nur innerhalb der Frist", async () => {
+  it("speichert nur am 1. und 15. und raeumt andere Tage weg", async () => {
     await seedMitglieder();
     for (const stichtag of ["2025-01-01", "2025-01-15", "2025-01-16", "2026-09-10"]) {
       await env.DB.prepare(
@@ -385,11 +412,15 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
         .bind(stichtag, `${stichtag}T20:00:00.000Z`)
         .run();
     }
-    await sichereBeitragsStichtag(env, new Date("2026-09-20T09:00:00.000Z"));
+    expect(await sichereBeitragsStichtag(env, new Date("2026-09-20T09:00:00.000Z"))).toEqual({
+      grund: "kein_abrechnungstag",
+      stichtag: "2026-09-20",
+      status: "uebersprungen"
+    });
     const tage = (
       await env.DB.prepare("SELECT stichtag FROM beitrags_stichtage ORDER BY stichtag").all<{ stichtag: string }>()
     ).results.map((row) => row.stichtag);
-    expect(tage).toEqual(["2025-01-01", "2025-01-15", "2026-09-10", "2026-09-20"]);
+    expect(tage).toEqual(["2025-01-01", "2025-01-15"]);
   });
 
   it("legt die Tabelle selbst an, wenn der Deploy ohne Migration kam", async () => {
@@ -398,7 +429,7 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     // Die Datenschutz-Kachel der Uebersicht darf daran nicht scheitern.
     await expect(dataProtectionStatus(env)).resolves.toMatchObject({ unprotectedPayloads: expect.any(Number) });
     await env.DB.prepare("DROP TABLE beitrags_stichtage").run();
-    expect(await sichereBeitragsStichtag(env, new Date("2026-09-02T09:00:00.000Z"))).toMatchObject({
+    expect(await sichereBeitragsStichtag(env, new Date("2026-10-01T09:00:00.000Z"))).toMatchObject({
       status: "gespeichert"
     });
     const liste = await dispatch(checkinRequest("/api/checkin/v1/beitraege/stichtage"));
@@ -407,13 +438,17 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
 
   it("sichert den Tag auch im naechtlichen Tagesabschluss ohne MATOOL-Abruf", async () => {
     await seedMitglieder();
-    await handleScheduledInvocation(
-      { cron: "30 21 * * *", noRetry: () => undefined, scheduledTime: Date.now() } as ScheduledController,
-      env
-    );
-    const anzahl = await env.DB.prepare("SELECT COUNT(*) AS anzahl FROM beitrags_stichtage").first<{
-      anzahl: number;
-    }>();
-    expect(anzahl?.anzahl).toBe(1);
+    const lauf = (zeit: string) =>
+      handleScheduledInvocation(
+        { cron: "30 21 * * *", noRetry: () => undefined, scheduledTime: Date.parse(zeit) } as ScheduledController,
+        env
+      );
+    // 21:30 UTC ist in Berlin noch derselbe Tag.
+    await lauf("2026-10-14T21:30:00.000Z");
+    await lauf("2026-10-15T21:30:00.000Z");
+    const tage = (
+      await env.DB.prepare("SELECT stichtag FROM beitrags_stichtage").all<{ stichtag: string }>()
+    ).results.map((row) => row.stichtag);
+    expect(tage).toEqual(["2026-10-15"]);
   });
 });

@@ -1,5 +1,6 @@
 import { AppError } from "../core/app-error";
 import {
+  BEITRAGS_FELDWERT_FELDER,
   BEITRAGS_STAMMDATEN_FELDER,
   beitragsDateiname,
   beitragsRegelnAusUmgebung,
@@ -32,7 +33,13 @@ interface BeitragsSnapshotRow {
  * ist die Mitgliederliste: Sie wird bei jedem vollstaendigen Abruf exakt
  * ersetzt. Stammdaten ausgetretener Mitglieder bleiben dadurch aussen vor.
  */
-export async function ladeBeitragsQuellen(env: Env): Promise<BeitragsQuelle[]> {
+export async function ladeBeitragsQuellen(
+  env: Env,
+  regeln: BeitragsRegeln = beitragsRegeln(env)
+): Promise<BeitragsQuelle[]> {
+  const stammdatenFelder = [
+    ...new Set<string>([...BEITRAGS_STAMMDATEN_FELDER, regeln.einzugFeld])
+  ];
   let rows: BeitragsSnapshotRow[];
   try {
     rows = (
@@ -64,7 +71,7 @@ export async function ladeBeitragsQuellen(env: Env): Promise<BeitragsQuelle[]> {
       liste.set(row.source_id, auswahl(payload, LISTEN_FELDER));
     } else {
       stammdaten.set(row.source_id, {
-        payload: auswahl(payload, BEITRAGS_STAMMDATEN_FELDER),
+        payload: auswahl(payload, stammdatenFelder),
         stand: row.last_seen_at
       });
     }
@@ -172,11 +179,13 @@ export async function erstelleAktuelleBeitragsUebersicht(
 }> {
   const regeln = beitragsRegeln(env);
   const [quellen, exMitglieder] = await Promise.all([
-    ladeBeitragsQuellen(env),
+    ladeBeitragsQuellen(env, regeln),
     ladeExMitgliederAnzahl(env)
   ]);
   return {
-    feldwerte: zaehleFeldwerte(quellen),
+    feldwerte: zaehleFeldwerte(quellen, [
+      ...new Set<string>([...BEITRAGS_FELDWERT_FELDER, regeln.einzugFeld])
+    ]),
     quellen,
     uebersicht: erstelleBeitragsUebersicht(quellen, {
       erstelltAm: jetzt.toISOString(),
@@ -270,7 +279,8 @@ export function checkinBeitragsAntwort(
     regeln: {
       betragsbezug: uebersicht.regeln.betragsBezug,
       stilllegung_felder: uebersicht.regeln.stilllegungFelder,
-      stilllegung_muster: uebersicht.regeln.stilllegungMuster
+      stilllegung_muster: uebersicht.regeln.stilllegungMuster,
+      einzug_feld: uebersicht.regeln.einzugFeld ?? "abweichenderEinzug"
     },
     zusammenfassung: {
       monatssumme_cent: z.monatssummeCent,
@@ -283,6 +293,8 @@ export function checkinBeitragsAntwort(
       stammdaten_fehlen: z.stammdatenFehlen,
       nicht_berechenbar: z.nichtBerechenbar,
       ex_mitglieder: z.exMitglieder ?? null,
+      einzug_nach_tag: z.einzugNachTag ?? [],
+      einzug_unklar: z.einzugUnklar ?? { cent: 0, zahler: 0 },
       vollstaendig: z.vollstaendig,
       datenstand_aeltester: z.datenstandAeltester,
       datenstand_neuester: z.datenstandNeuester
@@ -300,6 +312,9 @@ export function checkinBeitragsAntwort(
       zahlart: position.zahlart,
       vertragsbeginn: position.vertragsbeginn ?? "",
       vertragsende: position.vertragsende ?? "",
+      einzugstag: position.einzugstag ?? null,
+      einzugsquelle: position.einzugsquelle ?? "",
+      jahresgebuehrdatum: position.jahresgebuehrdatum ?? "",
       beitrag_cent: position.beitragCent,
       monatsbeitrag_cent: position.monatsbeitragCent,
       jahresgebuehr_cent: position.jahresgebuehrCent
@@ -315,6 +330,9 @@ export function checkinBeitragsAntwort(
       kundenart: eintrag.kundenart,
       vertragsbeginn: eintrag.vertragsbeginn ?? "",
       vertragsende: eintrag.vertragsende ?? "",
+      einzugstag: eintrag.einzugstag ?? null,
+      einzugsquelle: eintrag.einzugsquelle ?? "",
+      jahresgebuehrdatum: eintrag.jahresgebuehrdatum ?? "",
       grund: eintrag.grund,
       detail: eintrag.detail,
       beitrag_cent: eintrag.beitragCent ?? null

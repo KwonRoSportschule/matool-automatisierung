@@ -11,9 +11,9 @@ Beiträge.
 Angezeigt und ausgewertet wird die Beitragsübersicht **nicht mehr im Hub**,
 sondern in der Klassenauswertung (Check-in-/Telemetrieseite,
 Repository `weekly-checkin-check-claude-matool-automatisierung`) unter
-`/beitraege`: je Mitglied mit Vertrag und Beitrag, Monatssumme, Mitglieder
-gesamt, stillgelegte und Ex-Mitglieder, frei wählbarer Stichtag (1., 15. oder
-jeder andere gesicherte Tag) und Filter nach Schule, Sparte und Vertrag.
+`/beitraege`: je Monat und Einzugstag (Gesamt, 1., 15., andere Tage), je Mitglied mit
+Vertrag und Beitrag, Monatssumme, Mitglieder gesamt, stillgelegte und
+Ex-Mitglieder, Filter nach Schule, Sparte und Vertrag.
 
 Der Hub rechnet, Klassenauswertung und Zapier zeigen bzw. verteilen. Die
 Berechnung liegt vollständig im Hub, damit beide garantiert dieselbe Zahl
@@ -47,8 +47,8 @@ Datenquelle ist der bereits laufende stündliche MATOOL-Abruf:
   jedem vollständigen Abruf exakt ersetzt; Ausgetretene fallen damit heraus.
 - **Mitglieder-Stammdaten** (`schueler_details`): `beitrag`,
   `zahlungsperiode`, `kundenart`, `vertrag`, `vertragsbeginn`,
-  `vertragsende`, `jahresgebuehr`, `zahlart`, `schule`, `spartenliste`,
-  Name und Mitgliedsnummer. Bank-, Geburts- und Kontaktdaten werden für die
+  `vertragsende`, `jahresgebuehr`, `jahresgebuehrdatum`, `zahlart`,
+  `schule`, `spartenliste`, `abweichenderEinzug`, Name und Mitgliedsnummer. Bank-, Geburts- und Kontaktdaten werden für die
   Beitragsübersicht nicht einmal gelesen.
 - **Ehemalige Mitglieder** (`schueler_ex`): nur die Anzahl. Solange die
   Liste nie gelesen wurde, steht dort „unbekannt“ statt 0.
@@ -58,6 +58,22 @@ Die Schule wird über ihre MATOOL-Kennung benannt (273 Rosenheim,
 Sparten kommen aus `spartenliste`; verstanden werden Text („Kids,
 Kickboxen“), JSON-Listen und JSON-Objekte. Was keinem Muster folgt, wird
 ausgelassen statt geraten – die Feldwerte-Prüfung zeigt, was gelesen wurde.
+
+**Einzugstag (Fälligkeit):** Die meisten Mitglieder werden zum 1. oder zum
+15. eingezogen, ältere Verträge (älter als etwa zwei Jahre) auch an anderen
+Tagen. Regel je Mitglied:
+
+1. Steht im Feld `abweichenderEinzug` ein Tag oder Datum („7“, „zum 7.“,
+   „07.03.“, „2026-03-07“), gilt dieser Tag.
+2. Sonst gilt der **Tag des Vertragsbeginns** (`vertragsbeginn`).
+3. Ist ein abweichender Einzug gesetzt, aber ohne lesbaren Tag (nur ein
+   Häkchen), oder fehlt der Vertragsbeginn, bleibt der Tag **unklar**: nicht
+   in den Tagessummen, aber in der Monatssumme und sichtbar gelistet.
+
+Die Klassenauswertung zeigt je Mitglied Tag und Quelle und markiert Verträge,
+die jünger als zwei Jahre sind und trotzdem nicht am 1./15. eingezogen
+werden – daran fällt sofort auf, falls die Regel nicht stimmt. Steht der
+abweichende Tag in einem anderen Feld, `BEITRAEGE_EINZUG_FELD` umstellen.
 
 Je Mitglied gilt:
 
@@ -88,7 +104,7 @@ oder im Cloudflare-Dashboard als Variable, kein Secret nötig):
 | `BEITRAEGE_STILLLEGUNG_FELDER` | `kundenart,vertrag` | Felder, in denen eine Stilllegung steht. |
 | `BEITRAEGE_STILLLEGUNG_MUSTER` | `stillgelegt,stillleg,stilleg,ruhend,ruhezeit,pausiert` | Teiltexte ohne Groß-/Kleinschreibung. `=Wert` verlangt exakte Gleichheit, z. B. `=3` für einen Kundenart-Code. |
 | `BEITRAEGE_SCHULEN` | `273=Rosenheim,1734=Raubling,1474=Stephanskirchen` | Zuordnung MATOOL-Schulkennung → Name. Unbekannte Kennungen erscheinen unverändert. |
-| `BEITRAEGE_TAGESSTAND_AUFBEWAHRUNG_TAGE` | `400` | So lange bleiben Tagesstände erhalten. Der 1. und 15. eines Monats bleiben immer. Werte unter 31 werden ignoriert. |
+| `BEITRAEGE_EINZUG_FELD` | `abweichenderEinzug` | Feld mit einem abweichenden Einzugstag; ohne Eintrag gilt der Vertragsbeginn. Erlaubt: `abweichenderEinzug`, `autPreisDatum`, `autPreisTurnus`, `kundenart`, `vertrag`, `zahlart`, `zahlungsperiode` (feste Liste, damit nie Bank- oder Geburtsdaten in der Feldwerte-Prüfung landen). |
 
 Eine ungültige Einstellung führt zu einer Fehlermeldung statt zu einer
 falschen Summe.
@@ -116,8 +132,8 @@ jeweils mit Anzahl. Steht bei `schule` eine Zahl statt eines Namens,
 
 | Aufruf | Zugang | Inhalt |
 |---|---|---|
-| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; früher: gesicherter Tagesstand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag, Beträge in Cent; Summen; Feldwerte |
-| `GET /api/checkin/v1/beitraege/stichtage` | `CHECKIN_SERVICE_TOKEN` | Alle gesicherten Tage mit Kennzahlen (ohne Personen), neueste zuerst |
+| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; 1. oder 15. in der Vergangenheit: gesicherter Stand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag, Einzugstag samt Quelle, Jahresgebührdatum, Beträge in Cent; Summen gesamt und je Einzugstag (1–31); Feldwerte |
+| `GET /api/checkin/v1/beitraege/stichtage` | `CHECKIN_SERVICE_TOKEN` | Alle gesicherten Stichtage (1./15.) mit Kennzahlen und Summen je Einzugstag (ohne Personen), neueste zuerst |
 | `GET /api/zapier/v1/beitraege?stichtag=JJJJ-MM-TT` | Zapier-Service-Token | Summen, Einzelposten und XML-Text für die Zapier-App |
 
 Die früheren Dashboard-Routen `/api/admin/v1/beitraege(.xml)` und der
@@ -127,26 +143,29 @@ Bei **Zapier** gilt ohne `stichtag` das heutige Datum in Europe/Berlin; der
 Stichtag ist dort nur Beschriftung und Dateiname
 (`beitragsuebersicht_2026-10-01.xml`), gerechnet wird mit dem aktuellen
 Bestand. Die **Klassenauswertung** bekommt für einen vergangenen Tag
-dagegen den damals gesicherten Stand; für einen Tag ohne Sicherung antwortet
+dagegen den damals gesicherten Stand (nur 1. und 15.); für einen Tag ohne Sicherung antwortet
 der Hub mit 404 (`beitraege_stichtag_nicht_gesichert`), für einen Tag in der
 Zukunft mit 400.
 
-## Stichtage: tägliche Sicherung
+## Stichtage: Sicherung am 1. und 15.
 
-MATOOL und der Hub kennen nur den aktuellen Bestand. Damit man später den
-1., den 15. oder jeden anderen Tag ansehen und vergleichen kann, sichert der
-Hub den Stand jedes Tages (Tabelle `beitrags_stichtage`, Migration 0011):
+MATOOL und der Hub kennen nur den aktuellen Bestand. Damit man später sehen
+kann, was an einem vergangenen 1. oder 15. fällig war, sichert der Hub an
+genau diesen beiden Tagen den Stand (Tabelle `beitrags_stichtage`,
+Migration 0011). Andere Tage werden nicht gespeichert:
 
 - nach jedem stündlichen Abruf (montags bis freitags 9 bis 19 Uhr) und
 - im **Tagesabschluss** um 21:30 UTC (22:30/23:30 Uhr in Berlin, Cron
   `30 21 * * *`). Der ruft MATOOL nicht ab, sorgt aber dafür, dass auch ein
   1. oder 15. am Wochenende oder Feiertag einen Stand hat – dann mit dem
-  letzten bekannten Datenstand, der im Stand vermerkt ist.
+  letzten bekannten Datenstand, der im Stand vermerkt ist. An allen anderen
+  Tagen tut er nichts.
 
-Je Tag gilt der **letzte vollständige** Stand; ein unvollständiger ersetzt
-nie einen vollständigen. Namen und Beträge liegen verschlüsselt, nur die
-Summen stehen für den Verlauf im Klartext. Nach der Aufbewahrungsfrist
-werden Tagesstände gelöscht, der 1. und 15. bleiben immer.
+Je Stichtag gilt der **letzte vollständige** Stand; ein unvollständiger
+ersetzt nie einen vollständigen. Namen und Beträge liegen verschlüsselt, nur
+die Summen (gesamt und je Einzugstag 1–31) stehen für den Verlauf im
+Klartext. Für Einzüge vom 2. bis 14. nimmt die Klassenauswertung den Stand
+vom 1., für den 16. bis 31. den Stand vom 15.
 
 Ältere Tage gibt es erst ab Inbetriebnahme; rückwirkend lässt sich nichts
 rekonstruieren.

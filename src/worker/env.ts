@@ -80,10 +80,11 @@ export interface Env {
    */
   BEITRAEGE_SCHULEN?: string;
   /**
-   * Tage, die ein Tagesstand der Beitragsuebersicht aufbewahrt wird.
-   * Staende vom 1. und 15. eines Monats bleiben immer erhalten. Standard: 400.
+   * Stammdatenfeld mit einem abweichenden Einzugstag. Standard:
+   * "abweichenderEinzug"; ohne Eintrag gilt der Tag des Vertragsbeginns.
+   * Nur Felder aus EINZUG_FELDER in src/core/beitraege.ts sind erlaubt.
    */
-  BEITRAEGE_TAGESSTAND_AUFBEWAHRUNG_TAGE?: string;
+  BEITRAEGE_EINZUG_FELD?: string;
 
   /**
    * Bearer-Token (mindestens 32 Zeichen) der Klassenauswertung

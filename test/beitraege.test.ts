@@ -8,9 +8,11 @@ import {
   DEFAULT_BEITRAGS_REGELN,
   erkenneStilllegung,
   erstelleBeitragsUebersicht,
+  einzugAus,
   parseEuroCent,
   schulName,
   spartenAus,
+  tagImMonat,
   xmlText,
   zaehleFeldwerte,
   zahlungsperiodeInMonaten,
@@ -141,6 +143,7 @@ describe("beitragsRegelnAusUmgebung", () => {
       })
     ).toEqual({
       betragsBezug: "zahlungsperiode",
+      einzugFeld: "abweichenderEinzug",
       schulen: { "1": "Nord", "2": "Sued" },
       stilllegungFelder: ["kundenart", "status"],
       stilllegungMuster: ["ruhend", "=S"]
@@ -154,6 +157,10 @@ describe("beitragsRegelnAusUmgebung", () => {
     ).toThrow();
     expect(() => beitragsRegelnAusUmgebung({ BEITRAEGE_SCHULEN: "Rosenheim" })).toThrow();
     expect(() => beitragsRegelnAusUmgebung({ BEITRAEGE_SCHULEN: "1=A,1=B" })).toThrow();
+    // Das Faelligkeitsfeld ist auf eine feste Liste begrenzt, damit seine
+    // Rohwerte nie Bank- oder Geburtsdaten offenlegen.
+    expect(() => beitragsRegelnAusUmgebung({ BEITRAEGE_EINZUG_FELD: "iban" })).toThrow();
+    expect(beitragsRegelnAusUmgebung({ BEITRAEGE_EINZUG_FELD: "zahlart" }).einzugFeld).toBe("zahlart");
   });
 });
 
@@ -164,6 +171,52 @@ describe("schulName", () => {
     expect(schulName("Teststandort")).toBe("Teststandort");
     expect(schulName("")).toBe("");
     expect(schulName("7", { "7": "Synthetisch" })).toBe("Synthetisch");
+  });
+});
+
+describe("einzugAus", () => {
+  it.each([
+    [{ abweichenderEinzug: "7", vertragsbeginn: "2020-03-22" }, 7, "abweichend"],
+    [{ abweichenderEinzug: 22, vertragsbeginn: "2026-01-01" }, 22, "abweichend"],
+    [{ abweichenderEinzug: "zum 15.", vertragsbeginn: "" }, 15, "abweichend"],
+    [{ abweichenderEinzug: "2026-10-03" }, 3, "abweichend"],
+    [{ abweichenderEinzug: false, vertragsbeginn: "2019-05-23" }, 23, "vertragsbeginn"],
+    [{ abweichenderEinzug: "", vertragsbeginn: "15.04.2025" }, 15, "vertragsbeginn"],
+    [{ abweichenderEinzug: "0", vertragsbeginn: "2026-02-01 00:00:00" }, 1, "vertragsbeginn"],
+    [{ abweichenderEinzug: null, vertragsbeginn: "0000-00-00" }, null, ""],
+    [{ vertragsbeginn: "" }, null, ""],
+    // Haekchen ohne Tag: bewusst unklar statt Vertragsbeginn.
+    [{ abweichenderEinzug: true, vertragsbeginn: "2026-01-01" }, null, "abweichend"],
+    [{ abweichenderEinzug: "32", vertragsbeginn: "2026-01-01" }, null, "abweichend"]
+  ])("liest %j", (stammdaten, tag, quelle) => {
+    expect(einzugAus(stammdaten)).toEqual({ einzugstag: tag, einzugsquelle: quelle });
+  });
+
+  it("nutzt ein anderes Feld fuer den abweichenden Einzug, wenn eingestellt", () => {
+    expect(einzugAus({ zahlart: "Lastschrift zum 15.", vertragsbeginn: "2020-01-09" }, "zahlart")).toEqual({
+      einzugstag: null,
+      einzugsquelle: "abweichend"
+    });
+    expect(einzugAus({ zahlart: "", vertragsbeginn: "2020-01-09" }, "zahlart")).toEqual({
+      einzugstag: 9,
+      einzugsquelle: "vertragsbeginn"
+    });
+  });
+});
+
+describe("tagImMonat", () => {
+  it.each([
+    [7, 7],
+    ["07", 7],
+    ["am 1.", 1],
+    ["31.01.", 31],
+    ["2026-10-31T00:00:00", 31],
+    [0, null],
+    ["0000-00-00", null],
+    ["Lastschrift", null],
+    [null, null]
+  ])("%j -> %j", (wert, tag) => {
+    expect(tagImMonat(wert)).toBe(tag);
   });
 });
 
@@ -303,6 +356,35 @@ describe("erstelleBeitragsUebersicht", () => {
       exMitglieder: 12
     });
     expect(erstelleBeitragsUebersicht([], optionen).zusammenfassung.exMitglieder).toBeNull();
+  });
+
+  it("summiert je Einzugstag und kennt unklare Einzugstage", () => {
+    const uebersicht = erstelleBeitragsUebersicht(
+      [
+        mitglied("80", { beitrag: "50", kundenart: "Mitglied", vertragsbeginn: "2025-03-01" }),
+        mitglied("81", { beitrag: "40", kundenart: "Mitglied", vertragsbeginn: "2025-03-15" }),
+        mitglied("82", { beitrag: "35", kundenart: "Mitglied", vertragsbeginn: "2018-06-07" }),
+        mitglied("83", { beitrag: "25", kundenart: "Mitglied", vertragsbeginn: "2025-03-01", abweichenderEinzug: "7" }),
+        mitglied("84", { beitrag: "30", kundenart: "Mitglied", abweichenderEinzug: "ja" }),
+        mitglied("85", { beitrag: "", kundenart: "Trainer", vertragsbeginn: "2025-01-15" }),
+        mitglied("86", null)
+      ],
+      optionen
+    );
+    expect(uebersicht.zusammenfassung).toMatchObject({
+      einzugNachTag: [
+        { tag: 1, cent: 5000, zahler: 1 },
+        { tag: 7, cent: 6000, zahler: 2 },
+        { tag: 15, cent: 4000, zahler: 1 }
+      ],
+      einzugUnklar: { cent: 3000, zahler: 1 },
+      monatssummeCent: 18000
+    });
+    expect(uebersicht.nichtEingerechnet[0]).toMatchObject({ matoolId: "86", einzugstag: null, einzugsquelle: "" });
+    expect(uebersicht.positionen.find((position) => position.matoolId === "83")).toMatchObject({
+      einzugstag: 7,
+      einzugsquelle: "abweichend"
+    });
   });
 
   it("gilt ohne gelesene Mitgliederliste nie als vollstaendig", () => {

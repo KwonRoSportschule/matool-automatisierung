@@ -1,6 +1,7 @@
 import { AppError, toAppError } from "../core/app-error";
 import type {
   BeitragsUebersicht,
+  EinzugsTagSumme,
   FeldwertVerteilung
 } from "../core/beitraege";
 import {
@@ -11,13 +12,18 @@ import type { Env } from "./env";
 import { storedPayloadCipher } from "./payload-encryption";
 
 /**
- * Tagesstaende der Beitragsuebersicht.
+ * Abrechnungsstichtage der Beitragsuebersicht.
  *
- * Der Hub kennt nur den aktuellen Mitgliederbestand. Damit die
- * Klassenauswertung einen frueheren Stichtag (etwa den 1. oder 15. eines
- * Monats) zeigen kann, sichert jeder Cron-Lauf den Stand des laufenden Tages.
- * Pro Tag bleibt der letzte Stand stehen, ein vollstaendiger wird aber nie
- * durch einen unvollstaendigen ersetzt.
+ * Eingezogen wird zum 1. und zum 15. eines Monats. Der Hub kennt nur den
+ * aktuellen Mitgliederbestand; damit die Klassenauswertung spaeter sehen
+ * kann, was an einem vergangenen 1. oder 15. faellig war, sichert jeder
+ * Cron-Lauf an genau diesen beiden Tagen den Stand. Andere Tage werden nicht
+ * gespeichert (Datensparsamkeit). Pro Tag bleibt der letzte Stand stehen, ein
+ * vollstaendiger wird aber nie durch einen unvollstaendigen ersetzt.
+ *
+ * Einzugstage ausser dem 1. und 15. (aeltere Vertraege, abweichender
+ * Einzug) werden mit abgebildet: Die Klassenauswertung nimmt fuer den 2. bis
+ * 14. den Stand vom 1., fuer den 16. bis 31. den Stand vom 15.
  *
  * Personenbezogene Inhalte liegen nur verschluesselt in payload_json; die
  * Kennzahlenspalten nennen niemanden.
@@ -25,10 +31,13 @@ import { storedPayloadCipher } from "./payload-encryption";
 
 const ARCHIV_VERSION = 1;
 const ARCHIV_BEREICH = "beitrags_stichtag";
-const DEFAULT_AUFBEWAHRUNG_TAGE = 400;
-const TAG_MS = 24 * 60 * 60 * 1_000;
-/** Obergrenze fuer die Stichtagsliste (rund zwei Jahre Tagesstaende). */
-const MAX_STICHTAGE_LISTE = 800;
+/** Obergrenze fuer die Stichtagsliste: zehn Jahre mit je 24 Stichtagen. */
+const MAX_STICHTAGE_LISTE = 240;
+
+/** Ist das Datum (JJJJ-MM-TT) ein Abrechnungsstichtag (1. oder 15.)? */
+export function istAbrechnungsstichtag(stichtag: string): boolean {
+  return /^\d{4}-\d{2}-(?:01|15)$/u.test(stichtag);
+}
 
 export interface BeitragsStichtagKennzahlen {
   stichtag: string;
@@ -40,6 +49,8 @@ export interface BeitragsStichtagKennzahlen {
   ohneBeitrag: number;
   stillgelegt: number;
   exMitglieder: number | null;
+  einzugNachTag: EinzugsTagSumme[];
+  einzugUnklar: { cent: number; zahler: number };
 }
 
 export interface GesicherterBeitragsStand {
@@ -50,7 +61,10 @@ export interface GesicherterBeitragsStand {
 export type BeitragsSicherungErgebnis =
   | { stichtag: string; status: "gespeichert"; vollstaendig: boolean }
   | {
-      grund: "keine_mitgliederliste" | "vollstaendiger_stand_vorhanden";
+      grund:
+        | "kein_abrechnungstag"
+        | "keine_mitgliederliste"
+        | "vollstaendiger_stand_vorhanden";
       stichtag: string;
       status: "uebersprungen";
     };
@@ -75,6 +89,7 @@ export async function ensureBeitragsArchivSchema(db: D1Database): Promise<void> 
         ohne_beitrag INTEGER NOT NULL,
         stillgelegt INTEGER NOT NULL,
         ex_mitglieder INTEGER,
+        einzug_json TEXT NOT NULL DEFAULT '{}',
         payload_json TEXT NOT NULL
       )`
     )
@@ -91,17 +106,25 @@ interface KennzahlenRow {
   stichtag: string;
   stillgelegt: number;
   vollstaendig: number;
+  einzug_json: string;
 }
 
 /**
- * Sichert den aktuellen Stand fuer den heutigen Tag (Europe/Berlin) und
- * raeumt abgelaufene Tagesstaende auf.
+ * Sichert den aktuellen Stand, wenn heute (Europe/Berlin) der 1. oder 15.
+ * ist. An allen anderen Tagen wird nichts berechnet und nichts gespeichert.
  */
 export async function sichereBeitragsStichtag(
   env: Env,
   jetzt: Date = new Date()
 ): Promise<BeitragsSicherungErgebnis> {
   const stichtag = berlinerDatum(jetzt);
+  await ensureBeitragsArchivSchema(env.DB);
+  await entferneTageAusserhalbDerStichtage(env);
+  await versiegleAelteStaende(env);
+  if (!istAbrechnungsstichtag(stichtag)) {
+    return { grund: "kein_abrechnungstag", stichtag, status: "uebersprungen" };
+  }
+
   const { feldwerte, quellen, uebersicht } =
     await erstelleAktuelleBeitragsUebersicht(env, stichtag, jetzt);
 
@@ -110,7 +133,6 @@ export async function sichereBeitragsStichtag(
     return { grund: "keine_mitgliederliste", stichtag, status: "uebersprungen" };
   }
 
-  await ensureBeitragsArchivSchema(env.DB);
   const cipher = await storedPayloadCipher(env);
   const payload = await cipher.seal(
     { area: ARCHIV_BEREICH, sourceId: stichtag },
@@ -124,8 +146,8 @@ export async function sichereBeitragsStichtag(
     `INSERT INTO beitrags_stichtage (
        stichtag, erstellt_am, vollstaendig, monatssumme_cent,
        mitglieder_gesamt, mit_beitrag, ohne_beitrag, stillgelegt,
-       ex_mitglieder, payload_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ex_mitglieder, einzug_json, payload_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (stichtag) DO UPDATE SET
        erstellt_am = excluded.erstellt_am,
        vollstaendig = excluded.vollstaendig,
@@ -135,6 +157,7 @@ export async function sichereBeitragsStichtag(
        ohne_beitrag = excluded.ohne_beitrag,
        stillgelegt = excluded.stillgelegt,
        ex_mitglieder = excluded.ex_mitglieder,
+       einzug_json = excluded.einzug_json,
        payload_json = excluded.payload_json
      WHERE excluded.erstellt_am >= beitrags_stichtage.erstellt_am
        AND (excluded.vollstaendig = 1 OR beitrags_stichtage.vollstaendig = 0)`
@@ -149,12 +172,11 @@ export async function sichereBeitragsStichtag(
       z.ohneBeitrag,
       z.stillgelegt,
       z.exMitglieder,
+      // Nur Summen je Tag, keine Personen: bleibt fuer den Verlauf lesbar.
+      JSON.stringify({ tage: z.einzugNachTag, unklar: z.einzugUnklar }),
       payload
     )
     .run();
-
-  await entferneAbgelaufeneTagesstaende(env, jetzt);
-  await versiegleAelteStaende(env);
 
   if ((result.meta.changes ?? 0) === 0) {
     return { grund: "vollstaendiger_stand_vorhanden", stichtag, status: "uebersprungen" };
@@ -181,20 +203,14 @@ export async function sichereBeitragsStichtagSafely(
 }
 
 /**
- * Tagesstaende verfallen nach der Aufbewahrungsfrist. Der 1. und der 15.
- * eines Monats sind Abrechnungsstichtage und bleiben immer erhalten.
+ * Nur der 1. und der 15. werden aufbewahrt. Staende anderer Tage (etwa aus
+ * einer frueheren Version, die taeglich gesichert hat) werden entfernt.
  */
-async function entferneAbgelaufeneTagesstaende(env: Env, jetzt: Date): Promise<void> {
-  const grenze = berlinerDatum(
-    new Date(jetzt.getTime() - aufbewahrungTage(env) * TAG_MS)
-  );
+async function entferneTageAusserhalbDerStichtage(env: Env): Promise<void> {
   await env.DB.prepare(
     `DELETE FROM beitrags_stichtage
-     WHERE stichtag < ?
-       AND substr(stichtag, 9, 2) NOT IN ('01', '15')`
-  )
-    .bind(grenze)
-    .run();
+     WHERE substr(stichtag, 9, 2) NOT IN ('01', '15')`
+  ).run();
 }
 
 /**
@@ -234,16 +250,6 @@ async function versiegleAelteStaende(env: Env): Promise<void> {
       .bind(neu, row.stichtag, row.payload_json)
       .run();
   }
-}
-
-function aufbewahrungTage(env: Env): number {
-  const text = env.BEITRAEGE_TAGESSTAND_AUFBEWAHRUNG_TAGE?.trim() ?? "";
-  if (text === "") {
-    return DEFAULT_AUFBEWAHRUNG_TAGE;
-  }
-  const tage = Number(text);
-  // Ein Tippfehler darf nicht versehentlich die ganze Historie loeschen.
-  return Number.isSafeInteger(tage) && tage >= 31 ? tage : DEFAULT_AUFBEWAHRUNG_TAGE;
 }
 
 /** Liest einen gesicherten Tagesstand; null, wenn es fuer den Tag keinen gibt. */
@@ -303,7 +309,7 @@ export async function listeBeitragsStichtage(
       await env.DB.prepare(
         `SELECT stichtag, erstellt_am, vollstaendig, monatssumme_cent,
                 mitglieder_gesamt, mit_beitrag, ohne_beitrag, stillgelegt,
-                ex_mitglieder
+                ex_mitglieder, einzug_json
          FROM beitrags_stichtage
          ORDER BY stichtag DESC
          LIMIT ?`
@@ -323,8 +329,27 @@ export async function listeBeitragsStichtage(
     mitBeitrag: row.mit_beitrag,
     ohneBeitrag: row.ohne_beitrag,
     stillgelegt: row.stillgelegt,
-    exMitglieder: row.ex_mitglieder
+    exMitglieder: row.ex_mitglieder,
+    ...einzugAusSpalte(row.einzug_json)
   }));
+}
+
+function einzugAusSpalte(text: string): {
+  einzugNachTag: EinzugsTagSumme[];
+  einzugUnklar: { cent: number; zahler: number };
+} {
+  try {
+    const wert = JSON.parse(text) as {
+      tage?: EinzugsTagSumme[];
+      unklar?: { cent: number; zahler: number };
+    };
+    return {
+      einzugNachTag: Array.isArray(wert.tage) ? wert.tage : [],
+      einzugUnklar: wert.unklar ?? { cent: 0, zahler: 0 }
+    };
+  } catch {
+    return { einzugNachTag: [], einzugUnklar: { cent: 0, zahler: 0 } };
+  }
 }
 
 function archivNichtErreichbar(): AppError {
