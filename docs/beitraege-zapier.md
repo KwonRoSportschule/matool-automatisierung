@@ -1,6 +1,6 @@
-# Beitragsübersicht: Hub-Funktion und Zapier-Ablauf
+# Beitragsübersicht: Hub-Funktion, Klassenauswertung und Zapier-Ablauf
 
-Stand: 25. September 2026
+Stand: 28. September 2026
 
 ## Ziel
 
@@ -8,9 +8,26 @@ Am 1. und am 15. jedes Monats erstellt Zapier eine XML-Datei mit allen nicht
 stillgelegten Mitgliedern, ihrem Monatsbeitrag und der Monatssumme aller
 Beiträge.
 
-Der Hub rechnet, Zapier verteilt. Die Berechnung liegt vollständig im Hub,
-damit Dashboard und Zapier garantiert dieselbe Zahl zeigen und die Regeln an
-einer Stelle geändert werden.
+Angezeigt und ausgewertet wird die Beitragsübersicht **nicht mehr im Hub**,
+sondern in der Klassenauswertung (Check-in-/Telemetrieseite,
+Repository `weekly-checkin-check-claude-matool-automatisierung`) unter
+`/beitraege`: je Mitglied mit Vertrag und Beitrag, Monatssumme, Mitglieder
+gesamt, stillgelegte und Ex-Mitglieder, frei wählbarer Stichtag (1., 15. oder
+jeder andere gesicherte Tag) und Filter nach Schule, Sparte und Vertrag.
+
+Der Hub rechnet, Klassenauswertung und Zapier zeigen bzw. verteilen. Die
+Berechnung liegt vollständig im Hub, damit beide garantiert dieselbe Zahl
+zeigen und die Regeln an einer Stelle geändert werden.
+
+```text
+                        Hub (rechnet + sichert täglich)
+                          |                      |
+  GET /api/checkin/v1/beitraege          GET /api/zapier/v1/beitraege
+   (CHECKIN_SERVICE_TOKEN)                  (ZAPIER_SERVICE_TOKEN)
+                          |                      |
+     Klassenauswertung /beitraege          Zapier: XML am 1./15.
+     (eigenes Passwort, speichert nichts)
+```
 
 ```text
 Schedule by Zapier (1. und 15.)
@@ -29,9 +46,18 @@ Datenquelle ist der bereits laufende stündliche MATOOL-Abruf:
 - **Mitgliederliste** (`schueler`): wer aktuell Mitglied ist. Sie wird bei
   jedem vollständigen Abruf exakt ersetzt; Ausgetretene fallen damit heraus.
 - **Mitglieder-Stammdaten** (`schueler_details`): `beitrag`,
-  `zahlungsperiode`, `kundenart`, `vertrag`, `jahresgebuehr`, `zahlart`,
+  `zahlungsperiode`, `kundenart`, `vertrag`, `vertragsbeginn`,
+  `vertragsende`, `jahresgebuehr`, `zahlart`, `schule`, `spartenliste`,
   Name und Mitgliedsnummer. Bank-, Geburts- und Kontaktdaten werden für die
   Beitragsübersicht nicht einmal gelesen.
+- **Ehemalige Mitglieder** (`schueler_ex`): nur die Anzahl. Solange die
+  Liste nie gelesen wurde, steht dort „unbekannt“ statt 0.
+
+Die Schule wird über ihre MATOOL-Kennung benannt (273 Rosenheim,
+1734 Raubling, 1474 Stephanskirchen; änderbar mit `BEITRAEGE_SCHULEN`).
+Sparten kommen aus `spartenliste`; verstanden werden Text („Kids,
+Kickboxen“), JSON-Listen und JSON-Objekte. Was keinem Muster folgt, wird
+ausgelassen statt geraten – die Feldwerte-Prüfung zeigt, was gelesen wurde.
 
 Je Mitglied gilt:
 
@@ -61,15 +87,19 @@ oder im Cloudflare-Dashboard als Variable, kein Secret nötig):
 | `BEITRAEGE_BETRAGSBEZUG` | `monat` | `monat`: MATOOL-`beitrag` ist schon der Monatsbetrag. `zahlungsperiode`: `beitrag` gilt je Zahlungsperiode und wird umgerechnet (vierteljährlich ÷ 3, halbjährlich ÷ 6, jährlich ÷ 12). |
 | `BEITRAEGE_STILLLEGUNG_FELDER` | `kundenart,vertrag` | Felder, in denen eine Stilllegung steht. |
 | `BEITRAEGE_STILLLEGUNG_MUSTER` | `stillgelegt,stillleg,stilleg,ruhend,ruhezeit,pausiert` | Teiltexte ohne Groß-/Kleinschreibung. `=Wert` verlangt exakte Gleichheit, z. B. `=3` für einen Kundenart-Code. |
+| `BEITRAEGE_SCHULEN` | `273=Rosenheim,1734=Raubling,1474=Stephanskirchen` | Zuordnung MATOOL-Schulkennung → Name. Unbekannte Kennungen erscheinen unverändert. |
+| `BEITRAEGE_TAGESSTAND_AUFBEWAHRUNG_TAGE` | `400` | So lange bleiben Tagesstände erhalten. Der 1. und 15. eines Monats bleiben immer. Werte unter 31 werden ignoriert. |
 
 Eine ungültige Einstellung führt zu einer Fehlermeldung statt zu einer
 falschen Summe.
 
 ## Vor dem ersten echten Versand prüfen
 
-Im Dashboard unter **Beiträge → Regeln und Feldwerte prüfen** steht, welche
-Werte `kundenart`, `vertrag`, `zahlungsperiode` und `zahlart` im Bestand
-tatsächlich haben, jeweils mit Anzahl.
+In der Klassenauswertung unter **`/beitraege` → Regeln und Feldwerte
+prüfen** steht, welche Werte `kundenart`, `vertrag`, `zahlungsperiode`,
+`zahlart`, `schule` und die gelesenen Sparten im Bestand tatsächlich haben,
+jeweils mit Anzahl. Steht bei `schule` eine Zahl statt eines Namens,
+`BEITRAEGE_SCHULEN` ergänzen.
 
 1. **Stilllegung:** Taucht dort ein Wert auf, der eine Stilllegung bedeutet
    (z. B. Kundenart „Ruhend“ oder ein Code)? Falls die Standardmuster ihn
@@ -86,13 +116,54 @@ tatsächlich haben, jeweils mit Anzahl.
 
 | Aufruf | Zugang | Inhalt |
 |---|---|---|
-| `GET /api/admin/v1/beitraege?stichtag=JJJJ-MM-TT` | Dashboard-Anmeldung | Übersicht als JSON plus Feldwerte; Namen maskiert, solange `PUBLIC_DASHBOARD_PLAINTEXT` nicht `true` ist |
-| `GET /api/admin/v1/beitraege.xml?stichtag=JJJJ-MM-TT` | Dashboard-Anmeldung | XML-Datei als Download |
+| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; früher: gesicherter Tagesstand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag, Beträge in Cent; Summen; Feldwerte |
+| `GET /api/checkin/v1/beitraege/stichtage` | `CHECKIN_SERVICE_TOKEN` | Alle gesicherten Tage mit Kennzahlen (ohne Personen), neueste zuerst |
 | `GET /api/zapier/v1/beitraege?stichtag=JJJJ-MM-TT` | Zapier-Service-Token | Summen, Einzelposten und XML-Text für die Zapier-App |
 
-Ohne `stichtag` gilt das heutige Datum in Europe/Berlin. Der Stichtag ist
-Beschriftung und Dateiname (`beitragsuebersicht_2026-10-01.xml`); gerechnet
-wird immer mit dem aktuellen gespeicherten Bestand.
+Die früheren Dashboard-Routen `/api/admin/v1/beitraege(.xml)` und der
+Bereich „Beiträge“ im Hub-Dashboard sind entfallen.
+
+Bei **Zapier** gilt ohne `stichtag` das heutige Datum in Europe/Berlin; der
+Stichtag ist dort nur Beschriftung und Dateiname
+(`beitragsuebersicht_2026-10-01.xml`), gerechnet wird mit dem aktuellen
+Bestand. Die **Klassenauswertung** bekommt für einen vergangenen Tag
+dagegen den damals gesicherten Stand; für einen Tag ohne Sicherung antwortet
+der Hub mit 404 (`beitraege_stichtag_nicht_gesichert`), für einen Tag in der
+Zukunft mit 400.
+
+## Stichtage: tägliche Sicherung
+
+MATOOL und der Hub kennen nur den aktuellen Bestand. Damit man später den
+1., den 15. oder jeden anderen Tag ansehen und vergleichen kann, sichert der
+Hub den Stand jedes Tages (Tabelle `beitrags_stichtage`, Migration 0011):
+
+- nach jedem stündlichen Abruf (montags bis freitags 9 bis 19 Uhr) und
+- im **Tagesabschluss** um 21:30 UTC (22:30/23:30 Uhr in Berlin, Cron
+  `30 21 * * *`). Der ruft MATOOL nicht ab, sorgt aber dafür, dass auch ein
+  1. oder 15. am Wochenende oder Feiertag einen Stand hat – dann mit dem
+  letzten bekannten Datenstand, der im Stand vermerkt ist.
+
+Je Tag gilt der **letzte vollständige** Stand; ein unvollständiger ersetzt
+nie einen vollständigen. Namen und Beträge liegen verschlüsselt, nur die
+Summen stehen für den Verlauf im Klartext. Nach der Aufbewahrungsfrist
+werden Tagesstände gelöscht, der 1. und 15. bleiben immer.
+
+Ältere Tage gibt es erst ab Inbetriebnahme; rückwirkend lässt sich nichts
+rekonstruieren.
+
+## Anbindung der Klassenauswertung (einmalig)
+
+1. Zufälligen Token erzeugen (mindestens 32 Zeichen, z. B.
+   `openssl rand -hex 32`) und im Passwortmanager ablegen.
+2. **Hub:** `pnpm exec wrangler secret put CHECKIN_SERVICE_TOKEN --env staging`
+   (oder Cloudflare-Dashboard → `matool-middleware-staging` → Settings →
+   Variables and Secrets, Typ „Secret“).
+3. **Klassenauswertung:** denselben Wert als `HUB_BEITRAEGE_TOKEN` setzen,
+   dazu `BEITRAEGE_BENUTZER` und `BEITRAEGE_PASSWORT` (siehe README dort).
+4. Migration 0011 einspielen: `pnpm run db:migrate:staging`, dann deployen.
+5. Steht der Hub später hinter Cloudflare Access, in der Klassenauswertung
+   zusätzlich `HUB_ACCESS_CLIENT_ID` und `HUB_ACCESS_CLIENT_SECRET` eines
+   Access-Service-Tokens setzen.
 
 ## Aufbau der XML-Datei
 
@@ -209,5 +280,6 @@ Ein Zap statt zwei, damit Änderungen nur einmal gepflegt werden:
    `Monatssumme formatiert` im Text, oder Google Drive „Upload File“.
 
 Bricht Schritt 3 wegen unvollständiger Daten ab, meldet Zapier den Fehler per
-E-Mail. Dann im Hub unter „Beiträge“ nachsehen und den Zap nach dem nächsten
-Abruf mit „Replay“ erneut ausführen.
+E-Mail. Dann in der Klassenauswertung unter `/beitraege` (Status „Nicht
+berechenbar“) nachsehen und den Zap nach dem nächsten Abruf mit „Replay“
+erneut ausführen.

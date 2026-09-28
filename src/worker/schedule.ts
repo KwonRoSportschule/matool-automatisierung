@@ -6,6 +6,7 @@ import {
   type MatoolCredentials,
   type MatoolSafeAreaRecord
 } from "../matool/client";
+import { sichereBeitragsStichtagSafely } from "./beitrags-archiv";
 import { runDataProtectionMaintenanceSafely } from "./data-protection";
 import type { Env } from "./env";
 import {
@@ -243,6 +244,14 @@ export async function selectSchuelerDetailSourceIds(
     .filter((sourceId) => /^\d{1,32}$/u.test(sourceId));
 }
 
+/**
+ * Taeglicher Tagesabschluss (UTC; 22:30 bzw. 23:30 Uhr in Berlin, also noch
+ * am selben Kalendertag). Er ruft MATOOL nicht ab, sondern sichert nur den
+ * Tagesstand der Beitragsuebersicht, damit auch Wochenenden und Feiertage
+ * -- etwa ein 1. oder 15. an einem Samstag -- einen Stichtag haben.
+ */
+export const BEITRAGS_TAGESABSCHLUSS_CRON = "30 21 * * *";
+
 export async function handleScheduledInvocation(
   controller: ScheduledController,
   env: Env
@@ -251,6 +260,24 @@ export async function handleScheduledInvocation(
   // auch ausserhalb des MATOOL-Zeitfensters.
   await runDataProtectionMaintenanceSafely(env);
 
+  if (controller.cron === BEITRAGS_TAGESABSCHLUSS_CRON) {
+    await sichereBeitragsStichtagSafely(env);
+    return;
+  }
+
+  try {
+    await runScheduledSync(controller, env);
+  } finally {
+    // Nach jedem Abruf (oder ausgelassenen Abruf) den Tagesstand der
+    // Beitragsuebersicht nachziehen; scheitert nie am Cron-Lauf.
+    await sichereBeitragsStichtagSafely(env);
+  }
+}
+
+async function runScheduledSync(
+  controller: ScheduledController,
+  env: Env
+): Promise<void> {
   const scheduleWindow = evaluateBerlinScheduleWindow(
     controller.scheduledTime
   );

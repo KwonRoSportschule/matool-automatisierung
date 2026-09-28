@@ -9,6 +9,8 @@ import {
   erkenneStilllegung,
   erstelleBeitragsUebersicht,
   parseEuroCent,
+  schulName,
+  spartenAus,
   xmlText,
   zaehleFeldwerte,
   zahlungsperiodeInMonaten,
@@ -133,11 +135,13 @@ describe("beitragsRegelnAusUmgebung", () => {
     expect(
       beitragsRegelnAusUmgebung({
         BEITRAEGE_BETRAGSBEZUG: "zahlungsperiode",
+        BEITRAEGE_SCHULEN: "1=Nord, 2 = Sued",
         BEITRAEGE_STILLLEGUNG_FELDER: "kundenart, status",
         BEITRAEGE_STILLLEGUNG_MUSTER: "ruhend;=S"
       })
     ).toEqual({
       betragsBezug: "zahlungsperiode",
+      schulen: { "1": "Nord", "2": "Sued" },
       stilllegungFelder: ["kundenart", "status"],
       stilllegungMuster: ["ruhend", "=S"]
     });
@@ -148,6 +152,38 @@ describe("beitragsRegelnAusUmgebung", () => {
     expect(() =>
       beitragsRegelnAusUmgebung({ BEITRAEGE_STILLLEGUNG_FELDER: "kunden-art" })
     ).toThrow();
+    expect(() => beitragsRegelnAusUmgebung({ BEITRAEGE_SCHULEN: "Rosenheim" })).toThrow();
+    expect(() => beitragsRegelnAusUmgebung({ BEITRAEGE_SCHULEN: "1=A,1=B" })).toThrow();
+  });
+});
+
+describe("schulName", () => {
+  it("ordnet bekannte Kennungen zu und laesst Unbekanntes stehen", () => {
+    expect(schulName("273")).toBe("Rosenheim");
+    expect(schulName(1734)).toBe("Raubling");
+    expect(schulName("Teststandort")).toBe("Teststandort");
+    expect(schulName("")).toBe("");
+    expect(schulName("7", { "7": "Synthetisch" })).toBe("Synthetisch");
+  });
+});
+
+describe("spartenAus", () => {
+  it.each([
+    ["Kickboxen, Kids", ["Kickboxen", "Kids"]],
+    ["Wing Tsun", ["Wing Tsun"]],
+    ['["Kids","Kickboxen","Kids"]', ["Kickboxen", "Kids"]],
+    ['[{"id":"3","name":"Kickboxen"},{"bezeichnung":"Selbstverteidigung"}]', ["Kickboxen", "Selbstverteidigung"]],
+    ['{"3":"Kickboxen","4":"Kids"}', ["Kickboxen", "Kids"]],
+    ['{"Kickboxen":1,"Kids":0,"Escrima":"1"}', ["Escrima", "Kickboxen"]],
+    ["", []],
+    [null, []],
+    ["[]", []]
+  ])("liest %j", (eingabe, erwartet) => {
+    expect(spartenAus(eingabe)).toEqual(erwartet);
+  });
+
+  it("laesst unlesbare Eintraege aus statt zu raten", () => {
+    expect(spartenAus('[{"id":"3"},"Kids",[1]]')).toEqual(["Kids"]);
   });
 });
 
@@ -234,6 +270,41 @@ describe("erstelleBeitragsUebersicht", () => {
     });
   });
 
+  it("fuehrt Schule, Sparten und Vertragsdaten je Mitglied", () => {
+    const uebersicht = erstelleBeitragsUebersicht(
+      [
+        mitglied("60", {
+          beitrag: "45",
+          kundenart: "Mitglied",
+          schule: "1474",
+          spartenliste: '["Kids","Kickboxen"]',
+          vertragsbeginn: "2026-01-01",
+          vertragsende: ""
+        }),
+        mitglied("61", { beitrag: "30,00", kundenart: "Stillgelegt", schule: "273" })
+      ],
+      { ...optionen, exMitglieder: 12 }
+    );
+    expect(uebersicht.positionen[0]).toMatchObject({
+      schule: "Stephanskirchen",
+      sparten: ["Kickboxen", "Kids"],
+      vertragsbeginn: "2026-01-01",
+      vertragsende: ""
+    });
+    // Der ruhende Beitrag bleibt sichtbar, zaehlt aber nicht zur Summe.
+    expect(uebersicht.nichtEingerechnet[0]).toMatchObject({
+      grund: "stillgelegt",
+      schule: "Rosenheim",
+      sparten: [],
+      beitragCent: 3000
+    });
+    expect(uebersicht.zusammenfassung).toMatchObject({
+      monatssummeCent: 4500,
+      exMitglieder: 12
+    });
+    expect(erstelleBeitragsUebersicht([], optionen).zusammenfassung.exMitglieder).toBeNull();
+  });
+
   it("gilt ohne gelesene Mitgliederliste nie als vollstaendig", () => {
     expect(erstelleBeitragsUebersicht([], optionen).zusammenfassung).toMatchObject({
       monatssummeCent: 0,
@@ -299,6 +370,22 @@ describe("zaehleFeldwerte", () => {
           { anzahl: 1, wert: "Stillgelegt" }
         ]
       }
+    ]);
+  });
+
+  it("zaehlt jede Sparte eines Mitglieds einzeln", () => {
+    const verteilung = zaehleFeldwerte(
+      [
+        mitglied("70", { spartenliste: "Kids, Kickboxen" }),
+        mitglied("71", { spartenliste: "Kickboxen" }),
+        mitglied("72", { spartenliste: "" })
+      ],
+      ["sparten"]
+    );
+    expect(verteilung[0]?.werte).toEqual([
+      { anzahl: 2, wert: "Kickboxen" },
+      { anzahl: 1, wert: "(leer)" },
+      { anzahl: 1, wert: "Kids" }
     ]);
   });
 });

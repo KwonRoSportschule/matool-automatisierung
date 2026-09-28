@@ -30,6 +30,8 @@ export default defineConfig({
             DEV_AUTH_BYPASS: "allow-loopback-only",
             ZAPIER_SERVICE_TOKEN:
               "synthetic-service-token-at-least-32-characters",
+            CHECKIN_SERVICE_TOKEN:
+              "synthetic-checkin-token-at-least-32-characters",
             ZAPIER_WEBHOOK_SIGNING_SECRET:
               "synthetic-webhook-signing-secret-for-tests",
             TEST_MIGRATIONS: migrations

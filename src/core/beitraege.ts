@@ -45,12 +45,28 @@ export interface BeitragsRegeln {
   betragsBezug: BetragsBezug;
   stilllegungFelder: readonly string[];
   stilllegungMuster: readonly string[];
+  /**
+   * Zuordnung MATOOL-Schulkennung -> Schulname. Werte, die hier nicht
+   * stehen, erscheinen unveraendert.
+   */
+  schulen: Readonly<Record<string, string>>;
 }
+
+/**
+ * Standortkennungen aus den MATOOL-Schulfiltern (Telemetrie und
+ * Schuelerliste), belegt im Repository der Klassenauswertung.
+ */
+export const DEFAULT_SCHULEN: Readonly<Record<string, string>> = {
+  "273": "Rosenheim",
+  "1474": "Stephanskirchen",
+  "1734": "Raubling"
+};
 
 export const DEFAULT_BEITRAGS_REGELN: BeitragsRegeln = {
   betragsBezug: "monat",
   stilllegungFelder: DEFAULT_STILLLEGUNG_FELDER,
-  stilllegungMuster: DEFAULT_STILLLEGUNG_MUSTER
+  stilllegungMuster: DEFAULT_STILLLEGUNG_MUSTER,
+  schulen: DEFAULT_SCHULEN
 };
 
 /**
@@ -64,6 +80,8 @@ export const BEITRAGS_STAMMDATEN_FELDER = [
   "kundenart",
   "mitgliednr",
   "name",
+  "schule",
+  "spartenliste",
   "vertrag",
   "vertragsbeginn",
   "vertragsende",
@@ -72,12 +90,17 @@ export const BEITRAGS_STAMMDATEN_FELDER = [
   "zahlungsperiode"
 ] as const;
 
-/** Felder, deren Wertverteilung das Dashboard zur Regelpruefung zeigt. */
+/**
+ * Felder, deren Wertverteilung zur Regelpruefung gezeigt wird. "sparten"
+ * ist kein MATOOL-Feld, sondern die aus `spartenliste` gelesenen Namen.
+ */
 export const BEITRAGS_FELDWERT_FELDER = [
   "kundenart",
   "vertrag",
   "zahlungsperiode",
-  "zahlart"
+  "zahlart",
+  "schule",
+  "sparten"
 ] as const;
 
 export interface BeitragsQuelle {
@@ -104,6 +127,12 @@ export interface BeitragsPosition {
   nachname: string;
   vertrag: string;
   kundenart: string;
+  /** Schulname laut Zuordnung, sonst der MATOOL-Rohwert. */
+  schule: string;
+  /** Sparten aus `spartenliste`, alphabetisch; leer, wenn keine hinterlegt. */
+  sparten: string[];
+  vertragsbeginn: string;
+  vertragsende: string;
   zahlungsperiode: string;
   zahlart: string;
   /** Beitrag wie in MATOOL hinterlegt, in Cent. */
@@ -122,9 +151,18 @@ export interface NichtEingerechnetePosition {
   nachname: string;
   vertrag: string;
   kundenart: string;
+  schule: string;
+  sparten: string[];
+  vertragsbeginn: string;
+  vertragsende: string;
   grund: NichtEingerechnetGrund;
   /** Rohwert, der zum Ausschluss gefuehrt hat (z. B. der Kundenart-Text). */
   detail: string;
+  /**
+   * Hinterlegter Beitrag in Cent, soweit lesbar. Bei Stilllegungen zeigt er,
+   * welcher Betrag gerade ruht; in keiner Summe enthalten.
+   */
+  beitragCent: number | null;
 }
 
 export interface BeitragsZusammenfassung {
@@ -137,6 +175,11 @@ export interface BeitragsZusammenfassung {
   stillgelegt: number;
   stammdatenFehlen: number;
   nichtBerechenbar: number;
+  /**
+   * Ehemalige Mitglieder laut MATOOL-Liste "Kuendigung abgeschlossen";
+   * null, solange diese Liste nicht gelesen wurde.
+   */
+  exMitglieder: number | null;
   /**
    * true, wenn die Mitgliederliste gelesen ist und jedes nicht stillgelegte
    * Mitglied eingerechnet wurde.
@@ -170,6 +213,7 @@ export function erstelleBeitragsUebersicht(
   quellen: readonly BeitragsQuelle[],
   optionen: {
     erstelltAm: string;
+    exMitglieder?: number | null;
     regeln?: BeitragsRegeln;
     stichtag: string;
   }
@@ -180,10 +224,17 @@ export function erstelleBeitragsUebersicht(
   const staende: string[] = [];
 
   for (const quelle of quellen) {
-    const person = personAngaben(quelle);
+    const person = personAngaben(quelle, regeln);
+    const beitragCent =
+      quelle.stammdaten === null ? null : parseEuroCent(quelle.stammdaten.beitrag);
     const stilllegung = erkenneStilllegung(quelle, regeln);
     if (stilllegung !== null) {
-      nichtEingerechnet.push({ ...person, grund: "stillgelegt", detail: stilllegung });
+      nichtEingerechnet.push({
+        ...person,
+        grund: "stillgelegt",
+        detail: stilllegung,
+        beitragCent
+      });
       continue;
     }
 
@@ -191,7 +242,8 @@ export function erstelleBeitragsUebersicht(
       nichtEingerechnet.push({
         ...person,
         grund: "stammdaten_fehlen",
-        detail: "Stammdaten wurden noch nicht aus MATOOL gelesen."
+        detail: "Stammdaten wurden noch nicht aus MATOOL gelesen.",
+        beitragCent: null
       });
       continue;
     }
@@ -200,12 +252,12 @@ export function erstelleBeitragsUebersicht(
     }
 
     const beitragRoh = textWert(quelle.stammdaten.beitrag);
-    const beitragCent = parseEuroCent(quelle.stammdaten.beitrag);
     if (beitragCent === null) {
       nichtEingerechnet.push({
         ...person,
         grund: "beitrag_unlesbar",
-        detail: beitragRoh
+        detail: beitragRoh,
+        beitragCent: null
       });
       continue;
     }
@@ -218,7 +270,8 @@ export function erstelleBeitragsUebersicht(
         nichtEingerechnet.push({
           ...person,
           grund: "zahlungsperiode_unbekannt",
-          detail: zahlungsperiode
+          detail: zahlungsperiode,
+          beitragCent
         });
         continue;
       }
@@ -276,6 +329,7 @@ export function erstelleBeitragsUebersicht(
       stillgelegt,
       stammdatenFehlen,
       nichtBerechenbar,
+      exMitglieder: optionen.exMitglieder ?? null,
       // Ohne gelesene Mitgliederliste waere eine Summe von 0 irrefuehrend.
       vollstaendig:
         quellen.length > 0 && stammdatenFehlen === 0 && nichtBerechenbar === 0,
@@ -310,12 +364,19 @@ function vergleichePersonen(
   );
 }
 
-function personAngaben(quelle: BeitragsQuelle): {
+function personAngaben(
+  quelle: BeitragsQuelle,
+  regeln: BeitragsRegeln
+): {
   kundenart: string;
   matoolId: string;
   mitgliedsnummer: string;
   nachname: string;
+  schule: string;
+  sparten: string[];
   vertrag: string;
+  vertragsbeginn: string;
+  vertragsende: string;
   vorname: string;
 } {
   const stammdaten = quelle.stammdaten ?? {};
@@ -325,8 +386,128 @@ function personAngaben(quelle: BeitragsQuelle): {
     vorname: ersterText(stammdaten.vname, quelle.liste.vorname),
     nachname: ersterText(stammdaten.name, quelle.liste.name),
     vertrag: ersterText(stammdaten.vertrag, quelle.liste.vertrag),
-    kundenart: textWert(stammdaten.kundenart)
+    kundenart: textWert(stammdaten.kundenart),
+    schule: schulName(stammdaten.schule, regeln.schulen),
+    sparten: spartenAus(stammdaten.spartenliste),
+    vertragsbeginn: textWert(stammdaten.vertragsbeginn),
+    vertragsende: textWert(stammdaten.vertragsende)
   };
+}
+
+/**
+ * Schulname zu einer MATOOL-Schulkennung. Unbekannte Werte bleiben
+ * unveraendert stehen, damit nichts still falsch zugeordnet wird.
+ */
+export function schulName(
+  value: unknown,
+  schulen: Readonly<Record<string, string>> = DEFAULT_SCHULEN
+): string {
+  const text = textWert(value);
+  return Object.hasOwn(schulen, text) ? (schulen[text] ?? text) : text;
+}
+
+/** Schluessel, unter denen MATOOL-Objekte ihren Anzeigenamen fuehren. */
+const SPARTEN_NAMENSFELDER = [
+  "name",
+  "bezeichnung",
+  "sparte",
+  "titel",
+  "label",
+  "kurzname",
+  "text"
+] as const;
+
+/**
+ * Liest die Sparten eines Mitglieds aus `spartenliste`. MATOOL liefert das
+ * Feld als Text oder als Liste/Objekt (im Hub als kanonisches JSON
+ * gespeichert). Verstanden werden:
+ * - Text, getrennt durch Komma, Semikolon, senkrechten Strich oder Umbruch;
+ * - JSON-Listen aus Texten oder aus Objekten mit Namensfeld;
+ * - JSON-Objekte mit Namen als Werten ({"3": "Kickboxen"}) oder mit
+ *   Namen als Schluesseln und Ja/Nein-Werten ({"Kickboxen": 1}).
+ * Was keinem Muster folgt, wird ausgelassen statt geraten; die Verteilung
+ * unter "Regeln und Feldwerte" zeigt, was tatsaechlich gelesen wurde.
+ */
+export function spartenAus(value: unknown): string[] {
+  let roh: unknown = value;
+  if (typeof roh === "string") {
+    const text = roh.trim();
+    if (text.startsWith("[") || text.startsWith("{")) {
+      try {
+        roh = JSON.parse(text) as unknown;
+      } catch {
+        roh = text;
+      }
+    } else {
+      roh = text;
+    }
+  }
+
+  const namen: string[] = [];
+  if (typeof roh === "string") {
+    namen.push(...roh.split(/[,;|\n]/u));
+  } else if (typeof roh === "number") {
+    namen.push(String(roh));
+  } else if (Array.isArray(roh)) {
+    for (const eintrag of roh) {
+      namen.push(spartenEintragName(eintrag));
+    }
+  } else if (roh !== null && typeof roh === "object") {
+    const eintraege = Object.entries(roh as Record<string, unknown>);
+    const nurSchalter = eintraege.every(
+      ([, wert]) =>
+        typeof wert === "boolean" ||
+        typeof wert === "number" ||
+        wert === null ||
+        (typeof wert === "string" && /^(?:0|1|ja|nein|true|false)?$/iu.test(wert.trim()))
+    );
+    for (const [schluessel, wert] of eintraege) {
+      if (nurSchalter) {
+        if (istJa(wert)) {
+          namen.push(schluessel);
+        }
+      } else {
+        namen.push(spartenEintragName(wert));
+      }
+    }
+  }
+
+  return [
+    ...new Set(
+      namen
+        .map((name) => name.normalize("NFKC").replace(/\s+/gu, " ").trim())
+        .filter((name) => name.length > 0)
+    )
+  ].sort((links, rechts) => personenSortierung.compare(links, rechts));
+}
+
+function spartenEintragName(eintrag: unknown): string {
+  if (typeof eintrag === "string") {
+    return eintrag;
+  }
+  if (typeof eintrag === "number") {
+    return String(eintrag);
+  }
+  if (eintrag !== null && typeof eintrag === "object" && !Array.isArray(eintrag)) {
+    const objekt = eintrag as Record<string, unknown>;
+    for (const feld of SPARTEN_NAMENSFELDER) {
+      const text = textWert(objekt[feld]);
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  return "";
+}
+
+function istJa(wert: unknown): boolean {
+  if (typeof wert === "boolean") {
+    return wert;
+  }
+  if (typeof wert === "number") {
+    return wert !== 0;
+  }
+  return typeof wert === "string" && /^(?:1|ja|true)$/iu.test(wert.trim());
 }
 
 /**
@@ -378,6 +559,7 @@ export function erkenneStilllegung(
  */
 export function beitragsRegelnAusUmgebung(werte: {
   BEITRAEGE_BETRAGSBEZUG?: string | undefined;
+  BEITRAEGE_SCHULEN?: string | undefined;
   BEITRAEGE_STILLLEGUNG_FELDER?: string | undefined;
   BEITRAEGE_STILLLEGUNG_MUSTER?: string | undefined;
 }): BeitragsRegeln {
@@ -395,10 +577,23 @@ export function beitragsRegelnAusUmgebung(werte: {
     throw new Error("BEITRAEGE_STILLLEGUNG_FELDER enthaelt einen ungueltigen Feldnamen.");
   }
   const muster = liste(werte.BEITRAEGE_STILLLEGUNG_MUSTER);
+  const schulen: Record<string, string> = {};
+  for (const eintrag of liste(werte.BEITRAEGE_SCHULEN)) {
+    const trenner = eintrag.indexOf("=");
+    const kennung = trenner > 0 ? eintrag.slice(0, trenner).trim() : "";
+    const name = trenner > 0 ? eintrag.slice(trenner + 1).trim() : "";
+    if (kennung.length === 0 || name.length === 0 || Object.hasOwn(schulen, kennung)) {
+      throw new Error(
+        "BEITRAEGE_SCHULEN erwartet eindeutige Paare 'Kennung=Name', z. B. '273=Rosenheim'."
+      );
+    }
+    schulen[kennung] = name;
+  }
   return {
     betragsBezug: bezug === "" ? DEFAULT_BEITRAGS_REGELN.betragsBezug : bezug,
     stilllegungFelder: felder.length > 0 ? felder : DEFAULT_BEITRAGS_REGELN.stilllegungFelder,
-    stilllegungMuster: muster.length > 0 ? muster : DEFAULT_BEITRAGS_REGELN.stilllegungMuster
+    stilllegungMuster: muster.length > 0 ? muster : DEFAULT_BEITRAGS_REGELN.stilllegungMuster,
+    schulen: Object.keys(schulen).length > 0 ? schulen : DEFAULT_BEITRAGS_REGELN.schulen
   };
 }
 
@@ -538,9 +733,15 @@ export function zaehleFeldwerte(
   return felder.map((feld) => {
     const zaehler = new Map<string, number>();
     for (const quelle of quellen) {
-      const wert = textWert(quelle.stammdaten?.[feld] ?? quelle.liste[feld]);
-      const schluessel = wert.length > 0 ? wert : "(leer)";
-      zaehler.set(schluessel, (zaehler.get(schluessel) ?? 0) + 1);
+      // Sparten werden einzeln gezaehlt; ein Mitglied kann mehrere haben.
+      const werte =
+        feld === "sparten"
+          ? spartenAus(quelle.stammdaten?.spartenliste)
+          : [textWert(quelle.stammdaten?.[feld] ?? quelle.liste[feld])];
+      for (const wert of werte.length > 0 ? werte : [""]) {
+        const schluessel = wert.length > 0 ? wert : "(leer)";
+        zaehler.set(schluessel, (zaehler.get(schluessel) ?? 0) + 1);
+      }
     }
     return {
       feld,

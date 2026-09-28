@@ -73,6 +73,24 @@ export interface Env {
    * Kleinschreibung. "=wert" verlangt eine exakte Uebereinstimmung.
    */
   BEITRAEGE_STILLLEGUNG_MUSTER?: string;
+  /**
+   * Kommagetrennte Zuordnung MATOOL-Schulkennung=Name, z. B.
+   * "273=Rosenheim,1734=Raubling". Ohne Angabe gelten die bekannten
+   * Standorte.
+   */
+  BEITRAEGE_SCHULEN?: string;
+  /**
+   * Tage, die ein Tagesstand der Beitragsuebersicht aufbewahrt wird.
+   * Staende vom 1. und 15. eines Monats bleiben immer erhalten. Standard: 400.
+   */
+  BEITRAEGE_TAGESSTAND_AUFBEWAHRUNG_TAGE?: string;
+
+  /**
+   * Bearer-Token (mindestens 32 Zeichen) der Klassenauswertung
+   * (Check-in-/Telemetrieseite). Berechtigt ausschliesslich zum Lesen der
+   * Beitragsuebersicht unter /api/checkin/v1/. Als Cloudflare Secret setzen.
+   */
+  CHECKIN_SERVICE_TOKEN?: string;
 
   MATOOL_EMAIL?: string;
   MATOOL_PASSWORD?: string;

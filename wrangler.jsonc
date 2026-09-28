@@ -114,7 +114,9 @@
         "subrequests": 10000
       },
       "triggers": {
-        "crons": ["0 7-18 * * mon-fri"]
+        // Stuendlicher MATOOL-Abruf werktags plus taeglicher Tagesabschluss
+        // (sichert den Stichtag der Beitragsuebersicht, siehe schedule.ts).
+        "crons": ["0 7-18 * * mon-fri", "30 21 * * *"]
       }
     },
     "production": {

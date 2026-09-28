@@ -10,9 +10,10 @@ import {
   zaehleFeldwerte,
   type BeitragsQuelle,
   type BeitragsRegeln,
-  type BeitragsUebersicht
+  type BeitragsUebersicht,
+  type FeldwertVerteilung
 } from "../core/beitraege";
-import { PROTECTED_DASHBOARD_VALUE, parseStoredPayload } from "./dashboard-privacy";
+import { parseStoredPayload } from "./dashboard-privacy";
 import type { Env } from "./env";
 import { storedPayloadCipher } from "./payload-encryption";
 
@@ -80,6 +81,30 @@ export async function ladeBeitragsQuellen(env: Env): Promise<BeitragsQuelle[]> {
   });
 }
 
+/**
+ * Anzahl ehemaliger Mitglieder (MATOOL-Liste "Kuendigung abgeschlossen").
+ * Gezaehlt wird nur; Namen der Ehemaligen verlassen den Hub hierfuer nicht.
+ * null, solange die Liste noch nie gelesen wurde: Eine leere Tabelle
+ * bedeutet "unbekannt", nicht "keine Ehemaligen".
+ */
+export async function ladeExMitgliederAnzahl(env: Env): Promise<number | null> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS anzahl
+       FROM matool_snapshots
+       WHERE area = 'schueler_ex'`
+    ).first<{ anzahl: number }>();
+    const anzahl = Number(row?.anzahl ?? 0);
+    return anzahl > 0 ? anzahl : null;
+  } catch {
+    throw new AppError(
+      "beitraege_store_unavailable",
+      503,
+      "Die Mitgliederdaten sind momentan nicht abrufbar."
+    );
+  }
+}
+
 /** Nur die benannten Felder; alles andere verlaesst diese Funktion nicht. */
 function auswahl(
   payload: Readonly<Record<string, unknown>>,
@@ -124,7 +149,8 @@ export function beitragsStichtag(url: URL, jetzt: Date = new Date()): string {
   return text;
 }
 
-function berlinerDatum(zeitpunkt: Date): string {
+/** Kalenderdatum JJJJ-MM-TT in Europe/Berlin. */
+export function berlinerDatum(zeitpunkt: Date): string {
   const teile = new Intl.DateTimeFormat("en-CA", {
     day: "2-digit",
     month: "2-digit",
@@ -137,73 +163,27 @@ function berlinerDatum(zeitpunkt: Date): string {
 
 export async function erstelleAktuelleBeitragsUebersicht(
   env: Env,
-  stichtag: string
-): Promise<{ quellen: BeitragsQuelle[]; uebersicht: BeitragsUebersicht }> {
+  stichtag: string,
+  jetzt: Date = new Date()
+): Promise<{
+  feldwerte: FeldwertVerteilung[];
+  quellen: BeitragsQuelle[];
+  uebersicht: BeitragsUebersicht;
+}> {
   const regeln = beitragsRegeln(env);
-  const quellen = await ladeBeitragsQuellen(env);
+  const [quellen, exMitglieder] = await Promise.all([
+    ladeBeitragsQuellen(env),
+    ladeExMitgliederAnzahl(env)
+  ]);
   return {
+    feldwerte: zaehleFeldwerte(quellen),
     quellen,
     uebersicht: erstelleBeitragsUebersicht(quellen, {
-      erstelltAm: new Date().toISOString(),
+      erstelltAm: jetzt.toISOString(),
+      exMitglieder,
       regeln,
       stichtag
     })
-  };
-}
-
-/**
- * Ersetzt Namen und Kennungen fuer das Dashboard ohne Klartextfreigabe.
- * Betraege, Vertrag und Kundenart bleiben sichtbar, weil sie zur Pruefung
- * der Summe gebraucht werden und niemanden identifizieren.
- */
-export function maskiereBeitragsUebersicht(
-  uebersicht: BeitragsUebersicht
-): BeitragsUebersicht {
-  const person = {
-    matoolId: PROTECTED_DASHBOARD_VALUE,
-    mitgliedsnummer: PROTECTED_DASHBOARD_VALUE,
-    nachname: PROTECTED_DASHBOARD_VALUE,
-    vorname: PROTECTED_DASHBOARD_VALUE
-  };
-  return {
-    ...uebersicht,
-    positionen: uebersicht.positionen.map((position) => ({ ...position, ...person })),
-    nichtEingerechnet: uebersicht.nichtEingerechnet.map((eintrag) => ({
-      ...eintrag,
-      ...person
-    }))
-  };
-}
-
-export function beitragsXmlResponse(uebersicht: BeitragsUebersicht): Response {
-  return new Response(beitragsUebersichtAlsXml(uebersicht), {
-    headers: {
-      "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="${beitragsDateiname(uebersicht.stichtag)}"`,
-      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cross-Origin-Resource-Policy": "same-origin",
-      "Referrer-Policy": "no-referrer",
-      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "DENY"
-    }
-  });
-}
-
-/** Antwort fuer das Dashboard: Uebersicht plus Wertverteilung der Regelfelder. */
-export async function dashboardBeitragsUebersicht(
-  env: Env,
-  url: URL,
-  plaintext: boolean
-): Promise<Record<string, unknown>> {
-  const { quellen, uebersicht } = await erstelleAktuelleBeitragsUebersicht(
-    env,
-    beitragsStichtag(url)
-  );
-  return {
-    uebersicht: plaintext ? uebersicht : maskiereBeitragsUebersicht(uebersicht),
-    feldwerte: zaehleFeldwerte(quellen)
   };
 }
 
@@ -266,5 +246,79 @@ export async function zapierBeitragsUebersicht(
       grund: eintrag.grund,
       detail: eintrag.detail
     }))
+  };
+}
+
+/**
+ * Antwort fuer die Klassenauswertung (Check-in-/Telemetrieseite). Enthaelt
+ * je Mitglied nur Name, Mitgliedsnummer, Schule, Sparten, Vertrag und
+ * Betraege; Bank-, Geburts- und Kontaktdaten werden dafuer nicht gelesen.
+ * Betraege stehen in Cent, damit die Gegenseite ohne Rundung weiterrechnet.
+ */
+export function checkinBeitragsAntwort(
+  uebersicht: BeitragsUebersicht,
+  feldwerte: readonly FeldwertVerteilung[],
+  quelle: "archiv" | "live"
+): Record<string, unknown> {
+  const z = uebersicht.zusammenfassung;
+  return {
+    schema_version: 1,
+    stichtag: uebersicht.stichtag,
+    quelle,
+    erstellt_am: uebersicht.erstelltAm,
+    waehrung: uebersicht.waehrung,
+    regeln: {
+      betragsbezug: uebersicht.regeln.betragsBezug,
+      stilllegung_felder: uebersicht.regeln.stilllegungFelder,
+      stilllegung_muster: uebersicht.regeln.stilllegungMuster
+    },
+    zusammenfassung: {
+      monatssumme_cent: z.monatssummeCent,
+      jahresgebuehr_summe_cent: z.jahresgebuehrSummeCent,
+      mitglieder_gesamt: z.mitgliederGesamt,
+      eingerechnet: z.eingerechnet,
+      mit_beitrag: z.mitBeitrag,
+      ohne_beitrag: z.ohneBeitrag,
+      stillgelegt: z.stillgelegt,
+      stammdaten_fehlen: z.stammdatenFehlen,
+      nicht_berechenbar: z.nichtBerechenbar,
+      ex_mitglieder: z.exMitglieder ?? null,
+      vollstaendig: z.vollstaendig,
+      datenstand_aeltester: z.datenstandAeltester,
+      datenstand_neuester: z.datenstandNeuester
+    },
+    mitglieder: uebersicht.positionen.map((position) => ({
+      matool_id: position.matoolId,
+      mitgliedsnummer: position.mitgliedsnummer,
+      vorname: position.vorname,
+      nachname: position.nachname,
+      schule: position.schule ?? "",
+      sparten: position.sparten ?? [],
+      vertrag: position.vertrag,
+      kundenart: position.kundenart,
+      zahlungsperiode: position.zahlungsperiode,
+      zahlart: position.zahlart,
+      vertragsbeginn: position.vertragsbeginn ?? "",
+      vertragsende: position.vertragsende ?? "",
+      beitrag_cent: position.beitragCent,
+      monatsbeitrag_cent: position.monatsbeitragCent,
+      jahresgebuehr_cent: position.jahresgebuehrCent
+    })),
+    nicht_eingerechnet: uebersicht.nichtEingerechnet.map((eintrag) => ({
+      matool_id: eintrag.matoolId,
+      mitgliedsnummer: eintrag.mitgliedsnummer,
+      vorname: eintrag.vorname,
+      nachname: eintrag.nachname,
+      schule: eintrag.schule ?? "",
+      sparten: eintrag.sparten ?? [],
+      vertrag: eintrag.vertrag,
+      kundenart: eintrag.kundenart,
+      vertragsbeginn: eintrag.vertragsbeginn ?? "",
+      vertragsende: eintrag.vertragsende ?? "",
+      grund: eintrag.grund,
+      detail: eintrag.detail,
+      beitrag_cent: eintrag.beitragCent ?? null
+    })),
+    feldwerte
   };
 }
