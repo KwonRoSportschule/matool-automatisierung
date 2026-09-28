@@ -132,7 +132,7 @@ jeweils mit Anzahl. Steht bei `schule` eine Zahl statt eines Namens,
 
 | Aufruf | Zugang | Inhalt |
 |---|---|---|
-| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; 1. oder 15. in der Vergangenheit: gesicherter Stand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag, Einzugstag samt Quelle, Jahresgebührdatum, Beträge in Cent; Summen gesamt und je Einzugstag (1–31); Feldwerte |
+| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; 1. oder 15. in der Vergangenheit: gesicherter Stand. Anonym (keine Namen): je Mitglied Nr., Schule, Sparten, Vertrag samt Laufzeit (Beginn, Ende, Abschluss, Verlängerung, Kündigungsfrist, gültig bis), Einzugstag samt Quelle, Jahresgebührdatum, Beträge in Cent; Summen gesamt und je Einzugstag (1–31); Feldwerte |
 | `GET /api/checkin/v1/beitraege/stichtage` | `CHECKIN_SERVICE_TOKEN` | Alle gesicherten Stichtage (1./15.) mit Kennzahlen und Summen je Einzugstag (ohne Personen), neueste zuerst |
 | `GET /api/zapier/v1/beitraege?stichtag=JJJJ-MM-TT` | Zapier-Service-Token | Summen, Einzelposten und XML-Text für die Zapier-App |
 

@@ -64,6 +64,9 @@ async function seedMitglieder(
         spartenliste: '["Kickboxen"]',
         abweichenderEinzug: "15",
         vertragsbeginn: "2025-02-01",
+        vertragsende: "2026-01-31",
+        verlaengerung: "keine",
+        kuendigungsfrist: "3 Monate",
         vname: "Erika",
         zahlungsperiode: "monatlich"
       }
@@ -236,6 +239,7 @@ describe("Beitragsuebersicht im Dashboard", () => {
 });
 
 interface CheckinAntwort {
+  feldwerte: Array<Record<string, unknown>>;
   mitglieder: Array<Record<string, unknown>>;
   nicht_eingerechnet: Array<Record<string, unknown>>;
   quelle: string;
@@ -253,6 +257,11 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     expect(text).not.toContain(IBAN_SENTINEL);
     expect(text).not.toContain(GEBURTSTAG_SENTINEL);
 
+    // Anonym: Namen verlassen den Hub in Richtung Telemetrieseite nicht.
+    expect(text).not.toContain("Erika");
+    expect(text).not.toContain("Beispiel");
+    expect(text).not.toContain("nachname");
+
     const body = JSON.parse(text) as CheckinAntwort;
     expect(body.quelle).toBe("live");
     expect(body.zusammenfassung).toMatchObject({
@@ -265,18 +274,29 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
       vollstaendig: false
     });
     expect(body.mitglieder[0]).toMatchObject({
-      nachname: "Beispiel",
+      mitgliedsnummer: "M-1",
       schule: "Rosenheim",
       sparten: ["Kickboxen"],
       monatsbeitrag_cent: 5990,
       einzugstag: 15,
-      einzugsquelle: "abweichend"
+      einzugsquelle: "abweichend",
+      vertragsende: "2026-01-31",
+      verlaengerung: "keine",
+      kuendigungsfrist: "3 Monate",
+      gueltig_bis: "",
+      vertragsdatum: ""
     });
     expect(body.mitglieder[1]).toMatchObject({
-      nachname: "Muster",
+      mitgliedsnummer: "M-2",
       einzugstag: 7,
       einzugsquelle: "vertragsbeginn"
     });
+    expect(body.mitglieder[0]).not.toHaveProperty("vorname");
+    expect(body.nicht_eingerechnet[0]).not.toHaveProperty("nachname");
+    expect(body.feldwerte).toEqual(expect.arrayContaining([
+      expect.objectContaining({ feld: "verlaengerung" }),
+      expect.objectContaining({ feld: "kuendigungsfrist" })
+    ]));
     expect(body.zusammenfassung).toMatchObject({
       einzug_nach_tag: [
         { tag: 7, cent: 3950, zahler: 1 },
@@ -354,7 +374,7 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     const body = (await response.json()) as CheckinAntwort;
     expect(body).toMatchObject({ stichtag: "2026-09-01", quelle: "archiv" });
     expect(body.zusammenfassung).toMatchObject({ mitglieder_gesamt: 4, ex_mitglieder: 2 });
-    expect(body.mitglieder.map((mitglied) => mitglied.nachname)).toEqual(["Beispiel", "Muster"]);
+    expect(body.mitglieder.map((mitglied) => mitglied.mitgliedsnummer)).toEqual(["M-1", "M-2"]);
     const live = (await (
       await dispatch(checkinRequest("/api/checkin/v1/beitraege"))
     ).json()) as CheckinAntwort;

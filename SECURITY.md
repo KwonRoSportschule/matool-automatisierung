@@ -143,15 +143,17 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
 - Die Beitragsübersicht (`/api/zapier/v1/beitraege` und
   `/api/checkin/v1/beitraege`) liest aus `schueler_details` ausschließlich
   eine eigene feste Feldliste (Name, Mitgliedsnummer, Schule, Sparten,
-  Vertrag samt Beginn und Ende, Kundenart, Beitrag, Zahlungsperiode,
-  Zahlart, Einzugstag, Jahresgebühr samt Datum); IBAN, Bankdaten, Geburts- und Kontaktdaten
-  verlassen den Hub auch hier nicht. Von den Ex-Mitgliedern wird nur die
-  Anzahl gezählt.
+  Vertrag samt Beginn, Ende, Abschlussdatum, Verlängerung, Kündigungsfrist
+  und „gültig bis“, Kundenart, Beitrag, Zahlungsperiode, Zahlart,
+  Einzugstag, Jahresgebühr samt Datum); IBAN, Bankdaten, Geburts- und
+  Kontaktdaten verlassen den Hub auch hier nicht. Von den Ex-Mitgliedern
+  wird nur die Anzahl gezählt.
 - Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
   Beitragsübersicht mit einem eigenen Token (`CHECKIN_SERVICE_TOKEN`), der
   nichts anderes öffnet; der Zapier-Token gilt dort nicht und umgekehrt.
-  Die Gegenseite zeigt die Daten nur hinter einem eigenen Passwort und
-  speichert sie nicht.
+  Sie bekommt die Übersicht **anonym**: ohne Vor- und Nachnamen, je
+  Mitglied nur mit Mitgliedsnummer (Tests prüfen das). Die Gegenseite zeigt
+  die Daten nur hinter einem eigenen Passwort und speichert sie nicht.
 - Die Stichtagsstände (`beitrags_stichtage`, nur 1. und 15.) liegen wie alle
   Nutzlasten AES-256-GCM-verschlüsselt in D1; nur die Kennzahlenspalten
   (Summen, Anzahlen) stehen im Klartext und nennen niemanden.

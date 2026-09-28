@@ -115,15 +115,19 @@ export const DEFAULT_BEITRAGS_REGELN: BeitragsRegeln = {
 export const BEITRAGS_STAMMDATEN_FELDER = [
   "abweichenderEinzug",
   "beitrag",
+  "gueltig_bis",
   "jahresgebuehr",
   "jahresgebuehrdatum",
+  "kuendigungsfrist",
   "kundenart",
   "mitgliednr",
   "name",
   "schule",
   "spartenliste",
+  "verlaengerung",
   "vertrag",
   "vertragsbeginn",
+  "vertragsdatum",
   "vertragsende",
   "vname",
   "zahlart",
@@ -140,7 +144,9 @@ export const BEITRAGS_FELDWERT_FELDER = [
   "zahlungsperiode",
   "zahlart",
   "schule",
-  "sparten"
+  "sparten",
+  "verlaengerung",
+  "kuendigungsfrist"
 ] as const;
 
 export interface BeitragsQuelle {
@@ -173,6 +179,11 @@ export interface BeitragsPosition {
   sparten: string[];
   vertragsbeginn: string;
   vertragsende: string;
+  /** Laufzeitangaben wie in MATOOL hinterlegt (Kuendigung erkennen). */
+  vertragsdatum: string;
+  verlaengerung: string;
+  kuendigungsfrist: string;
+  gueltigBis: string;
   /** Einzugstag im Monat (1 bis 31); null, wenn nicht eindeutig lesbar. */
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
@@ -200,6 +211,10 @@ export interface NichtEingerechnetePosition {
   sparten: string[];
   vertragsbeginn: string;
   vertragsende: string;
+  vertragsdatum: string;
+  verlaengerung: string;
+  kuendigungsfrist: string;
+  gueltigBis: string;
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
   jahresgebuehrdatum: string;
@@ -447,6 +462,10 @@ function personAngaben(
   vertrag: string;
   vertragsbeginn: string;
   vertragsende: string;
+  vertragsdatum: string;
+  verlaengerung: string;
+  kuendigungsfrist: string;
+  gueltigBis: string;
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
   jahresgebuehrdatum: string;
@@ -464,6 +483,10 @@ function personAngaben(
     sparten: spartenAus(stammdaten.spartenliste),
     vertragsbeginn: textWert(stammdaten.vertragsbeginn),
     vertragsende: textWert(stammdaten.vertragsende),
+    vertragsdatum: textWert(stammdaten.vertragsdatum),
+    verlaengerung: textWert(stammdaten.verlaengerung),
+    kuendigungsfrist: textWert(stammdaten.kuendigungsfrist),
+    gueltigBis: textWert(stammdaten.gueltig_bis),
     // Ohne Stammdaten ist auch der Einzugstag unbekannt.
     ...(quelle.stammdaten === null
       ? { einzugstag: null, einzugsquelle: "" as const }
