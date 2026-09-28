@@ -151,9 +151,8 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
 - Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
   Beitragsübersicht mit einem eigenen Token (`CHECKIN_SERVICE_TOKEN`), der
   nichts anderes öffnet; der Zapier-Token gilt dort nicht und umgekehrt.
-  Sie bekommt die Übersicht **anonym**: ohne Vor- und Nachnamen, je
-  Mitglied nur mit Mitgliedsnummer (Tests prüfen das). Die Gegenseite zeigt
-  die Daten nur hinter einem eigenen Passwort und speichert sie nicht.
+  Die Gegenseite zeigt die Daten nur hinter einem eigenen Passwort und
+  speichert sie nicht.
 - Die Stichtagsstände (`beitrags_stichtage`, nur 1. und 15.) liegen wie alle
   Nutzlasten AES-256-GCM-verschlüsselt in D1; nur die Kennzahlenspalten
   (Summen, Anzahlen) stehen im Klartext und nennen niemanden.

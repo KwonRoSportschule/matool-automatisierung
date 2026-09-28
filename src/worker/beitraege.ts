@@ -259,12 +259,11 @@ export async function zapierBeitragsUebersicht(
 }
 
 /**
- * Antwort fuer die Klassenauswertung (Check-in-/Telemetrieseite). Anonym:
- * je Mitglied nur Mitgliedsnummer, Schule, Sparten, Vertrag, Laufzeit und
- * Betraege -- keine Namen. Bank-, Geburts- und Kontaktdaten werden dafuer
- * nicht einmal gelesen. Betraege stehen in Cent, damit die Gegenseite ohne
- * Rundung weiterrechnet. Gilt fuer Live- und gesicherte Staende gleich, weil
- * beide durch diese Funktion laufen.
+ * Antwort fuer die Klassenauswertung (Check-in-/Telemetrieseite). Enthaelt
+ * je Mitglied nur Name, Mitgliedsnummer, Schule, Sparten, Vertrag samt
+ * Laufzeit und Betraege; Bank-, Geburts- und Kontaktdaten werden dafuer
+ * nicht gelesen. Betraege stehen in Cent, damit die Gegenseite ohne Rundung
+ * weiterrechnet.
  */
 export function checkinBeitragsAntwort(
   uebersicht: BeitragsUebersicht,
@@ -304,6 +303,8 @@ export function checkinBeitragsAntwort(
     mitglieder: uebersicht.positionen.map((position) => ({
       matool_id: position.matoolId,
       mitgliedsnummer: position.mitgliedsnummer,
+      vorname: position.vorname,
+      nachname: position.nachname,
       schule: position.schule ?? "",
       sparten: position.sparten ?? [],
       vertrag: position.vertrag,
@@ -323,6 +324,8 @@ export function checkinBeitragsAntwort(
     nicht_eingerechnet: uebersicht.nichtEingerechnet.map((eintrag) => ({
       matool_id: eintrag.matoolId,
       mitgliedsnummer: eintrag.mitgliedsnummer,
+      vorname: eintrag.vorname,
+      nachname: eintrag.nachname,
       schule: eintrag.schule ?? "",
       sparten: eintrag.sparten ?? [],
       vertrag: eintrag.vertrag,
