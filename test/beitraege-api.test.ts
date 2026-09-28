@@ -403,7 +403,9 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
 
   it("speichert nur am 1. und 15. und raeumt andere Tage weg", async () => {
     await seedMitglieder();
-    for (const stichtag of ["2025-01-01", "2025-01-15", "2025-01-16", "2026-09-10"]) {
+    // Abrechnungsstichtage bleiben unbegrenzt: Auch Jahre spaeter laesst sich
+    // nachsehen, wie die Beitraege an einem 1. oder 15. aussahen.
+    for (const stichtag of ["2019-02-15", "2025-01-01", "2025-01-15", "2025-01-16", "2026-09-10"]) {
       await env.DB.prepare(
         `INSERT INTO beitrags_stichtage (stichtag, erstellt_am, vollstaendig, monatssumme_cent,
            mitglieder_gesamt, mit_beitrag, ohne_beitrag, stillgelegt, ex_mitglieder, payload_json)
@@ -420,7 +422,7 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     const tage = (
       await env.DB.prepare("SELECT stichtag FROM beitrags_stichtage ORDER BY stichtag").all<{ stichtag: string }>()
     ).results.map((row) => row.stichtag);
-    expect(tage).toEqual(["2025-01-01", "2025-01-15"]);
+    expect(tage).toEqual(["2019-02-15", "2025-01-01", "2025-01-15"]);
   });
 
   it("legt die Tabelle selbst an, wenn der Deploy ohne Migration kam", async () => {
