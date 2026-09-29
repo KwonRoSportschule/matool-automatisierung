@@ -25,7 +25,8 @@ Cron (werktags stündlich)
           → vorübergehender Fehler: nur dieser Bereich, Pause 30 s / 2 min
        4. Abschluss, Zapier-Zustellung, Beitragsstichtag (1./15.)
        5. danach Interessenten-Workflow (nie parallel zum Mitgliederabruf):
-          Liste + Details nur für neue, geänderte, > 20 h alte, 150 neueste
+          Liste + Details nur für neue, geänderte, die 150 neuesten und
+          je Stunde ein Elftel des Bestands (jeder Interessent 1× täglich)
 ```
 
 - Der Knopf „Manuellen Abruf starten“ nutzt denselben Workflow (liest alle

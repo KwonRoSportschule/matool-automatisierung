@@ -28,7 +28,7 @@ matool_sync_runs (Gesamtlauf)
 | Bereich | Inhalt | Quelle / Takt |
 | --- | --- | --- |
 | `interessenten` | Interessentenliste (Nr., Datum, Name, Status) | Interessenten-Workflow, stündlich |
-| `interessenten_details` | Detail je Interessent (Kontakt, Probetraining …) | nur neue, geänderte, > 20 h alte und die 150 neuesten |
+| `interessenten_details` | Detail je Interessent (Kontakt, Probetraining …) | neue, geänderte, die 150 neuesten und je Stunde ein Elftel (jedes Detail 1× täglich, spätestens nach 48 h) |
 | `schueler` | Mitgliederliste | stündlich, zweifach gelesen und verglichen |
 | `schueler_ex` | Ehemalige Mitglieder | einmal täglich (erster Lauf), manuell immer |
 | `checkin` | Check-ins der aktuellen Woche | stündlich |

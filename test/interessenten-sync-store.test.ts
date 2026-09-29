@@ -213,7 +213,7 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
     expect(orphanHistory?.count).toBe(1);
   });
 
-  it("liest im Folgejob nur neue, geaenderte, zu alte und die neuesten Details", async () => {
+  it("liest im Folgejob nur neue, geaenderte, zu alte, die Gruppe der Stunde und die neuesten Details", async () => {
     const suffix = testSuffix();
     await env.DB.prepare(
       `UPDATE interessenten_sync_jobs
@@ -248,27 +248,30 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
     await persistRecords("interessenten_details", `d1_${suffix}`, ["5001"], "2026-08-26T10:00:00.000Z");
     // Vor der letzten Aenderung der Listenzeile gelesen: neu lesen.
     await persistRecords("interessenten_details", `d2_${suffix}`, ["5002"], "2026-08-25T05:59:00.000Z");
-    // 5003 fehlt ganz. 5004 ist aelter als 20 Stunden: neu lesen.
-    await persistRecords("interessenten_details", `d4_${suffix}`, ["5004"], "2026-08-25T07:00:00.000Z");
+    // 5003 fehlt ganz. 5004 ist aelter als 48 Stunden: neu lesen.
+    await persistRecords("interessenten_details", `d4_${suffix}`, ["5004"], "2026-08-24T10:00:00.000Z");
+    // 5006 gehoert zur Gruppe dieser Stunde (5006 % 11 = 12 % 11): neu lesen.
+    await persistRecords("interessenten_details", `d6_${suffix}`, ["5006"], "2026-08-26T09:00:00.000Z");
     // Neuester Interessent, vor Jobbeginn gelesen: neu lesen.
     await persistRecords("interessenten_details", `d200_${suffix}`, ["5200"], "2026-08-26T11:00:00.000Z");
     // Alle uebrigen in diesem Job bereits gelesen.
     await persistRecords(
       "interessenten_details",
       `drest_${suffix}`,
-      ids.filter((id) => !["5001", "5002", "5003", "5004", "5200"].includes(id)),
+      ids.filter((id) => !["5001", "5002", "5003", "5004", "5006", "5200"].includes(id)),
       "2026-08-26T12:05:00.000Z"
     );
 
     expect(await selectInteressentenSyncDetailSourceIds(env.DB, jobId, 50)).toEqual([
       "5003",
-      "5002",
       "5004",
+      "5002",
+      "5006",
       "5200"
     ]);
     await expect(getInteressentenSyncParity(env.DB, jobId)).resolves.toMatchObject({
       missingDetails: 1,
-      staleDetails: 3
+      staleDetails: 4
     });
     const offen = await finalizeInteressentenSyncJob(env.DB, jobId, "2026-08-26T12:10:00.000Z");
     expect(offen.completed).toBe(false);
@@ -276,7 +279,7 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
     await persistRecords(
       "interessenten_details",
       `dfix_${suffix}`,
-      ["5002", "5003", "5004", "5200"],
+      ["5002", "5003", "5004", "5006", "5200"],
       "2026-08-26T12:06:00.000Z"
     );
     expect(await selectInteressentenSyncDetailSourceIds(env.DB, jobId, 50)).toEqual([]);

@@ -6,14 +6,22 @@ const MAX_INTERESSENTEN_COUNT = 20_000;
 const MAX_DETAIL_BATCH_SIZE = 500;
 
 /**
- * Hoechstalter eines Interessentendetails. Aeltere Details liest der naechste
- * Abgleich neu -- im Werktagsbetrieb also einmal morgens alle.
+ * Details werden gleichmaessig ueber die Stundenlaeufe eines Werktags
+ * aufgefrischt: Jeder Interessent gehoert ueber seine MATOOL-Nummer zu einer
+ * von INTERESSENTEN_DETAIL_BUCKETS Gruppen, und jede Stunde ist genau eine
+ * Gruppe dran (elf Laeufe je Werktag, also jede Gruppe einmal taeglich).
  *
  * Bis zum 29.09.2026 las jeder stuendliche Abgleich alle rund 3.500 Details
  * neu (gut 3.500 MATOOL-Anfragen je Stunde, parallel zum Mitgliederabruf).
  * Das war die Hauptursache fuer Verbindungsabbrueche und lange Laufzeiten.
  */
-export const INTERESSENTEN_DETAIL_MAX_AGE_HOURS = 20;
+export const INTERESSENTEN_DETAIL_BUCKETS = 11;
+
+/**
+ * Sicherheitsnetz: Ein Detail, das so lange nicht gelesen wurde (etwa weil
+ * der Lauf seiner Gruppe ausfiel), liest der naechste Abgleich in jedem Fall.
+ */
+export const INTERESSENTEN_DETAIL_MAX_AGE_HOURS = 48;
 
 /**
  * Die neuesten Interessenten (hoechste MATOOL-Nummern) liest jeder Abgleich
@@ -24,7 +32,9 @@ export const INTERESSENTEN_HOT_DETAIL_COUNT = 150;
 /**
  * Ein Detail muss (neu) gelesen werden, wenn es fehlt oder veraltet ist:
  * - seine Listenzeile hat sich seit dem letzten Lesen geaendert,
- * - es ist aelter als INTERESSENTEN_DETAIL_MAX_AGE_HOURS vor Jobbeginn, oder
+ * - es ist aelter als INTERESSENTEN_DETAIL_MAX_AGE_HOURS vor Jobbeginn,
+ * - seine Gruppe ist in dieser Stunde dran und es wurde in diesem Job noch
+ *   nicht gelesen, oder
  * - es gehoert zu den neuesten Interessenten und wurde in diesem Job noch
  *   nicht gelesen.
  * Erwartet die Aliase `job`, `current_list` und `details`.
@@ -33,6 +43,11 @@ const DETAIL_NEEDS_READ_SQL = `(
   details.source_id IS NULL
   OR details.last_seen_at < current_list.last_changed_at
   OR details.last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ', job.started_at, '-${INTERESSENTEN_DETAIL_MAX_AGE_HOURS} hours')
+  OR (
+    details.last_seen_at < job.started_at
+    AND CAST(current_list.source_id AS INTEGER) % ${INTERESSENTEN_DETAIL_BUCKETS}
+      = CAST(strftime('%H', job.started_at) AS INTEGER) % ${INTERESSENTEN_DETAIL_BUCKETS}
+  )
   OR (
     details.last_seen_at < job.started_at
     AND CAST(current_list.source_id AS INTEGER) >= COALESCE((

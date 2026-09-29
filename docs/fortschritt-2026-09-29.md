@@ -153,15 +153,17 @@ Merge nach `main`.
 | Stundenlauf im Cron-Aufruf, hart nach 15 Min. beendet | Cron startet nur den Workflow `stunde_<Stunde>`; kein Wandzeitlimit |
 | Ein Fehler oder Deploy = Bereich/Lauf verloren | jeder Bereich ein eigener Schritt; nur der betroffene Bereich wird wiederholt (30 s, 2 min); Deploy setzt fort |
 | Sperre je Bereich neu, Knopf und Stundenlauf konnten sich überholen | eine Sperre für den ganzen Lauf (Besitzer = Workflow) |
-| Interessenten-Details: jede Stunde alle ~3.500 neu (≈ 3.500 Anfragen/h), parallel zum Mitgliederabruf | nur neue, geänderte, > 20 h alte und die 150 neuesten; startet erst nach dem Mitgliederabruf |
+| Interessenten-Details: jede Stunde alle ~3.500 neu (≈ 3.500 Anfragen/h), parallel zum Mitgliederabruf | nur neue, geänderte, die 150 neuesten und je Stunde ein Elftel des Bestands (jedes Detail 1× täglich, ohne Morgenspitze); startet erst nach dem Mitgliederabruf |
 | Ex-Mitglieder (67 Seiten, doppelt gelesen) jede Stunde | einmal täglich, manuell immer |
 | 2 Versuche bei Verbindungsabbruch, 5xx nur bei Interessenten wiederholt | 3 Versuche mit wachsender Pause; 429/5xx bei allen Listenseiten |
 | abgelaufene MATOOL-Sitzung = Bereich scheitert | Loginseite erkannt → einmal neu anmelden, Seite erneut lesen |
 
 Grobe Schätzung aus Paketgrößen (nicht live gemessen): statt rund 3.500 bis
-4.000 MATOOL-Anfragen je Stunde (davon ~3.500 Interessenten-Details) nur noch
-einige hundert; einmal morgens der volle Interessenten- und
-Ex-Mitglieder-Abgleich.
+4.000 MATOOL-Anfragen je Stunde (davon ~3.500 Interessenten-Details) je
+Stunde etwa 450 Interessenten-Details plus Listen und Mitglieder-Details,
+gleichmäßig über den Tag verteilt. Die Interessentenliste wird bei kurzen
+Abgleichen nur noch einmal statt zweimal gelesen; Ex-Mitglieder einmal
+täglich.
 
 ### Datenbank
 
@@ -189,7 +191,7 @@ Ex-Mitglieder-Abgleich.
 ### Nach dem Merge beobachten
 
 1. Erster Stundenlauf: Dashboard-Fortschrittskarte zeigt Bereiche einzeln.
-2. Morgens 09:00: Ex-Mitglieder und voller Interessenten-Detailabgleich
-   (dauert länger), danach stündlich nur Delta.
+2. Morgens 09:00: Ex-Mitglieder (dauert etwas länger), danach stündlich nur
+   Mitglieder-Listen und Details.
 3. Cloudflare → Workflows → `matool-direct-sync-staging`: je Stunde eine
    Instanz `stunde_…`, Status „Complete“.
