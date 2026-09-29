@@ -23,7 +23,6 @@ export interface AccessIdentity {
     | "cloudflare-access"
     | "dashboard-password"
     | "local-development"
-    | "public-full-access"
     | "public-read-only";
 }
 
@@ -43,9 +42,7 @@ export function dashboardAccessSummary(
   return {
     authentication: identity.authentication,
     canManage,
-    notice: identity.authentication === "public-full-access"
-      ? "Oeffentlicher Vollzugriff ist aktiviert; eine Anmeldung ist nicht erforderlich."
-      : identity.authentication === "dashboard-password"
+    notice: identity.authentication === "dashboard-password"
       ? "Mit Dashboard-Passwort angemeldet; Mitarbeiteraktionen sind verfuegbar."
       : canManage
       ? "Geschuetzte Mitarbeiteraktionen sind verfuegbar."
@@ -102,11 +99,9 @@ export async function requireAccessIdentity(
     return passwordIdentity;
   }
 
-  const publicFullAccessIdentity = getPublicFullAccessIdentity(env, scope);
-  if (publicFullAccessIdentity) {
-    return publicFullAccessIdentity;
-  }
-
+  // Einen anonymen Vollzugriff gibt es bewusst nicht (mehr): Er gab jedem
+  // Besucher Mitarbeiterrechte samt CSRF-Token und Echtdatenabruf. Oeffentlich
+  // ist hoechstens die maskierte Nur-Lese-Ansicht.
   const publicIdentity = getPublicReadOnlyIdentity(request, env, scope);
   if (publicIdentity) {
     return publicIdentity;
@@ -317,24 +312,6 @@ function parseBasicCredentials(
   return {
     username: decoded.slice(0, separator),
     password: decoded.slice(separator + 1)
-  };
-}
-
-function getPublicFullAccessIdentity(
-  env: Env,
-  scope: AccessScope
-): AccessIdentity | null {
-  if (
-    scope !== "employee" ||
-    env.APP_ENV !== "staging" ||
-    env.PUBLIC_DASHBOARD_FULL_ACCESS !== "true"
-  ) {
-    return null;
-  }
-
-  return {
-    subject: "public-dashboard-full-access",
-    authentication: "public-full-access"
   };
 }
 

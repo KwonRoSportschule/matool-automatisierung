@@ -90,9 +90,9 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
       warnings: [{
         key: "area_schueler_ex", technicalCode: "synthetic_schema_error",
         occurrenceCount: 11,
-        firstOccurredAt: "2026-09-23T10:00:04.000Z",
-        lastOccurredAt: "2026-09-23T10:10:04.000Z",
-        occurredAt: "2026-09-23T10:10:04.000Z"
+        firstOccurredAt: "2026-09-23T10:00:03.000Z",
+        lastOccurredAt: "2026-09-23T10:10:03.000Z",
+        occurredAt: "2026-09-23T10:10:03.000Z"
       }]
     });
     // Grouping current warnings must not erase the area or overall audit trail.
@@ -221,12 +221,12 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
       metrics: { failedRuns: 2 },
       warnings: [{
         key: "area_schueler_ex", technicalCode: "synthetic_schema_error", occurrenceCount: 1,
-        firstOccurredAt: "2026-09-23T10:00:04.000Z", lastOccurredAt: "2026-09-23T10:00:04.000Z"
+        firstOccurredAt: "2026-09-23T10:00:03.000Z", lastOccurredAt: "2026-09-23T10:00:03.000Z"
       }]
     });
     expect(await getDashboardOverview(runtime, 7, now)).toMatchObject({
       warnings: [{ key: "area_schueler_ex", occurrenceCount: 2,
-        firstOccurredAt: "2026-09-22T10:00:04.000Z", lastOccurredAt: "2026-09-23T10:00:04.000Z" }]
+        firstOccurredAt: "2026-09-22T10:00:03.000Z", lastOccurredAt: "2026-09-23T10:00:03.000Z" }]
     });
   });
 

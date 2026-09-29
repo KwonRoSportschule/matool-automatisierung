@@ -228,6 +228,10 @@ function checkinSchemaError(input: {
         nonEmptyCellCount: 0,
         occurrences: input.assignmentCount,
         schuelerActionCandidateCount: 0,
+        schuelerActionInvalid: false,
+        schuelerActionKinds: [],
+        stableIdCount: 0,
+        distinctStableIdCount: 0,
         tdCount: 0,
         thCount: 0,
         topLevel: true

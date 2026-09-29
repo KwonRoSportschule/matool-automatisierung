@@ -1,13 +1,16 @@
-import { toAppError } from "../core/app-error";
+import { AppError, toAppError } from "../core/app-error";
 import {
   MatoolClient,
   MatoolShapeMismatchError,
   MATOOL_KLASSEN_PAYLOAD_FIELDS,
   type MatoolCredentials,
-  type MatoolSafeAreaRecord
+  type MatoolSafeAreaRecord,
+  type MatoolStopSignal
 } from "../matool/client";
+import { MATOOL_GRADUIERUNG_PAYLOAD_FIELDS } from "../matool/graduierung";
 import { sichereBeitragsStichtagSafely } from "./beitrags-archiv";
 import { runDataProtectionMaintenanceSafely } from "./data-protection";
+import { markRotationRead, selectRotatingSourceIds } from "./detail-rotation";
 import type { Env } from "./env";
 import {
   acquireExactSyncLease,
@@ -30,6 +33,7 @@ import { evaluateBerlinScheduleWindow } from "./schedule-window";
 import {
   beginMatoolSyncRun,
   finishMatoolSyncRun,
+  markAbandonedMatoolSyncRuns,
   recordSkippedMatoolSync,
   type MatoolSyncTrigger
 } from "./sync-store";
@@ -41,15 +45,22 @@ import { processSnapshotZapierDeliveries } from "./snapshot-delivery";
 // Fachlich benoetigt werden ausschliesslich Interessenten und Mitglieder,
 // jeweils Liste vor Detailabruf. Die uebrigen MATOOL-Ansichten wurden am
 // 24.08.2026 abgeschaltet und ihre Bestaende am 25.08.2026 geloescht.
+//
+// Erst alle Listen (sie muessen vollstaendig sein), danach die Abrufe je
+// Mitglied. Diese rotieren und duerfen deshalb an einem Zeitbudget enden:
+// zuerst Stilllegungen und Stammdaten (beide fuer die Beitragsuebersicht),
+// zuletzt die Graduierungen. Die Stilllegungen stehen vor den Stammdaten:
+// Die Stammdaten sind laengst vollstaendig und werden nur aufgefrischt
+// (neue Mitglieder kommen dort ohnehin zuerst dran).
 export const MATOOL_SNAPSHOT_AREAS = [
   "interessenten",
   "interessenten_details",
   "schueler",
-  "schueler_details",
   "schueler_ex",
   "checkin",
-  "graduierungen",
-  "schueler_stilllegungen"
+  "schueler_stilllegungen",
+  "schueler_details",
+  "graduierungen"
 ] as const;
 
 const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
@@ -88,8 +99,9 @@ export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
  * oeffnen, lesen, schliessen -- und mit der Pause dazwischen rund zwei
  * Sekunden.
  *
- * Der Stundenlauf darf lange arbeiten und nimmt deshalb ein grosses Paket:
- * der gesamte Bestand ist so nach wenigen Laeufen vollstaendig. Der Knopf im
+ * Der Stundenlauf nimmt ein grosses Paket, liest davon aber nur so viel,
+ * wie in sein Zeitbudget passt (MATOOL_DETAIL_AREA_BUDGET_MS); der Rest
+ * kommt im naechsten Lauf zuerst dran. Der Knopf im
  * Dashboard haengt dagegen an einer offenen Web-Anfrage und wurde bei 100
  * Datensaetzen von Cloudflare abgebrochen; er bekommt ein kleines Paket,
  * damit er antwortet.
@@ -101,13 +113,44 @@ export const MATOOL_SCHUELER_DETAILS_PER_RUN = 150;
 export const MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN = 25;
 
 /**
- * Stilllegungen je Lauf. Auch sie kosten drei Abrufe je Mitglied (oeffnen,
- * lesen, schliessen). Sie aendern sich selten; mit 60 je Stundenlauf ist der
- * ganze Bestand trotzdem mehrmals am Tag frisch, ohne den Lauf merklich zu
- * verlaengern.
+ * Stilllegungen je Lauf (Obergrenze; das Zeitbudget kann frueher enden).
+ * Auch sie kosten drei Abrufe je Mitglied (oeffnen, lesen, schliessen).
  */
 export const MATOOL_STILLLEGUNGEN_PER_RUN = 60;
 export const MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN = 10;
+
+/**
+ * Graduierungen je Lauf: ein Abruf je Mitglied. Sie rotieren ueber eine
+ * eigene Tabelle (detail-rotation.ts), weil Mitglieder ohne Pruefung keinen
+ * Datensatz haben.
+ */
+export const MATOOL_GRADUIERUNGEN_PER_RUN = 150;
+export const MATOOL_GRADUIERUNGEN_PER_MANUAL_RUN = 25;
+
+/**
+ * Zeitbudget des Stundenlaufs. Cloudflare beendet einen Cron-Aufruf nach
+ * 15 Minuten Wandzeit ohne Vorwarnung -- mitten in einem Bereich, ohne
+ * Abschluss des Laufs und ohne die Bereiche danach. Die Abrufe zu MATOOL
+ * enden deshalb nach 12 Minuten (ab Aufrufbeginn); der Rest bleibt fuer
+ * Speichern, Zapier-Zustellung und den Beitragsstichtag.
+ */
+export const MATOOL_SCHEDULED_RUN_BUDGET_MS = 12 * 60_000;
+
+/**
+ * Hoechstdauer der Abrufe je Mitglied im Stundenlauf. Was nicht mehr
+ * hineinpasst, kommt im naechsten Lauf zuerst dran.
+ */
+export const MATOOL_DETAIL_AREA_BUDGET_MS: Readonly<Record<string, number>> = {
+  schueler_stilllegungen: 4 * 60_000,
+  schueler_details: 3 * 60_000,
+  graduierungen: 3 * 60_000
+};
+
+/** Mindestzeit, die jedem spaeteren Bereich je Mitglied bleibt. */
+const MATOOL_DETAIL_AREA_MIN_SHARE_MS = 90_000;
+
+/** Mit weniger Restzeit wird ein Bereich nicht mehr begonnen. */
+const MATOOL_AREA_MIN_REMAINING_MS = 45_000;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
@@ -262,9 +305,38 @@ function detailLimitFor(area: string, trigger: MatoolSyncTrigger): number {
       ? MATOOL_STILLLEGUNGEN_PER_RUN
       : MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN;
   }
+  if (area === "graduierungen") {
+    return trigger === "scheduled"
+      ? MATOOL_GRADUIERUNGEN_PER_RUN
+      : MATOOL_GRADUIERUNGEN_PER_MANUAL_RUN;
+  }
   return trigger === "scheduled"
     ? MATOOL_SCHUELER_DETAILS_PER_RUN
     : MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN;
+}
+
+/**
+ * Wann ein Bereich je Mitglied aufhoeren soll: nach seinem eigenen Budget,
+ * spaetestens aber so, dass jedem spaeteren Bereich je Mitglied noch seine
+ * Mindestzeit bis zum Laufende bleibt. Ohne Laufende (Handlauf) kein Limit.
+ */
+export function detailAreaDeadline(
+  area: string,
+  laterAreas: readonly string[],
+  runDeadline: number | undefined,
+  now: number
+): number | undefined {
+  const budget = MATOOL_DETAIL_AREA_BUDGET_MS[area];
+  if (runDeadline === undefined || budget === undefined) {
+    return runDeadline;
+  }
+  const spaetere = laterAreas.filter(
+    (later) => MATOOL_DETAIL_AREA_BUDGET_MS[later] !== undefined
+  ).length;
+  return Math.min(
+    now + budget,
+    runDeadline - spaetere * MATOOL_DETAIL_AREA_MIN_SHARE_MS
+  );
 }
 
 /**
@@ -279,6 +351,8 @@ export async function handleScheduledInvocation(
   controller: ScheduledController,
   env: Env
 ): Promise<void> {
+  // Das 15-Minuten-Limit zaehlt ab Aufrufbeginn, also auch die Wartung.
+  const deadline = Date.now() + MATOOL_SCHEDULED_RUN_BUDGET_MS;
   // Verschluesselung, Loeschfristen und Aufraeumen laufen bei jedem Aufruf,
   // auch ausserhalb des MATOOL-Zeitfensters.
   await runDataProtectionMaintenanceSafely(env);
@@ -293,7 +367,7 @@ export async function handleScheduledInvocation(
   }
 
   try {
-    await runScheduledSync(controller, env);
+    await runScheduledSync(controller, env, deadline);
   } finally {
     // Nach jedem Abruf (oder ausgelassenen Abruf) am 1. und 15. den Stand
     // der Beitragsuebersicht nachziehen; scheitert nie am Cron-Lauf.
@@ -303,7 +377,8 @@ export async function handleScheduledInvocation(
 
 async function runScheduledSync(
   controller: ScheduledController,
-  env: Env
+  env: Env,
+  deadline: number
 ): Promise<void> {
   const scheduleWindow = evaluateBerlinScheduleWindow(
     controller.scheduledTime
@@ -376,7 +451,8 @@ async function runScheduledSync(
     env,
     controller.scheduledTime,
     MATOOL_DIRECT_SNAPSHOT_AREAS,
-    "scheduled"
+    "scheduled",
+    { deadline }
   );
 
   const mode = await getProcessMode(env);
@@ -413,8 +489,16 @@ export async function collectMatoolSnapshots(
   env: Env,
   scheduledTime: number,
   areas: readonly string[] = MATOOL_DIRECT_SNAPSHOT_AREAS,
-  trigger: MatoolSyncTrigger = "manual"
+  trigger: MatoolSyncTrigger = "manual",
+  options: {
+    /**
+     * Zeitpunkt (ms), bis zu dem MATOOL abgefragt wird. Danach beginnt kein
+     * Bereich mehr, und Abrufe je Mitglied enden mit dem bis dahin Gelesenen.
+     */
+    deadline?: number;
+  } = {}
 ): Promise<CollectSnapshotsResult> {
+  const { deadline } = options;
   const directAreas = areas.filter(
     (area) =>
       area !== "interessenten" && area !== "interessenten_details"
@@ -433,6 +517,8 @@ export async function collectMatoolSnapshots(
   const cipher = await storedPayloadCipher(env);
 
   const startedAt = new Date().toISOString();
+  // Ein von Cloudflare beendeter Lauf bleibt sonst fuer immer "laeuft".
+  await markAbandonedMatoolSyncRuns(env.DB, startedAt);
   const syncId = await beginMatoolSyncRun(env.DB, {
     ...(trigger === "scheduled"
       ? { scheduledFor: new Date(scheduledTime).toISOString() }
@@ -483,7 +569,24 @@ export async function collectMatoolSnapshots(
         const runId = `snapshot_${area}_${crypto.randomUUID()}`;
         const areaStartedAt = new Date().toISOString();
         try {
+          if (
+            deadline !== undefined &&
+            deadline - Date.now() < MATOOL_AREA_MIN_REMAINING_MS
+          ) {
+            throw new AppError(
+              "matool_time_budget_exhausted",
+              503,
+              "Das Zeitbudget des Laufs war aufgebraucht; der Bereich folgt im naechsten Lauf."
+            );
+          }
           activeLease = await renewExactSyncLease(env.DB, activeLease);
+          const areaDeadline = detailAreaDeadline(
+            area,
+            directAreas.slice(areaIndex + 1),
+            deadline,
+            Date.now()
+          );
+          let processedSourceIds: readonly string[] | undefined;
           const records = EXACT_CURRENT_SET_AREAS.has(area)
             ? await readMatchingExactSource(
                 () => exactAreaSession(env, credentials, area),
@@ -502,6 +605,12 @@ export async function collectMatoolSnapshots(
                 detailLimitFor(area, trigger),
                 async () => {
                   activeLease = await renewExactSyncLease(env.DB, activeLease);
+                },
+                areaDeadline === undefined
+                  ? undefined
+                  : () => Date.now() >= areaDeadline,
+                (ids) => {
+                  processedSourceIds = ids;
                 }
               );
           if (EXACT_CURRENT_SET_AREAS.has(area)) {
@@ -519,7 +628,9 @@ export async function collectMatoolSnapshots(
                   ? MATOOL_KLASSEN_PAYLOAD_FIELDS
                   : area === "checkin"
                     ? MATOOL_CHECKIN_PAYLOAD_FIELDS
-                    : snapshotPayloadFields(records),
+                    : area === "graduierungen"
+                      ? MATOOL_GRADUIERUNG_PAYLOAD_FIELDS
+                      : snapshotPayloadFields(records),
               area,
               finishedAt,
               observedAt: finishedAt,
@@ -533,6 +644,9 @@ export async function collectMatoolSnapshots(
             },
             cipher
           );
+          if (area === "graduierungen" && processedSourceIds) {
+            await markRotationRead(env.DB, area, processedSourceIds, finishedAt);
+          }
           summary.succeeded += 1;
           summary.storedTotal += result.storedCount;
           summary.areas.push({
@@ -692,7 +806,9 @@ async function readDirectArea(
   area: string,
   db: D1Database,
   detailLimit: number = MATOOL_SCHUELER_DETAILS_PER_RUN,
-  onProgress?: () => Promise<void>
+  onProgress?: () => Promise<void>,
+  shouldStop?: MatoolStopSignal,
+  onProcessed?: (sourceIds: readonly string[]) => void
 ): Promise<MatoolSafeAreaRecord[]> {
   if (area === "klassen") {
     return (
@@ -708,21 +824,25 @@ async function readDirectArea(
       await client.extractSchuelerDetails(
         credentials,
         await selectSchuelerDetailSourceIds(db, detailLimit),
-        onProgress
+        onProgress,
+        shouldStop
       )
     ).records;
   }
   if (area === "checkin") {
     return (await client.extractCheckins(credentials)).records;
   }
+  // Eigene Rotation: Mitglieder ohne Pruefung haben keinen Datensatz, an
+  // dem sich ablesen liesse, wann sie zuletzt abgefragt wurden.
   if (area === "graduierungen") {
-    return (
-      await client.extractGraduierungen(
-        credentials,
-        await selectSchuelerDetailSourceIds(db, detailLimit),
-        onProgress
-      )
-    ).records;
+    const result = await client.extractGraduierungen(
+      credentials,
+      await selectRotatingSourceIds(db, "graduierungen", detailLimit),
+      onProgress,
+      shouldStop
+    );
+    onProcessed?.(result.processedSourceIds ?? []);
+    return result.records;
   }
   // Je Mitglied ein Datensatz mit allen Stilllegungszeitraeumen; rotiert
   // ueber den eigenen Bestand, damit jedes Mitglied regelmaessig frisch ist.
@@ -735,7 +855,8 @@ async function readDirectArea(
           detailLimit,
           "schueler_stilllegungen"
         ),
-        onProgress
+        onProgress,
+        shouldStop
       )
     ).records;
   }

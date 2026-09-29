@@ -54,6 +54,33 @@ describe("MATOOL-Stilllegungen", () => {
     expect(JSON.stringify(record)).not.toContain("Synthetische");
   });
 
+  it("liest den Formular-Eintrag eines Mitglieds ohne Stilllegung als leer", () => {
+    // So antwortet MATOOL live (29.09.2026) fuer ein Mitglied ohne
+    // Stilllegung: ein Eintrag ohne satz_id und ohne Zeitraum.
+    const formular = {
+      name: "Synthetische Person",
+      zahlungsperiode: "Monatsbeitrag",
+      status: "",
+      periondenarray: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]
+    };
+    expect(parseStilllegungResponse(encoder.encode(JSON.stringify([formular])), "700001")).toEqual({
+      sourceId: "700001",
+      payload: { anzahl: 0, mitglied_id: "700001", zeitraeume: "" }
+    });
+
+    // Neben einem echten Zeitraum, doppelt oder mit Zeitraumfeld bleibt er ein Fehler.
+    for (const body of [
+      [formular, eintrag("800001", ["10", "2026"], ["12", "2026"])],
+      [formular, formular],
+      [{ ...formular, von_monat: "10" }],
+      [{ ...formular, unbekannt: "x" }]
+    ]) {
+      expect(() =>
+        parseStilllegungResponse(encoder.encode(JSON.stringify(body)), "700001")
+      ).toThrow(MatoolShapeMismatchError);
+    }
+  });
+
   it("legt auch ohne Stilllegung einen Datensatz an", () => {
     for (const body of ["[]", "", "null", "  "]) {
       expect(parseStilllegungResponse(encoder.encode(body), "700001")).toEqual({

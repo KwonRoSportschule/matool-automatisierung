@@ -9,6 +9,22 @@ export interface MatoolGraduierungRecord {
   sourceId: string;
 }
 
+/**
+ * Feste Feldmenge eines Graduierungsdatensatzes. Der Speicher leitet die
+ * erlaubten Felder sonst aus den gelesenen Datensaetzen ab; ein Paket von
+ * Mitgliedern ganz ohne Pruefung haette dann keine Felder und wuerde
+ * abgelehnt.
+ */
+export const MATOOL_GRADUIERUNG_PAYLOAD_FIELDS = [
+  "graduierung",
+  "graduierung_id",
+  "mitglied_id",
+  "pdf_verfuegbar",
+  "pruefungsdatum",
+  "sparte",
+  "storniert"
+] as const;
+
 const MAX_GRADUIERUNGEN_PER_MEMBER = 500;
 const MAX_VALUE_LENGTH = 500;
 

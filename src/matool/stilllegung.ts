@@ -19,6 +19,13 @@ export interface MatoolStilllegungZeitraum {
 }
 
 const MAX_STILLLEGUNGEN_PER_MEMBER = 200;
+
+/**
+ * Felder des Formular-Eintrags, den MATOOL fuer ein Mitglied ohne
+ * Stilllegung liefert (live belegt am 29.09.2026): kein Satz, kein Zeitraum,
+ * nur Name, Zahlungsperiode, Status und die Monatsliste des Formulars.
+ */
+const FORMULAR_FELDER = new Set(["name", "zahlungsperiode", "status", "periondenarray"]);
 const MAX_STATUS_LENGTH = 40;
 const MAX_TEXT_LENGTH = 500;
 
@@ -65,10 +72,15 @@ export function parseStilllegungResponse(
   if (!Array.isArray(parsed) || parsed.length > MAX_STILLLEGUNGEN_PER_MEMBER) {
     throw stilllegungSchemaError(parsed);
   }
+  // Ohne Stilllegung antwortet MATOOL mit genau einem Formular-Eintrag.
+  // Neben echten Zeitraeumen, doppelt oder mit weiteren Feldern bleibt er
+  // ein Fehler (dann fehlt ihm unten die satz_id).
+  const eintraege: unknown[] =
+    parsed.length === 1 && istFormularEintrag(parsed[0]) ? [] : parsed;
 
   const zeitraeume: Array<MatoolStilllegungZeitraum & { satzId: string }> = [];
   const satzIds = new Set<string>();
-  for (const entry of parsed) {
+  for (const entry of eintraege) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw stilllegungSchemaError(parsed);
     }
@@ -213,6 +225,32 @@ function statusText(wert: unknown): string | undefined {
     .trim()
     .toLocaleLowerCase("de-DE");
   return normalisiert.length <= MAX_STATUS_LENGTH ? normalisiert : undefined;
+}
+
+/** Der Formular-Eintrag eines Mitglieds ohne Stilllegung, sonst false. */
+function istFormularEintrag(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return false;
+  }
+  const source = entry as Record<string, unknown>;
+  const felder = Object.keys(source);
+  const monatsliste = source.periondenarray;
+  return (
+    felder.length > 0 &&
+    felder.every((feld) => FORMULAR_FELDER.has(feld)) &&
+    optionalText(source.name) &&
+    optionalText(source.zahlungsperiode) &&
+    statusText(source.status) !== undefined &&
+    (monatsliste === undefined ||
+      monatsliste === null ||
+      (Array.isArray(monatsliste) &&
+        monatsliste.length <= 24 &&
+        monatsliste.every(
+          (monat) =>
+            (typeof monat === "string" && monat.length <= 10) ||
+            (typeof monat === "number" && Number.isFinite(monat))
+        )))
+  );
 }
 
 /** Nicht uebernommene Felder duerfen fehlen, muessen aber schlicht sein. */

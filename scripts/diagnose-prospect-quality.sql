@@ -1,4 +1,7 @@
 -- Read-only, aggregate-only companion check for the prospect read model.
+-- Historical plaintext check (verified 2026-09-24). Since encryption was added,
+-- do not interpret ciphertext as invalid JSON, empty fields or matching values.
+-- Use an authorized decrypted read model before rerunning payload comparisons.
 -- Grain: one current interessenten list row per source_id, optional details.
 -- A detail read before its list row is not automatically stale: ingestion
 -- continues in batches. No raw names, IDs, contacts or notes are returned.
