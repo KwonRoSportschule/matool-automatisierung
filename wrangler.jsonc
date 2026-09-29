@@ -33,7 +33,6 @@
     "DASHBOARD_PASSWORD_REQUIRED": "false",
     "DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS": "false",
     "DATA_ENCRYPTION_REQUIRED": "false",
-    "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
     "PUBLIC_DASHBOARD_READ_ONLY": "false",
     "PUBLIC_DASHBOARD_PLAINTEXT": "false"
   },
@@ -84,7 +83,6 @@
         //   wrangler secret put DATA_ENCRYPTION_KEY --env staging
         // Ohne Schluessel schlagen Syncs fehl, statt Klartext zu speichern.
         "DATA_ENCRYPTION_REQUIRED": "true",
-        "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "false",
         // Klartext nur noch hinter dem Passwortschutz sichtbar.
         "PUBLIC_DASHBOARD_PLAINTEXT": "true"
@@ -140,7 +138,6 @@
         "DASHBOARD_PASSWORD_REQUIRED": "false",
         "DASHBOARD_REQUIRE_CLOUDFLARE_ACCESS": "false",
         "DATA_ENCRYPTION_REQUIRED": "true",
-        "PUBLIC_DASHBOARD_FULL_ACCESS": "false",
         "PUBLIC_DASHBOARD_READ_ONLY": "false",
         "PUBLIC_DASHBOARD_PLAINTEXT": "false"
       },

@@ -122,7 +122,6 @@ export interface DashboardAccessSummary {
     | "cloudflare-access"
     | "dashboard-password"
     | "local-development"
-    | "public-full-access"
     | "public-read-only";
   canManage: boolean;
   notice: string;
