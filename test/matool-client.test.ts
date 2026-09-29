@@ -249,11 +249,12 @@ function schuelerDataRow(number: number): string {
 
 function schuelerIdentifierRow(
   sourceId: string,
-  onclick = `formular_fuellen(${sourceId},'Synthetic ${sourceId}')`
+  onclick: string | readonly string[] = `formular_fuellen(${sourceId},'Synthetic ${sourceId}')`
 ): string {
+  const actions = typeof onclick === "string" ? [onclick] : onclick;
   return `
     <tr>
-      <td><img alt="" onclick="${onclick}"></td>
+      <td>${actions.map((action) => `<img alt="" onclick="${action}">`).join("")}</td>
       <td>
         <table>
           <tr><td>PRIVATE-HIDDEN-DETAIL-A-${sourceId}</td></tr>
@@ -2746,15 +2747,19 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
   describe.each(["schueler", "schueler_ex"] as const)("Kennungszuordnung fuer %s", (area) => {
     const validRows = schuelerRow("710001", 1);
     const orphan = schuelerIdentifierRow("710002");
-    const invalidCases = [
+    const invalidCases: Array<[string, string]> = [
       ["verwaiste Kennung vor gueltigem Paar", orphan + validRows],
       ["verwaiste Kennung nach gueltigem Paar", validRows + orphan],
       ["ungueltige Aktion neben gueltigem Paar", validRows + schuelerDataRow(2)
         + schuelerIdentifierRow("710002", "formular_fuellen(710002)")],
       ["Drei-Zellen-Datenzeile mit Kennung", validRows
         + "<tr><td>2</td><td>Synthetic</td><td>Person</td></tr>" + orphan],
-      ["mehrere Aktionen in Kennungszeile", validRows + schuelerDataRow(2)
+      ["mehrere Aktionen mit verschiedenen Kennungen in Kennungszeile", validRows + schuelerDataRow(2)
         + orphan.replace("<td><img", "<td><img onclick=\"formular_fuellen(710003,'Synthetic')\"><img")],
+      ["zweite Aktion nennt die Kennung eines anderen Mitglieds", validRows + schuelerDataRow(2)
+        + schuelerIdentifierRow("710002", ["formular_fuellen(710002,'')", "formular_fuellen(710001,'')"])],
+      ["zweite Aktion ohne lesbare Kennung in Kennungszeile", validRows + schuelerDataRow(2)
+        + schuelerIdentifierRow("710002", ["formular_fuellen(710002,'')", "formular_fuellen(710002)"])],
       ["Kennung unter unzugeordnetem Layout", validRows
         + `<tr><td><table>${orphan}</table></td></tr>`],
       ["ungueltige Aktion unter unzugeordnetem Layout", validRows
@@ -2762,7 +2767,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     ];
 
     it.each(invalidCases)("verwirft gemischte Seite: %s", async (_description, rows) => {
-      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows: rows! });
+      const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows });
       const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
       await expect(clientForPaginatedPages(pages).extractSafeArea({
         email: "service-account@example.invalid", password: "synthetic-password"
@@ -2790,6 +2795,76 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       expect(result.records.map(({ sourceId }) => sourceId)).toEqual(["710001", "710002"]);
       expect(result.rowCount).toBe(2);
       expect(result.records[0]?.payload).toMatchObject({ vorname: "Vorname 1", name: "Größmann 1" });
+    });
+
+    describe("Kennungszeilen mit mehreren Aktionen", () => {
+      const open = (id: string): string => `formular_fuellen(${id},'')`;
+      const convert = (id: string): string =>
+        `formular_fuellen(${id},'invertragwandeln')`;
+      const extract = (rows: string) => {
+        const body = paginatedListPage({ area, currentOffset: 0, offsets: [0], rows });
+        const pages = new Map([[paginationHref(area, 0).replaceAll("&amp;", "&"), { body }]]);
+        return clientForPaginatedPages(pages).extractSafeArea({
+          email: "service-account@example.invalid", password: "synthetic-password"
+        }, area);
+      };
+
+      it("uebernimmt alle 30 Mitglieder einer Seite mit 22 einfachen und 8 doppelten Kennungszeilen", async () => {
+        // Bildet die Struktur der Ex-Mitglieder-Seite 15 (Offset 420) vom
+        // 29.09.2026 nach: 30 sichtbare Zeilen, davon acht Kennungszeilen mit
+        // zwei Aktionen. Alle 30 Mitglieder muessen ankommen -- weder wird die
+        // Liste verworfen, noch fallen die acht still heraus.
+        const doubled = new Set([2, 5, 9, 12, 14, 20, 24, 29]);
+        const ids = Array.from({ length: 30 }, (_, index) => String(720001 + index));
+        const rows = ids.map((id, index) => schuelerDataRow(index + 1)
+          + schuelerIdentifierRow(id, doubled.has(index) ? [open(id), convert(id)] : [open(id)])
+        ).join("");
+        const result = await extract(rows);
+        expect(result.records.map(({ sourceId }) => sourceId)).toEqual(ids);
+        expect(result.rowCount).toBe(30);
+        expect(result.records[2]?.payload).toMatchObject({ vorname: "Vorname 3", name: "Größmann 3" });
+      });
+
+      it("uebernimmt auch mehr als zwei Aktionen, solange alle dieselbe Kennung nennen", async () => {
+        const rows = schuelerDataRow(1)
+          + schuelerIdentifierRow("720001", [open("720001"), convert("720001"), open("720001")]);
+        const result = await extract(rows);
+        expect(result.records.map(({ sourceId }) => sourceId)).toEqual(["720001"]);
+      });
+
+      it("verwirft weiterhin dieselbe Kennung in zwei Kennungszeilen", async () => {
+        const rows = schuelerDataRow(1)
+          + schuelerIdentifierRow("720001", [open("720001"), convert("720001")])
+          + schuelerDataRow(2)
+          + schuelerIdentifierRow("720001", [open("720001"), convert("720001")]);
+        await expect(extract(rows)).rejects.toMatchObject({
+          code: "matool_paginated_list_schema_mismatch", status: 502
+        });
+      });
+
+      it("nennt in der Diagnose Art und Kennungsanzahl der Aktionen, nie ihren Wortlaut", async () => {
+        const rows = schuelerDataRow(1)
+          + schuelerIdentifierRow("720001", [open("720001"), convert("720001")])
+          + schuelerDataRow(2)
+          + schuelerIdentifierRow("720002", [open("720002"), convert("720099")]);
+        const error = await extract(rows).then(() => undefined, (caught: unknown) => caught);
+        expect(error).toBeInstanceOf(MatoolShapeMismatchError);
+        const shape = (error as MatoolShapeMismatchError).shape;
+        expect(shape.rowShapes).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            distinctStableIdCount: 1, occurrences: 1, schuelerActionCandidateCount: 2,
+            schuelerActionKinds: ["convert", "open"], stableIdCount: 2
+          }),
+          expect.objectContaining({
+            distinctStableIdCount: 2, occurrences: 1, schuelerActionCandidateCount: 2,
+            schuelerActionKinds: ["convert", "open"], stableIdCount: 2
+          })
+        ]));
+        const serialized = JSON.stringify(shape);
+        for (const forbidden of ["invertragwandeln", "formular_fuellen", "720001", "720099"]) {
+          expect(serialized).not.toContain(forbidden);
+        }
+      });
     });
   });
 

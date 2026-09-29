@@ -98,6 +98,12 @@ const SCHUELER_SAFE_AREA_FIELDS = [
   "name",
   "vertrag"
 ] as const;
+/**
+ * Art einer formular_fuellen-Aktion in einer Mitgliederzeile. Die Diagnose
+ * nennt nur diese Art, nie den Wortlaut der Aktion.
+ */
+type SchuelerActionKind = "convert" | "named" | "no_todo" | "open" | "other";
+const MAX_SCHUELER_ACTION_KINDS = 8;
 export const MATOOL_KLASSEN_PAYLOAD_FIELDS =
   MATOOL_KLASSEN_DETAIL_PAYLOAD_FIELDS;
 
@@ -1519,6 +1525,8 @@ interface SafeAreaRowCapture {
   parentRow: SafeAreaRowCapture | undefined;
   schuelerActionCandidateCount: number;
   schuelerActionInvalid: boolean;
+  /** Art jeder Aktion in Dokumentreihenfolge, hoechstens 8; nie ihr Wortlaut. */
+  schuelerActionKinds: SchuelerActionKind[];
   stableListIds: string[];
   /**
    * Laufende Nummer der HTML-Tabelle, in der die Zeile steht -- also die
@@ -2085,6 +2093,7 @@ async function extractSafeAreaPage(
           parentRow: structuredRows ? rowStack.at(-1) : undefined,
           schuelerActionCandidateCount: 0,
           schuelerActionInvalid: false,
+          schuelerActionKinds: [],
           stableListIds: [],
           tableIndex: tableStack.at(-1) ?? -1,
           tdCount: 0,
@@ -2204,6 +2213,9 @@ async function extractSafeAreaPage(
           activeRow.schuelerActionCandidateCount += 1;
           if (!stableListId) {
             activeRow.schuelerActionInvalid = true;
+          }
+          if (activeRow.schuelerActionKinds.length < MAX_SCHUELER_ACTION_KINDS) {
+            activeRow.schuelerActionKinds.push(classifySchuelerAction(onclick));
           }
         }
         if (stableListId) {
@@ -2471,6 +2483,13 @@ type ExactPreparedSafeAreaRow = {
  * dazu 30 Kennungszeilen mit drei leeren Zellen, einer Kennung und je zwei
  * verschachtelten Zeilen. Ein frueherer Stand hielt die Kennungszeile fuer
  * die Datenzeile und verwarf deshalb jede Seite.
+ *
+ * Belegt am 29.09.2026 in der Strukturdiagnose der Ex-Mitglieder: Auf Seite 15
+ * (Offset 420) tragen acht der 30 Kennungszeilen zwei
+ * formular_fuellen-Aktionen statt einer. Der Stand vom 25.09. verwarf deshalb
+ * die ganze Liste, der davor uebersprang solche Zeilen still und konnte
+ * Mitglieder verlieren. Beides ist falsch: Nennen alle Aktionen einer Zeile
+ * dieselbe Kennung, ist sie eindeutig und wird uebernommen.
  */
 function prepareSchuelerSafeAreaRows(
   rows: readonly SafeAreaRowCapture[],
@@ -2488,6 +2507,7 @@ function prepareSchuelerSafeAreaRows(
 
   const records: ExactPreparedSafeAreaRow[] = [];
   const seenSourceIds = new Set<string>();
+  const consumedIdentifierRows = new Set<SafeAreaRowCapture>();
   let rowsOfInterest = 0;
 
   for (const [index, row] of rows.entries()) {
@@ -2500,9 +2520,9 @@ function prepareSchuelerSafeAreaRows(
     rowsOfInterest += 1;
     const identifierRow = rows[index + 1];
     if (!identifierRow || !isSchuelerSafeAreaIdentifierRow(identifierRow)) {
-      // Eine einzelne Zeile ohne Kennung wird uebergangen, nicht zum Anlass
-      // genommen, die ganze Seite zu verwerfen. Ein Sonderfall darf nicht
-      // den gesamten Abruf kosten.
+      // Kennungsfreie Layoutzeilen duerfen zwischen Datensaetzen stehen.
+      // Erkannte Kennungs-/Aktionskandidaten muessen dagegen unten einem
+      // uebernommenen Datensatz oder dessen Detailtafeln zugeordnet sein.
       continue;
     }
     const sourceId = identifierRow.stableListIds[0];
@@ -2526,6 +2546,27 @@ function prepareSchuelerSafeAreaRows(
       }
     });
     records.push({ explicitId: sourceId, payload });
+    consumedIdentifierRows.add(identifierRow);
+  }
+
+  for (const row of rows) {
+    if (
+      row.stableListIds.length === 0 &&
+      row.schuelerActionCandidateCount === 0 &&
+      !row.schuelerActionInvalid
+    ) {
+      continue;
+    }
+    // Details koennen ueber mehrere Tabellen verschachtelt sein. Nur ein
+    // tatsaechlich uebernommener Kennungsdatensatz legitimiert den Teilbaum;
+    // eine unzugeordnete Kennung irgendwo darueber reicht nicht aus.
+    let owner: SafeAreaRowCapture | undefined = row;
+    while (owner && !consumedIdentifierRows.has(owner)) {
+      owner = owner.parentRow;
+    }
+    if (!owner) {
+      throw paginatedSafeAreaSchemaError();
+    }
   }
 
   // Eine leere Seite ist zulaessig. Zeilen, von denen sich keine einzige
@@ -2549,16 +2590,22 @@ function isSchuelerSafeAreaDataRow(row: SafeAreaRowCapture): boolean {
   );
 }
 
-/** Die darauf folgende Zeile mit der Kennung und der Aufklapp-Aktion. */
+/**
+ * Die darauf folgende Zeile mit der Kennung und den Aktionssymbolen.
+ *
+ * Eine Zeile darf mehrere formular_fuellen-Aktionen tragen. Erlaubt ist das
+ * nur, solange jede Aktion lesbar ist und alle dieselbe Kennung nennen: Nennt
+ * eine Aktion eine andere Kennung, ist nicht mehr belegt, wessen Zeile es ist.
+ */
 function isSchuelerSafeAreaIdentifierRow(row: SafeAreaRowCapture): boolean {
   return (
     !row.header &&
     row.parentRow === undefined &&
     row.tdCount === 3 &&
     row.thCount === 0 &&
-    row.stableListIds.length === 1 &&
-    row.schuelerActionCandidateCount === 1 &&
-    !row.schuelerActionInvalid
+    row.stableListIds.length >= 1 &&
+    !row.schuelerActionInvalid &&
+    new Set(row.stableListIds).size === 1
   );
 }
 
@@ -3252,6 +3299,34 @@ function extractStableListId(
   return match?.[2] ?? match?.[3];
 }
 
+/**
+ * MATOOLs formular_fuellen(id, todo) oeffnet mit leerem todo das Mitglied;
+ * das Skript der Seite kennt sonst nur "invertragwandeln". Die Einordnung
+ * dient allein der Strukturdiagnose. Ob eine Aktion eine lesbare Kennung
+ * traegt, entscheidet extractStableListId.
+ */
+function classifySchuelerAction(onclick: string): SchuelerActionKind {
+  if (onclick.length > 512) {
+    return "other";
+  }
+  const match =
+    /^\s*formular_fuellen\(\s*(?:(["'])\d{1,64}\1|\d{1,64})\s*(?:,\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'))?\s*\)\s*;?\s*$/u.exec(
+      onclick
+    );
+  if (!match) {
+    return "other";
+  }
+  const todo = match[2] ?? match[3];
+  if (todo === undefined) {
+    return "no_todo";
+  }
+  return todo === ""
+    ? "open"
+    : todo === "invertragwandeln"
+      ? "convert"
+      : "named";
+}
+
 function extractArtikelAction(
   onclick: string
 ): { id: string; mode: "clone" | "none" } | undefined {
@@ -3383,6 +3458,10 @@ function describeSafeAreaShape(
       ).length,
       occurrences: 0,
       schuelerActionCandidateCount: row.schuelerActionCandidateCount,
+      schuelerActionInvalid: row.schuelerActionInvalid,
+      schuelerActionKinds: [...row.schuelerActionKinds].sort(),
+      stableIdCount: row.stableListIds.length,
+      distinctStableIdCount: new Set(row.stableListIds).size,
       tdCount: row.tdCount,
       thCount: row.thCount,
       topLevel: row.parentRow === undefined

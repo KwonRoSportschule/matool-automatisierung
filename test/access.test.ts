@@ -29,8 +29,8 @@ describe("Cloudflare-Access-Konfiguration", () => {
 
   it.each([
     "cloudflare-access",
-    "local-development",
-    "public-full-access"
+    "dashboard-password",
+    "local-development"
   ] as const)(
     "gibt geschuetzte Aktionen fuer %s frei",
     (authentication) => {
@@ -47,18 +47,22 @@ describe("Cloudflare-Access-Konfiguration", () => {
     ["GET", "/"],
     ["GET", "/api/admin/v1/csrf"],
     ["POST", "/api/admin/v1/matool/sync"]
-  ])("erlaubt mit Vollzugriff %s %s ohne Anmeldung", async (method, path) => {
-    const identity = await requireAccessIdentity(
-      new Request(`https://middleware.example.invalid${path}`, { method }),
-      {
-        APP_ENV: "staging",
-        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
-      } as Env
-    );
-    expect(identity).toEqual({
-      authentication: "public-full-access",
-      subject: "public-dashboard-full-access"
-    });
+  ])("ignoriert den entfernten Vollzugriffsschalter fuer %s %s", async (method, path) => {
+    // Eine im Cloudflare-Dashboard verbliebene Variable (deploy:staging
+    // behaelt Variablen mit --keep-vars) darf nichts mehr freigeben.
+    await expect(
+      requireAccessIdentity(
+        new Request(`https://middleware.example.invalid${path}`, { method }),
+        {
+          ...env,
+          ACCESS_AUD: "configure-with-cloudflare-access",
+          ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
+          ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access",
+          APP_ENV: "staging",
+          PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+        } as Env
+      )
+    ).rejects.toMatchObject({ code: "access_not_configured" });
   });
 
   it("lässt die Zapier-Service-API trotz öffentlichem Dashboard geschützt", async () => {
@@ -70,7 +74,7 @@ describe("Cloudflare-Access-Konfiguration", () => {
           ACCESS_SERVICE_AUD: "configure-with-cloudflare-access-service-app",
           ACCESS_TEAM_DOMAIN: "configure-with-cloudflare-access",
           APP_ENV: "staging",
-          PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+          PUBLIC_DASHBOARD_READ_ONLY: "true"
         } as Env,
         "zapier-service"
       )
@@ -223,7 +227,6 @@ describe("Dashboard-Passwortschutz", () => {
     DASHBOARD_PASSWORD: "synthetisches-Passwort-äöü",
     DASHBOARD_PASSWORD_REQUIRED: "true",
     DASHBOARD_USERNAME: "synthetic-trainer",
-    PUBLIC_DASHBOARD_FULL_ACCESS: "true",
     PUBLIC_DASHBOARD_READ_ONLY: "true"
   } as Env;
 
@@ -298,7 +301,7 @@ describe("Dashboard-Passwortschutz", () => {
       requireAccessIdentity(dashboardRequest(), {
         APP_ENV: "staging",
         DASHBOARD_PASSWORD_REQUIRED: "true",
-        PUBLIC_DASHBOARD_FULL_ACCESS: "true",
+        PUBLIC_DASHBOARD_READ_ONLY: "true",
         ...secrets
       } as Env)
     ).rejects.toMatchObject({
@@ -313,7 +316,7 @@ describe("Dashboard-Passwortschutz", () => {
         APP_ENV: "staging",
         DASHBOARD_PASSWORD: "synthetisches-Passwort",
         DASHBOARD_USERNAME: "synthetic-trainer",
-        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+        PUBLIC_DASHBOARD_READ_ONLY: "true"
       } as Env)
     ).rejects.toMatchObject({ code: "dashboard_login_required" });
   });

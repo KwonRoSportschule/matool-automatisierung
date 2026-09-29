@@ -1,6 +1,7 @@
 # Fehler- und Datenbank-Überarbeitung – Analyse und To-do
 
 Stand: 22.09.2026
+Aktualisierung: 28.09.2026, siehe `fortschritt-2026-09-28.md`.
 Umfang: Umsetzung am 22.09.2026 vom Nutzer freigegeben; laufende Arbeit mit
 Zehn-Minuten-Berichten. Abgehakte lokale Änderungen sind nicht automatisch
 bereits ausgerollt. Deployment- und Beobachtungsstatus separat nachweisen.
@@ -121,6 +122,14 @@ reproduzierbar; ein Rückweg ist dokumentiert.
   Änderungen.
 - [ ] Parität zwischen MATOOL-Quellmenge und D1-Bestand für `schueler_ex`
   nachweisen.
+- [ ] Neue Zeilenabweichung auf Ex-Mitglieder-Seite 15 personendatenfrei
+  aufklären: acht Kennungszeilen mit je zwei Aktionen. Anzahl gültiger/eindeutiger
+  Kennungen und Zusatzaktion belegen, dann gezielt korrigieren. Schutz nicht
+  pauschal lockern. Bestandserhalt (1.951 IDs) ist keine vollständige Parität.
+  29.09.: korrigiert (Mehrfachaktionen zur selben Kennung werden gelesen, fremde
+  Kennungen bleiben Fehler) und um 09:14 UTC auf Staging ausgerollt (Version
+  328a9c7f, `main` plus Fix). Wirkung im Live-Lauf noch offen, Fix noch nicht in
+  `main`, Zusatzaktion selbst weiter unbelegt; siehe `fortschritt-2026-09-29.md`.
 - [ ] Nach Deployment mindestens einen vollständigen Betriebstag beobachten:
   elf von elf geplanten Läufen ohne `schueler_ex`-Fehler.
 
@@ -145,6 +154,11 @@ ist nicht mehr `partial_failed`.
   Gesamtstatus. Keine Funktionen aktiviert.
 - [ ] Warnungen nach Ursache gruppieren, damit elf gleiche Fehler nicht wie elf
   verschiedene Probleme wirken.
+  Implementierung in Git vorhanden; 14 Gruppen- und 4 Health-Regressionen
+  lokal grün. Aktuelle Live-Darstellung hinter Passwortschutz nicht abgenommen.
+- [ ] Doppelte Direktläufe bei belegter Sperre gesondert klassifizieren und
+  abgebrochene Gesamtläufe zuverlässig erkennen. Historische `running`-Zeilen
+  ohne belegte Lease-Zuordnung nicht blind umschreiben; vor Bereinigung sichern.
 
 Abnahme: Rot bedeutet einen echten Betriebsfehler; deaktiviert bedeutet eine
 bewusste Konfiguration.

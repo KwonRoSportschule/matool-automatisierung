@@ -45,47 +45,50 @@ describe("Worker-Grenzen", () => {
     });
   });
 
-  it("gibt im öffentlichen Staging Vollzugriff ohne Anmeldung frei", async () => {
-    const context = createExecutionContext();
+  it("gibt im öffentlichen Staging ohne Anmeldung keine Mitarbeiterrechte frei", async () => {
+    // Der fruehere Schalter PUBLIC_DASHBOARD_FULL_ACCESS ist entfernt. Bleibt
+    // er als Variable im Cloudflare-Dashboard stehen, darf er nichts bewirken.
     const publicEnv = {
       ...env,
       APP_ENV: "staging",
       PUBLIC_DASHBOARD_FULL_ACCESS: "true",
       PUBLIC_DASHBOARD_READ_ONLY: "true"
     } as Env;
-    const status = await worker.fetch(
-      new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/status"
-      ),
-      publicEnv,
-      context
+    const origin = "https://matool-middleware-staging.example.invalid";
+
+    const status = await dispatch(
+      new Request(`${origin}/api/admin/v1/status`),
+      publicEnv
     );
     expect(status.status).toBe(200);
 
-    const overview = await worker.fetch(
-      new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/dashboard/overview?range=7"
-      ),
-      publicEnv,
-      context
+    const overview = await dispatch(
+      new Request(`${origin}/api/admin/v1/dashboard/overview?range=7`),
+      publicEnv
     );
     expect(overview.status).toBe(200);
     await expect(overview.json()).resolves.toMatchObject({
-      access: {
-        authentication: "public-full-access",
-        canManage: true
-      }
+      access: { authentication: "public-read-only", canManage: false }
     });
 
-    const csrf = await worker.fetch(
-      new Request(
-        "https://matool-middleware-staging.example.invalid/api/admin/v1/csrf"
-      ),
-      publicEnv,
-      context
+    const csrf = await dispatch(
+      new Request(`${origin}/api/admin/v1/csrf`),
+      publicEnv
     );
-    expect(csrf.status).toBe(200);
-    await waitOnExecutionContext(context);
+    expect(csrf.status).toBe(403);
+
+    const sync = await dispatch(
+      new Request(`${origin}/api/admin/v1/matool/sync`, {
+        body: "{}",
+        headers: { "Content-Type": "application/json", Origin: origin },
+        method: "POST"
+      }),
+      publicEnv
+    );
+    expect(sync.status).toBe(403);
+    await expect(sync.json()).resolves.toMatchObject({
+      error: { code: "access_denied" }
+    });
   });
 
   it("schützt Webseite und Admin-API mit dem Dashboard-Passwort", async () => {
@@ -95,7 +98,6 @@ describe("Worker-Grenzen", () => {
       DASHBOARD_PASSWORD: "synthetic-dashboard-password",
       DASHBOARD_PASSWORD_REQUIRED: "true",
       DASHBOARD_USERNAME: "synthetic-trainer",
-      PUBLIC_DASHBOARD_FULL_ACCESS: "true",
       PUBLIC_DASHBOARD_READ_ONLY: "true"
     } as Env;
     const origin = "https://matool-middleware-staging.example.invalid";
@@ -155,7 +157,7 @@ describe("Worker-Grenzen", () => {
         ...env,
         APP_ENV: "staging",
         DASHBOARD_PASSWORD_REQUIRED: "true",
-        PUBLIC_DASHBOARD_FULL_ACCESS: "true"
+        PUBLIC_DASHBOARD_READ_ONLY: "true"
       } as Env
     );
     expect(response.status).toBe(503);
