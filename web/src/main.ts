@@ -497,7 +497,7 @@ function areaCard(area: AreaSummary): HTMLElement {
   header.append(title, createStatusBadge(area.state, stateLabel(area.state)));
   const list = document.createElement("dl");
   appendDefinition(list, "Gespeichert", formatNumber(area.storedCount));
-  appendDefinition(list, "Aktuell", formatNumber(area.currentCount));
+  appendDefinition(list, "Im letzten Abruf", formatNumber(area.currentCount));
   appendDefinition(list, "Neu", formatNumber(area.newCount));
   appendDefinition(list, "Geändert", formatNumber(area.changedCount));
   appendDefinition(list, "Letzte Änderung", formatDateTime(area.lastChangedAt));
@@ -903,7 +903,8 @@ function appendAreaCountCell(
   const total = document.createElement("strong");
   total.textContent = formatNumber(stored);
   const currentValue = document.createElement("small");
-  currentValue.textContent = `${formatNumber(current)} aktuell`;
+  // Rotierende Bereiche lesen je Lauf nur ein Paket; "aktuell" war missverstaendlich.
+  currentValue.textContent = `${formatNumber(current)} im letzten Abruf gelesen`;
   currentValue.style.display = "block";
   cell.append(total, currentValue);
   row.append(cell);
