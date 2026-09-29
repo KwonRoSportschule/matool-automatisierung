@@ -35,6 +35,7 @@ import {
   beginMatoolSyncRun,
   finishMatoolSyncRun,
   markAbandonedMatoolSyncRuns,
+  recordMatoolSyncRunPlan,
   recordSkippedMatoolSync,
   type MatoolSyncTrigger
 } from "./sync-store";
@@ -121,13 +122,11 @@ export const MATOOL_STILLLEGUNGEN_PER_RUN = 60;
 export const MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN = 10;
 
 /**
- * Der manuelle Abruf als Workflow hat kein 15-Minuten-Limit. Er liest
- * deshalb zusaetzlich die Stilllegungen aller Mitglieder, fuer die sie noch
- * nie gelesen wurden -- ein Klick fuellt den Bestand, statt ihn tagelang
- * stundenweise nachzulesen. Obergrenze: 650 Mitglieder (je drei Abrufe),
- * damit der Lauf unter MATOOL_MAX_REQUESTS_PER_RUN bleibt.
+ * Der manuelle Abruf als Workflow liest die Stilllegungen aller Mitglieder,
+ * fuer die sie noch nie gelesen wurden, in Paketen dieser Groesse nach (je
+ * Paket ein eigener Lauf, sofort gespeichert; siehe direct-sync-workflow.ts).
  */
-export const MATOOL_STILLLEGUNGEN_FILL_MAX = 650;
+export const MATOOL_STILLLEGUNGEN_FILL_BATCH = 100;
 
 /** Mitglieder der Liste, deren Stilllegungen noch nie gelesen wurden. */
 export async function countUnreadStilllegungen(db: D1Database): Promise<number> {
@@ -553,6 +552,33 @@ export async function waitForFreeDirectSyncLease(
   return true;
 }
 
+/**
+ * Lebenszeichen waehrend eines Bereichs. Ein kurzer D1-Aussetzer beim
+ * Verlaengern (matool_exact_sync_lease_store_failed) bricht den Bereich nicht
+ * ab, solange die Sperre noch mindestens fuenf Minuten gilt -- sonst waere
+ * alles bis dahin Gelesene verloren. Eine verlorene Sperre bleibt ein Fehler;
+ * vor dem Speichern prueft der Fencing-Guard ohnehin nochmals.
+ */
+export async function renewLeaseHeartbeat(
+  db: D1Database,
+  lease: ExactSyncLease,
+  now: Date = new Date()
+): Promise<ExactSyncLease> {
+  try {
+    return await renewExactSyncLease(db, lease, now);
+  } catch (error) {
+    const code = toAppError(error).code;
+    const rest = Date.parse(lease.expiresAt) - now.getTime();
+    if (code === "matool_exact_sync_lease_store_failed" && rest > 5 * 60_000) {
+      console.warn(
+        JSON.stringify({ event: "matool_lease_heartbeat_skipped", errorCode: code })
+      );
+      return lease;
+    }
+    throw error;
+  }
+}
+
 export async function collectMatoolSnapshots(
   env: Env,
   scheduledTime: number,
@@ -564,14 +590,11 @@ export async function collectMatoolSnapshots(
      * Bereich mehr, und Abrufe je Mitglied enden mit dem bis dahin Gelesenen.
      */
     deadline?: number;
-    /**
-     * Stilllegungen aller noch nie gelesenen Mitglieder mitlesen (nur der
-     * manuelle Abruf als Workflow, der kein Zeitlimit hat).
-     */
-    fillUnreadStilllegungen?: boolean;
+    /** Abweichende Paketgroesse fuer die Stilllegungen (Nachlesen). */
+    stilllegungenLimit?: number;
   } = {}
 ): Promise<CollectSnapshotsResult> {
-  const { deadline, fillUnreadStilllegungen = false } = options;
+  const { deadline, stilllegungenLimit } = options;
   const directAreas = areas.filter(
     (area) =>
       area !== "interessenten" && area !== "interessenten_details"
@@ -603,6 +626,8 @@ export async function collectMatoolSnapshots(
     startedAt,
     trigger
   });
+  // Welche Bereiche dieser Lauf liest -- fuer die Fortschrittskarte.
+  await recordMatoolSyncRunPlan(env.DB, syncId, directAreas);
 
   const credentials = {
     email: env.MATOOL_EMAIL,
@@ -668,10 +693,7 @@ export async function collectMatoolSnapshots(
             ? await readMatchingExactSource(
                 () => exactAreaSession(env, credentials, area),
                 async () => {
-                  activeLease = await renewExactSyncLease(
-                    env.DB,
-                    activeLease
-                  );
+                  activeLease = await renewLeaseHeartbeat(env.DB, activeLease);
                 }
               )
             : await readDirectArea(
@@ -679,15 +701,11 @@ export async function collectMatoolSnapshots(
                 credentials,
                 area,
                 env.DB,
-                area === "schueler_stilllegungen" && fillUnreadStilllegungen
-                  ? detailLimitFor(area, trigger) +
-                      Math.min(
-                        MATOOL_STILLLEGUNGEN_FILL_MAX,
-                        await countUnreadStilllegungen(env.DB)
-                      )
+                area === "schueler_stilllegungen" && stilllegungenLimit !== undefined
+                  ? stilllegungenLimit
                   : detailLimitFor(area, trigger),
                 async () => {
-                  activeLease = await renewExactSyncLease(env.DB, activeLease);
+                  activeLease = await renewLeaseHeartbeat(env.DB, activeLease);
                 },
                 areaDeadline === undefined
                   ? undefined

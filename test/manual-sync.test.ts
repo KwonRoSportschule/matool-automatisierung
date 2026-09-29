@@ -255,8 +255,8 @@ describe("Stundenlauf bei belegter Sperre", () => {
   });
 });
 
-describe("Manueller Abruf liest alle ungelesenen Stilllegungen", () => {
-  it("zaehlt ungelesene Mitglieder und fragt sie alle ab", async () => {
+describe("Stilllegungen nachlesen", () => {
+  it("zaehlt ungelesene Mitglieder und liest ein Paket in der gewuenschten Groesse", async () => {
     const { vi } = await import("vitest");
     const { MatoolClient } = await import("../src/matool/client");
     const { persistMatoolSnapshotRun } = await import("../src/worker/matool-store");
@@ -283,25 +283,106 @@ describe("Manueller Abruf liest alle ungelesenen Stilllegungen", () => {
     await persist("schueler_stilllegungen", ids.slice(0, 5), { zeitraeume: "" });
     await expect(countUnreadStilllegungen(env.DB)).resolves.toBe(25);
 
-    let angefragt = 0;
+    let angefragt: readonly string[] = [];
     const abruf = vi.spyOn(MatoolClient.prototype, "extractStilllegungen").mockImplementation(
       async (_credentials, sourceIds) => {
-        angefragt = sourceIds.length;
+        angefragt = sourceIds;
         return { area: "schueler_stilllegungen", bodyBytes: 0, records: [], rowCount: 0 };
       }
     );
     const runtimeEnv = { ...env, MATOOL_EMAIL: "x@example.invalid", MATOOL_PASSWORD: "synthetic" } as Env;
     try {
       await collectMatoolSnapshots(runtimeEnv, Date.now(), ["schueler_stilllegungen"], "manual", {
-        fillUnreadStilllegungen: true
+        stilllegungenLimit: 20
       });
-      // Alle 25 ungelesenen plus die 5 aeltesten gelesenen (Paket 10 → 30 Mitglieder in der Liste).
-      expect(angefragt).toBe(Math.min(30, 25 + MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN));
+      // Ungelesene zuerst.
+      expect(angefragt).toHaveLength(20);
+      expect(angefragt.every((id) => !ids.slice(0, 5).includes(id))).toBe(true);
 
       await collectMatoolSnapshots(runtimeEnv, Date.now(), ["schueler_stilllegungen"], "manual");
-      expect(angefragt).toBe(MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN);
+      expect(angefragt).toHaveLength(MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN);
+
+      // Die Karte zeigt fuer diesen Lauf nur den geplanten Bereich.
+      const { readMatoolSyncRunPlan } = await import("../src/worker/sync-store");
+      const letzter = await env.DB.prepare(
+        "SELECT sync_id FROM matool_sync_runs ORDER BY started_at DESC LIMIT 1"
+      ).first<{ sync_id: string }>();
+      await expect(readMatoolSyncRunPlan(env.DB, letzter!.sync_id)).resolves.toEqual([
+        "schueler_stilllegungen"
+      ]);
     } finally {
       abruf.mockRestore();
     }
+  });
+
+  it("liest im Workflow nach dem Abruf paketweise nach, bis nichts mehr offen ist", async () => {
+    const { introspectWorkflowInstance } = await import("cloudflare:test");
+    const workflow = (env as unknown as Env).DIRECT_SYNC_WORKFLOW!;
+    const jobId = `manuell_fill_${Date.now()}`;
+    await env.DB.prepare("DROP TABLE IF EXISTS matool_manual_sync_jobs").run();
+    await createManualSyncJob(env.DB, jobId);
+    const instance = await introspectWorkflowInstance(workflow, jobId);
+    try {
+      await instance.modify(async (m) => {
+        await m.disableSleeps();
+        await m.mockStepResult({ name: "abruf" }, { failed: 0, failedAreas: [], storedTotal: 600, succeeded: 6 });
+        await m.mockStepResult({ name: "stilllegungen-offen-0" }, 150);
+        await m.mockStepResult({ name: "stilllegungen-nachlesen-0" }, { storedTotal: 100 });
+        await m.mockStepResult({ name: "stilllegungen-offen-1" }, 50);
+        await m.mockStepResult({ name: "stilllegungen-nachlesen-1" }, { storedTotal: 50 });
+        await m.mockStepResult({ name: "stilllegungen-offen-2" }, 0);
+      });
+      await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
+      await instance.waitForStatus("complete");
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 750, succeeded: 6 });
+      await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({ status: "succeeded", storedTotal: 750 });
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("behaelt den Abruf, wenn ein Paket auch nach Wiederholung scheitert", async () => {
+    const { introspectWorkflowInstance } = await import("cloudflare:test");
+    const workflow = (env as unknown as Env).DIRECT_SYNC_WORKFLOW!;
+    const jobId = `manuell_fillfehler_${Date.now()}`;
+    await env.DB.prepare("DROP TABLE IF EXISTS matool_manual_sync_jobs").run();
+    await createManualSyncJob(env.DB, jobId);
+    const instance = await introspectWorkflowInstance(workflow, jobId);
+    try {
+      await instance.modify(async (m) => {
+        await m.disableSleeps();
+        await m.disableRetryDelays();
+        await m.mockStepResult({ name: "abruf" }, { failed: 0, failedAreas: [], storedTotal: 600, succeeded: 6 });
+        await m.mockStepResult({ name: "stilllegungen-offen-0" }, 150);
+        await m.mockStepError({ name: "stilllegungen-nachlesen-0" }, new Error("matool_exact_sync_lease_store_failed"), 3);
+      });
+      await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
+      await instance.waitForStatus("complete");
+      await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
+        status: "partial_failed",
+        storedTotal: 600,
+        failedAreas: ["schueler_stilllegungen"]
+      });
+    } finally {
+      await instance.dispose();
+    }
+  });
+});
+
+describe("Lebenszeichen der Sperre", () => {
+  it("uebersteht einen kurzen D1-Aussetzer, solange die Sperre noch gilt", async () => {
+    const { renewLeaseHeartbeat } = await import("../src/worker/schedule");
+    const kaputt = {
+      prepare: () => {
+        throw new Error("D1_ERROR: network connection lost");
+      }
+    } as unknown as D1Database;
+    const jetzt = new Date("2098-09-01T10:00:00.000Z");
+    const lease = { ownerId: "direct_test", fencingToken: 7, expiresAt: "2098-09-01T10:15:00.000Z" };
+    await expect(renewLeaseHeartbeat(kaputt, lease, jetzt)).resolves.toBe(lease);
+    const knapp = { ...lease, expiresAt: "2098-09-01T10:03:00.000Z" };
+    await expect(renewLeaseHeartbeat(kaputt, knapp, jetzt)).rejects.toMatchObject({
+      code: "matool_exact_sync_lease_store_failed"
+    });
   });
 });

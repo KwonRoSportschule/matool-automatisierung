@@ -14,6 +14,7 @@
 import { areaLabel } from "./dashboard-privacy";
 import { isDirectSyncLeaseHeld } from "./direct-sync-store";
 import { MATOOL_DIRECT_SNAPSHOT_AREAS } from "./schedule";
+import { readMatoolSyncRunPlan } from "./sync-store";
 
 export type SyncProgressAreaState = "done" | "running" | "waiting" | "failed";
 
@@ -102,7 +103,7 @@ export async function getSyncProgress(
     return null;
   }
 
-  const [erledigt, historie] = await Promise.all([
+  const [erledigt, historie, plan] = await Promise.all([
     db
       .prepare(
         `SELECT area, status, started_at, finished_at, error_code
@@ -123,11 +124,12 @@ export async function getSyncProgress(
          LIMIT 400`
       )
       .bind(run.trigger_kind, run.sync_id)
-      .all<AreaRunRow>()
+      .all<AreaRunRow>(),
+    readMatoolSyncRunPlan(db, run.sync_id)
   ]);
 
   return berechneFortschritt({
-    areas: MATOOL_DIRECT_SNAPSHOT_AREAS,
+    areas: plan && plan.length > 0 ? plan : MATOOL_DIRECT_SNAPSHOT_AREAS,
     done: erledigt.results,
     history: historie.results,
     now,
