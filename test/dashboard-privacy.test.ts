@@ -123,7 +123,10 @@ describe("Dashboard-Datenschutz", () => {
       "online"
     ]) {
       expect(fields.get(key)?.masked).toBe(false);
-      expect(fields.get(key)?.value).toBe(String(payload[key as keyof typeof payload]));
+      // 0/1-Felder erscheinen lesbar als Nein/Ja.
+      expect(fields.get(key)?.value).toBe(
+        key === "online" ? "Nein" : String(payload[key as keyof typeof payload])
+      );
     }
     for (const key of [
       "benutzer",
@@ -499,4 +502,62 @@ describe("MATOOL-Logging ohne Personendaten", () => {
     expect(serializedLogs).not.toContain("synthetic-privacy-test@example.invalid");
     expect(serializedLogs).not.toContain("synthetic-test-password");
   }, 15_000);
+});
+
+describe("lesbare Werte und fachliche Uebersicht", () => {
+  it("formatiert Datum, Leerdatum, Ja/Nein, Uhrzeit und Betrag", async () => {
+    const { readableDashboardValue } = await import("../src/worker/dashboard-privacy");
+    expect(readableDashboardValue("vertragsbeginn", "2025-02-01")).toBe("01.02.2025");
+    expect(readableDashboardValue("vertragdatum", "2026-02-01 00:00:00")).toBe("01.02.2026");
+    expect(readableDashboardValue("einfuehrung", "0000-00-00")).toBe("");
+    expect(readableDashboardValue("einfuehrung_anwesend", "1")).toBe("Ja");
+    expect(readableDashboardValue("einfuehrung_anwesend", "0")).toBe("Nein");
+    expect(readableDashboardValue("einfuehrung_zeit", "17:30:00")).toBe("17:30 Uhr");
+    expect(readableDashboardValue("einfuehrung_zeit", "00:00:00")).toBe("");
+    expect(readableDashboardValue("einfuehrung_klasse", "0")).toBe("");
+    expect(readableDashboardValue("beitrag", "49.00").replace(/\s/gu, " ")).toBe("49,00 €");
+    expect(readableDashboardValue("status", "Neu")).toBe("Neu");
+    expect(readableDashboardValue("memo", "Termin 2026-02-01 absagen")).toBe("Termin 2026-02-01 absagen");
+  });
+
+  it("setzt die Interessenten-Uebersicht aus Listen- und Detailfeldern zusammen", async () => {
+    const { dashboardSummaryColumns, dashboardSummaryValues } = await import(
+      "../src/worker/dashboard-privacy"
+    );
+    expect(dashboardSummaryColumns("interessenten").map((column) => column.label)).toEqual([
+      "Name",
+      "Status",
+      "1. Probetraining",
+      "Kontakt",
+      "Angelegt",
+      "Quelle"
+    ]);
+    const payload = {
+      datum: "2026-09-20",
+      einfuehrung: "2026-10-01",
+      einfuehrung_anwesend: "1",
+      einfuehrung_klasse_name: "Kinder Anfänger",
+      einfuehrung_zeit: "17:30:00",
+      email: "synthetisch@example.invalid",
+      handy: "0151 0000000",
+      name: "Muster",
+      quelle: "Webseite",
+      status: "Probetraining vereinbart",
+      vorname: "Anna"
+    };
+    expect(dashboardSummaryValues("interessenten", payload, true)).toEqual({
+      angelegt: "20.09.2026",
+      kontakt: "synthetisch@example.invalid\n0151 0000000",
+      person: "Anna Muster",
+      probetraining: "01.10.2026, 17:30 Uhr\nKinder Anfänger · erschienen",
+      quelle: "Webseite",
+      status: "Probetraining vereinbart"
+    });
+    // Maskiert: Personenfelder bleiben geschuetzt, der Status nicht.
+    expect(dashboardSummaryValues("interessenten", payload, false)).toMatchObject({
+      kontakt: PROTECTED_DASHBOARD_VALUE,
+      person: PROTECTED_DASHBOARD_VALUE,
+      status: "Probetraining vereinbart"
+    });
+  });
 });

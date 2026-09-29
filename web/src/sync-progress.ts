@@ -1,3 +1,4 @@
+import { errorLabel } from "./error-labels";
 import { getSyncStatus, isAbortError } from "./api";
 import { byId } from "./dom";
 import type { ManualSyncJob, SyncProgress, SyncStatusResponse } from "./types";
@@ -85,7 +86,7 @@ function renderLauf(progress: SyncProgress, manual: ManualSyncJob | null): void 
               ? `läuft · ca. ${minuten(area.estimateMs)}`
               : "wartet";
       if (area.errorCode) {
-        zustand.title = area.errorCode;
+        zustand.title = errorLabel(area.errorCode);
       }
       head.append(name, zustand);
       const bar = document.createElement("div");

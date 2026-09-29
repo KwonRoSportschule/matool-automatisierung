@@ -231,7 +231,7 @@ describe("Worker-Grenzen", () => {
     );
     await expect(unencrypted.json()).resolves.toMatchObject({
       connections: {
-        security: { state: "critical", statusLabel: "Nicht verschluesselt" }
+        security: { state: "critical", statusLabel: "Nicht verschlüsselt" }
       },
       overall: { state: "critical" }
     });
