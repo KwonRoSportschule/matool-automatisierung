@@ -49,6 +49,11 @@
       "binding": "INTERESSENTEN_SYNC_WORKFLOW",
       "name": "matool-interessenten-sync-local",
       "class_name": "InteressentenSyncWorkflow"
+    },
+    {
+      "binding": "DIRECT_SYNC_WORKFLOW",
+      "name": "matool-direct-sync-local",
+      "class_name": "DirectSyncWorkflow"
     }
   ],
   "env": {
@@ -100,6 +105,11 @@
           "binding": "INTERESSENTEN_SYNC_WORKFLOW",
           "name": "matool-interessenten-sync-staging",
           "class_name": "InteressentenSyncWorkflow"
+        },
+        {
+          "binding": "DIRECT_SYNC_WORKFLOW",
+          "name": "matool-direct-sync-staging",
+          "class_name": "DirectSyncWorkflow"
         }
       ],
       // Spiegelt die im Cloudflare-Dashboard gesetzten Limits (Workers Paid).
@@ -154,6 +164,11 @@
           "binding": "INTERESSENTEN_SYNC_WORKFLOW",
           "name": "matool-interessenten-sync-production",
           "class_name": "InteressentenSyncWorkflow"
+        },
+        {
+          "binding": "DIRECT_SYNC_WORKFLOW",
+          "name": "matool-direct-sync-production",
+          "class_name": "DirectSyncWorkflow"
         }
       ],
       "triggers": {

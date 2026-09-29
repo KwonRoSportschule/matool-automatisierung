@@ -28,6 +28,8 @@ import {
   listDashboardActivities,
   listDashboardRecords
 } from "./dashboard-repository";
+import { latestManualSyncJob } from "./direct-sync-store";
+import { requestManualSync } from "./direct-sync-workflow";
 import type { Env } from "./env";
 import {
   getInteressentenSyncPublicStatus,
@@ -43,9 +45,11 @@ import {
   collectMatoolSnapshots,
   handleScheduledInvocation
 } from "./schedule";
+import { getSyncProgress } from "./sync-progress";
 import { handleZapierApiRequest } from "./zapier-api";
 
 export { InteressentenSyncWorkflow } from "./interessenten-sync-workflow";
+export { DirectSyncWorkflow } from "./direct-sync-workflow";
 
 const worker = {
   async fetch(
@@ -378,6 +382,18 @@ async function handleApiRequest(
   }
 
   if (url.pathname === "/api/admin/v1/matool/sync") {
+    // Stand fuer Fortschrittskarte und Knopf: laufender Abruf (Stundenlauf
+    // oder manuell) und der letzte manuelle Auftrag.
+    if (request.method === "GET") {
+      const [manual, progress] = await Promise.all([
+        latestManualSyncJob(env.DB),
+        getSyncProgress(env.DB)
+      ]);
+      return jsonResponse({ schemaVersion: 1, manual, progress });
+    }
+    if (request.method !== "POST") {
+      methodNotAllowed(["GET", "POST"]);
+    }
     await requireValidCsrfRequest(request, identity, env);
 
     if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
@@ -393,6 +409,16 @@ async function handleApiRequest(
         "matool_runs_not_confirmed",
         409,
         "Read-only-Echtdatenläufe sind noch nicht freigegeben."
+      );
+    }
+
+    // Als Workflow: antwortet sofort, wartet auf einen laufenden Abruf und
+    // laeuft unabhaengig vom Browser.
+    if (env.DIRECT_SYNC_WORKFLOW) {
+      const { job } = await requestManualSync(env);
+      return jsonResponse(
+        { schemaVersion: 1, manual: job, progress: await getSyncProgress(env.DB) },
+        { status: 202 }
       );
     }
 

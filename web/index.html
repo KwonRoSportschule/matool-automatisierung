@@ -43,6 +43,20 @@
     </header>
 
     <main id="main" class="app-shell">
+      <section class="panel sync-progress" id="sync-progress" aria-live="polite" hidden>
+        <div class="sync-progress-head">
+          <div>
+            <div class="eyebrow" id="sync-progress-eyebrow">Abruf läuft</div>
+            <h2 id="sync-progress-title">MATOOL wird gelesen</h2>
+          </div>
+          <span class="sync-progress-percent" id="sync-progress-percent">0 %</span>
+        </div>
+        <div class="sync-progress-bar" role="progressbar" aria-labelledby="sync-progress-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="sync-progress-bar">
+          <span id="sync-progress-fill"></span>
+        </div>
+        <p class="sync-progress-meta" id="sync-progress-meta"></p>
+        <ol class="sync-progress-areas" id="sync-progress-areas"></ol>
+      </section>
       <section class="hero" id="overview" aria-labelledby="page-title">
         <div class="hero-copy">
           <div class="eyebrow">Internes Kontrollzentrum</div>

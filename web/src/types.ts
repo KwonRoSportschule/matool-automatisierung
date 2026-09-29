@@ -280,6 +280,46 @@ export interface DiscoveryResponse {
   schemaVersion: number;
 }
 
+export interface ManualSyncJob {
+  jobId: string;
+  requestedAt: string;
+  status: "requested" | "waiting" | "running" | "succeeded" | "partial_failed" | "failed";
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  storedTotal: number;
+  succeeded: number;
+  failed: number;
+  failedAreas: string[];
+  errorCode: string | null;
+}
+
+export interface SyncProgressArea {
+  area: string;
+  label: string;
+  state: "done" | "running" | "waiting" | "failed";
+  estimateMs: number;
+  fraction: number;
+  errorCode: string | null;
+}
+
+export interface SyncProgress {
+  syncId: string;
+  trigger: "manual" | "scheduled";
+  startedAt: string;
+  now: string;
+  percent: number;
+  remainingMs: number;
+  estimatedFinishAt: string;
+  current: { area: string; label: string } | null;
+  areas: SyncProgressArea[];
+}
+
+export interface SyncStatusResponse {
+  manual: ManualSyncJob | null;
+  progress: SyncProgress | null;
+}
+
 export interface SyncResponse {
   sync: {
     areas: Array<{ area: string; errorCode?: string; status: string }>;

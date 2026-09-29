@@ -11,6 +11,7 @@ import { MATOOL_GRADUIERUNG_PAYLOAD_FIELDS } from "../matool/graduierung";
 import { sichereBeitragsStichtagSafely } from "./beitrags-archiv";
 import { runDataProtectionMaintenanceSafely } from "./data-protection";
 import { markRotationRead, selectRotatingSourceIds } from "./detail-rotation";
+import { isDirectSyncLeaseHeld } from "./direct-sync-store";
 import type { Env } from "./env";
 import {
   acquireExactSyncLease,
@@ -63,7 +64,7 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "graduierungen"
 ] as const;
 
-const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
+export const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
   (area) =>
     area !== "interessenten" && area !== "interessenten_details"
 );
@@ -151,6 +152,14 @@ const MATOOL_DETAIL_AREA_MIN_SHARE_MS = 90_000;
 
 /** Mit weniger Restzeit wird ein Bereich nicht mehr begonnen. */
 const MATOOL_AREA_MIN_REMAINING_MS = 45_000;
+
+/**
+ * Haelt beim Stundenlauf noch ein anderer Abruf die Sperre (meist ein
+ * manueller), wartet er so lange darauf und wird sonst als uebersprungen
+ * vermerkt -- statt alle Bereiche als fehlgeschlagen zu melden.
+ */
+const MATOOL_SCHEDULED_LEASE_WAIT_MS = 3 * 60_000;
+const MATOOL_SCHEDULED_LEASE_POLL_MS = 20_000;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
@@ -431,6 +440,21 @@ async function runScheduledSync(
     return;
   }
 
+  if (!(await waitForFreeDirectSyncLease(env.DB))) {
+    console.info(
+      JSON.stringify({
+        event: "matool_snapshot_schedule_skipped",
+        reason: "lease_busy",
+        scheduledTime: new Date(controller.scheduledTime).toISOString()
+      })
+    );
+    await recordSkippedMatoolSync(env.DB, {
+      reason: "lease_busy",
+      scheduledFor: new Date(controller.scheduledTime).toISOString()
+    });
+    return;
+  }
+
   const interessenten = await startOrResumeInteressentenSyncWorkflow(
     env,
     controller.scheduledTime,
@@ -483,6 +507,25 @@ async function runScheduledSync(
       );
     }
   }
+}
+
+/**
+ * Wartet, bis kein anderer Abruf mehr die Sperre haelt. false, wenn sie nach
+ * `maxWaitMs` noch belegt ist.
+ */
+export async function waitForFreeDirectSyncLease(
+  db: D1Database,
+  maxWaitMs: number = MATOOL_SCHEDULED_LEASE_WAIT_MS,
+  pollMs: number = MATOOL_SCHEDULED_LEASE_POLL_MS
+): Promise<boolean> {
+  const warteBis = Date.now() + maxWaitMs;
+  while (await isDirectSyncLeaseHeld(db)) {
+    if (Date.now() >= warteBis) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return true;
 }
 
 export async function collectMatoolSnapshots(

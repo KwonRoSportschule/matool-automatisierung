@@ -4,7 +4,8 @@ export type MatoolSyncTrigger = "manual" | "scheduled";
 export type MatoolSyncSkipReason =
   | "outside_schedule_window"
   | "matool_not_configured"
-  | "real_runs_not_confirmed";
+  | "real_runs_not_confirmed"
+  | "lease_busy";
 
 export interface MatoolSyncSummary {
   failed: number;

@@ -2,6 +2,11 @@ export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   INTERESSENTEN_SYNC_WORKFLOW: Workflow<InteressentenSyncWorkflowParams>;
+  /**
+   * Manueller Gesamtabruf (Knopf im Dashboard). Fehlt die Bindung, laeuft
+   * der Abruf wie frueher direkt in der Web-Anfrage.
+   */
+  DIRECT_SYNC_WORKFLOW?: Workflow<DirectSyncWorkflowParams>;
   VERSION_METADATA?: WorkerVersionMetadata;
 
   APP_ENV: "local" | "test" | "staging" | "production";
@@ -98,6 +103,11 @@ export interface Env {
 
   ZAPIER_SERVICE_TOKEN?: string;
   ZAPIER_WEBHOOK_SIGNING_SECRET?: string;
+}
+
+export interface DirectSyncWorkflowParams {
+  jobId: string;
+  requestedAt: string;
 }
 
 export interface InteressentenSyncWorkflowParams {
