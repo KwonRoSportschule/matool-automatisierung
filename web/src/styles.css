@@ -457,3 +457,23 @@ tbody tr:hover { background: #fafcf9; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* Fortschrittskarte: laufender Gesamtabruf (Stundenlauf oder manuell). */
+.sync-progress { margin-bottom: 1.25rem; }
+.sync-progress[hidden] { display: none; }
+.sync-progress-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.sync-progress-head h2 { margin: 0; font-size: clamp(1.1rem, 2vw, 1.4rem); letter-spacing: -.02em; }
+.sync-progress-percent { padding: .35rem .75rem; border-radius: 999px; color: var(--brand); background: var(--brand-soft); font-size: .8rem; font-weight: 800; white-space: nowrap; }
+.sync-progress-bar { overflow: hidden; height: .7rem; margin-top: 1rem; border-radius: 999px; background: var(--surface-strong); }
+.sync-progress-bar span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--blue); transition: width .6s ease; }
+.sync-progress-meta { margin: .6rem 0 0; color: var(--muted); font-size: .82rem; }
+.sync-progress-areas { display: grid; margin: 1rem 0 0; padding: 0; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .9rem; list-style: none; }
+.sync-progress-areas li { min-width: 0; }
+.sync-progress-area-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .1rem .5rem; font-size: .76rem; }
+.sync-progress-area-head strong { font-weight: 750; }
+.sync-progress-area-head span { color: var(--muted); font-size: .68rem; white-space: nowrap; }
+.sync-progress-area-bar { overflow: hidden; height: .35rem; margin-top: .35rem; border-radius: 999px; background: var(--surface-strong); }
+.sync-progress-area-bar span { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
+.sync-progress-areas li[data-state="done"] .sync-progress-area-bar span { background: var(--healthy); }
+.sync-progress-areas li[data-state="failed"] .sync-progress-area-bar span { background: var(--critical); }
+.sync-progress-areas li[data-state="failed"] .sync-progress-area-head span { color: var(--critical); }

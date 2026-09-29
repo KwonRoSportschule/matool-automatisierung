@@ -28,6 +28,7 @@ import {
   stateLabel
 } from "./format";
 import { RecordDetailDialog } from "./record-detail";
+import { isManualSyncOpen, SyncProgressPoller } from "./sync-progress";
 import type {
   AreaSummary,
   ConnectionSummary,
@@ -35,6 +36,9 @@ import type {
   DashboardState,
   DiscoveryResponse,
   FunctionSummary,
+  ManualSyncJob,
+  SyncResponse,
+  SyncStatusResponse,
   WarningSummary
 } from "./types";
 
@@ -105,7 +109,13 @@ elements.discoveryRun.addEventListener("click", () => {
   void runStructureDiscovery();
 });
 
+const syncPoller = new SyncProgressPoller(
+  (status) => renderManualSyncStatus(status),
+  () => void refreshAll()
+);
+
 void refreshAll();
+syncPoller.now();
 
 async function refreshAll(): Promise<void> {
   setRefreshBusy(true);
@@ -584,7 +594,8 @@ function configureAdminTools(overview: DashboardOverview): void {
   const hasEmployeeAccess = overview.access.canManage;
   const matoolAvailable = matool?.configured === true;
   adminAvailable = hasEmployeeAccess && matoolAvailable;
-  elements.adminSync.disabled = !adminAvailable;
+  elements.adminSync.disabled =
+    !adminAvailable || isManualSyncOpen(syncPoller.last?.manual ?? null);
   elements.discoveryRun.disabled = !adminAvailable;
   elements.adminSync.textContent = hasEmployeeAccess
     ? adminAvailable
@@ -621,10 +632,16 @@ async function runManualSync(): Promise<void> {
   }
   elements.adminSync.disabled = true;
   elements.adminSync.setAttribute("aria-busy", "true");
-  elements.adminSyncMessage.textContent =
-    "Alle freigegebenen MATOOL-Bereiche werden gelesen und in D1 gespeichert …";
+  elements.adminSyncMessage.textContent = "Manueller Abruf wird angefordert …";
   try {
-    const response = await runMatoolSync();
+    const answer = await runMatoolSync();
+    if (!("sync" in answer)) {
+      // Workflow: Der Hub hat den Auftrag angenommen; Stand und Ergebnis
+      // liefert die Fortschrittsabfrage.
+      syncPoller.accept(answer);
+      return;
+    }
+    const response: SyncResponse = answer;
     const failed = response.sync.areas
       .filter((area) => area.status === "failed")
       .map((area) => areaLabel(area.area));
@@ -642,8 +659,41 @@ async function runManualSync(): Promise<void> {
     );
   } finally {
     elements.adminSync.removeAttribute("aria-busy");
-    elements.adminSync.disabled = !adminAvailable;
+    elements.adminSync.disabled =
+      !adminAvailable || isManualSyncOpen(syncPoller.last?.manual ?? null);
   }
+}
+
+const MANUAL_STATUS_TEXT: Readonly<Record<ManualSyncJob["status"], string>> = {
+  requested: "Angefordert – der Abruf startet gleich.",
+  waiting: "Wartet auf das Ende des laufenden Stundenlaufs, startet dann automatisch.",
+  running: "Läuft – unabhängig vom Browser; die Seite darf geschlossen werden.",
+  succeeded: "Erfolgreich abgeschlossen",
+  partial_failed: "Teilweise fehlgeschlagen",
+  failed: "Fehlgeschlagen"
+};
+
+/** Knopf und Meldung zum manuellen Abruf aus dem abgefragten Stand. */
+function renderManualSyncStatus(status: SyncStatusResponse): void {
+  const manual = status.manual;
+  const offen = isManualSyncOpen(manual);
+  elements.adminSync.disabled = !adminAvailable || offen;
+  if (!manual) {
+    return;
+  }
+  if (offen) {
+    elements.adminSyncMessage.textContent = MANUAL_STATUS_TEXT[manual.status];
+    return;
+  }
+  const wann = manual.finishedAt ? ` (${formatDateTime(manual.finishedAt)})` : "";
+  const failed = manual.failedAreas.map((area) => areaLabel(area));
+  elements.adminSyncMessage.textContent =
+    `Letzter manueller Abruf: ${MANUAL_STATUS_TEXT[manual.status]}${wann}` +
+    (manual.errorCode
+      ? ` · Fehlercode ${manual.errorCode}`
+      : ` · ${formatNumber(manual.storedTotal)} Datensätze gespeichert · ` +
+        `${formatNumber(manual.succeeded)} Bereiche erfolgreich` +
+        (failed.length > 0 ? ` · Fehlgeschlagen: ${failed.join(", ")}` : ""));
 }
 
 async function runStructureDiscovery(): Promise<void> {

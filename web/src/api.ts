@@ -5,7 +5,8 @@ import type {
   DashboardRecordsResponse,
   DiscoveryResponse,
   PrivacySummary,
-  SyncResponse
+  SyncResponse,
+  SyncStatusResponse
 } from "./types";
 
 export class ApiError extends Error {
@@ -100,9 +101,21 @@ export function getRecordDetail(
   );
 }
 
-export async function runMatoolSync(): Promise<SyncResponse> {
+/** Laufender Abruf und letzter manueller Auftrag. */
+export function getSyncStatus(signal?: AbortSignal): Promise<SyncStatusResponse> {
+  return requestJson<SyncStatusResponse>(
+    "/api/admin/v1/matool/sync",
+    signal ? { signal } : undefined
+  );
+}
+
+/**
+ * Startet den manuellen Abruf. Der Hub antwortet sofort mit dem Auftrag
+ * (Workflow); eine aeltere Fassung antwortet erst mit dem fertigen Ergebnis.
+ */
+export async function runMatoolSync(): Promise<SyncResponse | SyncStatusResponse> {
   const csrf = await requestJson<{ token: string }>("/api/admin/v1/csrf");
-  return requestJson<SyncResponse>("/api/admin/v1/matool/sync", {
+  return requestJson<SyncResponse | SyncStatusResponse>("/api/admin/v1/matool/sync", {
     body: "{}",
     headers: {
       "Content-Type": "application/json",
