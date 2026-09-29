@@ -853,7 +853,8 @@ export async function finishDirectSync(
   env: Env,
   syncId: string,
   summary: CollectSnapshotsResult,
-  totalAreas: number
+  totalAreas: number,
+  options: { deliver?: boolean } = {}
 ): Promise<void> {
   await finishMatoolSyncRun(env.DB, syncId, new Date().toISOString(), {
     failed: summary.failed,
@@ -861,7 +862,16 @@ export async function finishDirectSync(
     succeeded: summary.succeeded,
     totalAreas
   });
+  if (options.deliver !== false) {
+    await deliverSnapshotChanges(env, syncId);
+  }
+}
 
+/** Stellt neue Aenderungen an abonnierte Zaps zu; scheitert nie. */
+export async function deliverSnapshotChanges(
+  env: Env,
+  syncId: string
+): Promise<void> {
   if (env.OUTBOUND_DELIVERY_ENABLED === "true") {
     try {
       const delivery = await processSnapshotZapierDeliveries(env);

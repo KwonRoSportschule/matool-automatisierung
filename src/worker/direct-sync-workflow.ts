@@ -25,6 +25,7 @@ import {
   beginDirectSync,
   collectMatoolSnapshots,
   countUnreadStilllegungen,
+  deliverSnapshotChanges,
   finishDirectSync,
   MATOOL_STILLLEGUNGEN_FILL_BATCH,
   recordDirectAreaFailure,
@@ -89,6 +90,11 @@ const WORKFLOW_DETAIL_LIMITS: Readonly<Record<string, number>> = {
 const AREA_STEP_CONFIG = {
   retries: { limit: 1, delay: "30 seconds", backoff: "constant" },
   timeout: "25 minutes"
+} as const;
+
+const DELIVERY_STEP_CONFIG = {
+  retries: { limit: 1, delay: "1 minute", backoff: "constant" },
+  timeout: "15 minutes"
 } as const;
 
 const SMALL_STEP_CONFIG = {
@@ -196,14 +202,23 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
 
       await step.do("abschluss", SMALL_STEP_CONFIG, async () => {
         await releaseDirectSyncLease(this.env.DB, leaseOwner, aktiverPlan.syncId);
-        await finishDirectSync(this.env, aktiverPlan.syncId, summary, aktiverPlan.areas.length);
+        await finishDirectSync(this.env, aktiverPlan.syncId, summary, aktiverPlan.areas.length, {
+          deliver: false
+        });
+        return { abgeschlossen: true };
+      });
+
+      // Eigener Schritt mit laengerem Timeout: Viele Aenderungen bedeuten
+      // viele Zustellungen. Scheitert nie am Lauf, der schon abgeschlossen ist.
+      await step.do("zustellung", DELIVERY_STEP_CONFIG, async () => {
+        await deliverSnapshotChanges(this.env, aktiverPlan.syncId);
         if (!manual) {
           await this.verarbeiteOutbox();
           // Am 1. und 15. den Beitragsstand mit den eben gelesenen Daten
           // sichern (der Cron hat ihn nur mit dem vorherigen Stand gesichert).
           await sichereBeitragsStichtagSafely(this.env, new Date(zeitpunkt));
         }
-        return { abgeschlossen: true };
+        return { zugestellt: true };
       });
 
       // Erst jetzt: Interessenten und Mitglieder lesen nacheinander, nie

@@ -139,3 +139,57 @@ Tagesabnahme (elf von elf Läufen).
   Fortschrittskarte (`src/worker/sync-progress.ts`). Ein Merge nach `main`
   deployt ohne sie. Achtung beim Nachziehen: Die Migration heißt ebenfalls
   `0012_…` wie `0012_detail_rotation.sql` – eine davon umbenennen (`0013_…`).
+
+## Nachtrag 29.09. abends: Umbau Transport, Datenbank, Anzeige
+
+Branch `claude/friendly-lovelace-hmom74`. Lokal geprüft (Typecheck, 581 Tests,
+Worker-Build, Zapier-Paket), **nicht live ausgerollt** – das passiert beim
+Merge nach `main`.
+
+### Transport MATOOL → Hub
+
+| Vorher | Jetzt |
+| --- | --- |
+| Stundenlauf im Cron-Aufruf, hart nach 15 Min. beendet | Cron startet nur den Workflow `stunde_<Stunde>`; kein Wandzeitlimit |
+| Ein Fehler oder Deploy = Bereich/Lauf verloren | jeder Bereich ein eigener Schritt; nur der betroffene Bereich wird wiederholt (30 s, 2 min); Deploy setzt fort |
+| Sperre je Bereich neu, Knopf und Stundenlauf konnten sich überholen | eine Sperre für den ganzen Lauf (Besitzer = Workflow) |
+| Interessenten-Details: jede Stunde alle ~3.500 neu (≈ 3.500 Anfragen/h), parallel zum Mitgliederabruf | nur neue, geänderte, > 20 h alte und die 150 neuesten; startet erst nach dem Mitgliederabruf |
+| Ex-Mitglieder (67 Seiten, doppelt gelesen) jede Stunde | einmal täglich, manuell immer |
+| 2 Versuche bei Verbindungsabbruch, 5xx nur bei Interessenten wiederholt | 3 Versuche mit wachsender Pause; 429/5xx bei allen Listenseiten |
+| abgelaufene MATOOL-Sitzung = Bereich scheitert | Loginseite erkannt → einmal neu anmelden, Seite erneut lesen |
+
+Grobe Schätzung aus Paketgrößen (nicht live gemessen): statt rund 3.500 bis
+4.000 MATOOL-Anfragen je Stunde (davon ~3.500 Interessenten-Details) nur noch
+einige hundert; einmal morgens der volle Interessenten- und
+Ex-Mitglieder-Abgleich.
+
+### Datenbank
+
+- Fehlender Index `matool_snapshot_changes(run_id)`: Jede Speicherung zählte
+  ihre Änderungen über die ganze Historie (84.000+ Zeilen). Jetzt Index,
+  selbst angelegt vom Worker (`db-maintenance.ts`) und in Migration 0013.
+- Selbstlaufende Fristen für rein technische Hilfsdaten (Fortschrittszeilen
+  alter Interessentenjobs, Laufpläne, übersprungene Läufe > 30 Tage,
+  Diagnosen > 60 Tage, manuelle Aufträge > 90 Tage). Keine Fachdaten.
+- Tabellenübersicht und Aufbewahrung: [datenbank.md](datenbank.md).
+- **Offen, bewusst nicht automatisch:** `interessenten_sync_staged_lists`
+  (~242.000 Zeilen, ungenutzt, teils vor der Verschlüsselung gespeichert)
+  entfernen. Befehl und Rückweg stehen in datenbank.md.
+
+### Dashboard
+
+- Tabelle: Name, Status, 1. Probetraining, Kontakt, Angelegt, Quelle (bzw.
+  Mitglieder: Name, Nr., Vertrag, Beginn, Beitrag, Kontakt) statt der ersten
+  vier Rohfelder (ID, Datum, Anrede 0/1, Vorname).
+- Werte lesbar (Datum deutsch, leer statt 0000-00-00, Ja/Nein, Uhrzeit, Euro),
+  Detailansicht in Abschnitten, Fehlercodes mit Erklärung, echte Umlaute.
+- Bugs: „Gespeichert“ zeigte für alle Bereiche außer Interessenten/Mitglieder
+  0; mehrere veraltete Bereiche jetzt eine Sammelwarnung statt vieler Karten.
+
+### Nach dem Merge beobachten
+
+1. Erster Stundenlauf: Dashboard-Fortschrittskarte zeigt Bereiche einzeln.
+2. Morgens 09:00: Ex-Mitglieder und voller Interessenten-Detailabgleich
+   (dauert länger), danach stündlich nur Delta.
+3. Cloudflare → Workflows → `matool-direct-sync-staging`: je Stunde eine
+   Instanz `stunde_…`, Status „Complete“.
