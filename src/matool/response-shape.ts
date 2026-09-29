@@ -16,6 +16,12 @@ export interface SafeAreaRowShape {
   nonEmptyCellCount: number;
   occurrences: number;
   schuelerActionCandidateCount: number;
+  schuelerActionInvalid: boolean;
+  /** Sorted action kinds such as "open" or "convert"; never the action text. */
+  schuelerActionKinds: string[];
+  /** Counts only; never persist the actual identifiers or action text. */
+  stableIdCount: number;
+  distinctStableIdCount: number;
   tdCount: number;
   thCount: number;
   topLevel: boolean;
