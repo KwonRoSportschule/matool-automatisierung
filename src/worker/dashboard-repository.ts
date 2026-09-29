@@ -192,8 +192,8 @@ export async function getDashboardOverview(
          FROM matool_snapshots
          GROUP BY area`
       ).all<AreaCountRow>(),
-      env.DB.prepare(latestAreaRunSql(false)).all<AreaRunRow>(),
-      env.DB.prepare(latestAreaRunSql(true)).all<AreaRunRow>(),
+      queryLatestAreaRuns(env.DB, false),
+      queryLatestAreaRuns(env.DB, true),
       env.DB.prepare(
         `SELECT area, error_code, COUNT(*) AS occurrence_count,
                 MIN(finished_at) AS first_occurred_at,
@@ -435,18 +435,30 @@ export async function getDashboardOverview(
   }
 }
 
-function latestAreaRunSql(successOnly: boolean): string {
-  return `WITH ranked AS (
-    SELECT run_id, area, status, started_at, finished_at, fetched_count,
-           success_count, failure_count, error_code, sync_id,
-           ROW_NUMBER() OVER (PARTITION BY area ORDER BY started_at DESC) AS position
-    FROM matool_snapshot_runs
-    ${successOnly ? "WHERE status = 'succeeded'" : ""}
-  )
-  SELECT run_id, area, status, started_at, finished_at, fetched_count,
-         success_count, failure_count, error_code, sync_id
-  FROM ranked
-  WHERE position = 1`;
+/**
+ * Letzter (erfolgreicher) Lauf je angezeigtem Bereich: je Bereich ein
+ * Indextreffer auf (area, started_at), gebuendelt in einem D1-Batch, statt
+ * einer Fensterfunktion ueber alle Bereichslaeufe seit Projektbeginn, die bei
+ * jedem Dashboard-Aufruf lief. (D1 erlaubt nur wenige UNION-Glieder.)
+ */
+async function queryLatestAreaRuns(
+  db: D1Database,
+  successOnly: boolean
+): Promise<{ results: AreaRunRow[] }> {
+  const statements = MATOOL_SNAPSHOT_AREAS.map((area) =>
+    db
+      .prepare(
+        `SELECT run_id, area, status, started_at, finished_at, fetched_count,
+                success_count, failure_count, error_code, sync_id
+         FROM matool_snapshot_runs
+         WHERE area = ?${successOnly ? " AND status = 'succeeded'" : ""}
+         ORDER BY started_at DESC
+         LIMIT 1`
+      )
+      .bind(area)
+  );
+  const results = await db.batch<AreaRunRow>(statements);
+  return { results: results.flatMap((result) => result.results) };
 }
 
 function mapAreaRun(row: AreaRunRow | undefined): unknown {
