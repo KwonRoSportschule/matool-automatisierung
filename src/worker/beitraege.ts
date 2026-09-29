@@ -260,9 +260,10 @@ export async function zapierBeitragsUebersicht(
 
 /**
  * Antwort fuer die Klassenauswertung (Check-in-/Telemetrieseite). Enthaelt
- * je Mitglied nur Name, Mitgliedsnummer, Schule, Sparten, Vertrag und
- * Betraege; Bank-, Geburts- und Kontaktdaten werden dafuer nicht gelesen.
- * Betraege stehen in Cent, damit die Gegenseite ohne Rundung weiterrechnet.
+ * je Mitglied nur Name, Mitgliedsnummer, Schule, Sparten, Vertrag samt
+ * Laufzeit und Betraege; Bank-, Geburts- und Kontaktdaten werden dafuer
+ * nicht gelesen. Betraege stehen in Cent, damit die Gegenseite ohne Rundung
+ * weiterrechnet.
  */
 export function checkinBeitragsAntwort(
   uebersicht: BeitragsUebersicht,
@@ -312,6 +313,7 @@ export function checkinBeitragsAntwort(
       zahlart: position.zahlart,
       vertragsbeginn: position.vertragsbeginn ?? "",
       vertragsende: position.vertragsende ?? "",
+      ...laufzeit(position),
       einzugstag: position.einzugstag ?? null,
       einzugsquelle: position.einzugsquelle ?? "",
       jahresgebuehrdatum: position.jahresgebuehrdatum ?? "",
@@ -330,6 +332,7 @@ export function checkinBeitragsAntwort(
       kundenart: eintrag.kundenart,
       vertragsbeginn: eintrag.vertragsbeginn ?? "",
       vertragsende: eintrag.vertragsende ?? "",
+      ...laufzeit(eintrag),
       einzugstag: eintrag.einzugstag ?? null,
       einzugsquelle: eintrag.einzugsquelle ?? "",
       jahresgebuehrdatum: eintrag.jahresgebuehrdatum ?? "",
@@ -338,5 +341,23 @@ export function checkinBeitragsAntwort(
       beitrag_cent: eintrag.beitragCent ?? null
     })),
     feldwerte
+  };
+}
+
+/**
+ * Laufzeitangaben, an denen die Telemetrieseite eine Kuendigung erkennt.
+ * Aeltere gesicherte Staende haben sie noch nicht; dann bleiben sie leer.
+ */
+function laufzeit(eintrag: {
+  vertragsdatum?: string;
+  verlaengerung?: string;
+  kuendigungsfrist?: string;
+  gueltigBis?: string;
+}): Record<string, string> {
+  return {
+    vertragsdatum: eintrag.vertragsdatum ?? "",
+    verlaengerung: eintrag.verlaengerung ?? "",
+    kuendigungsfrist: eintrag.kuendigungsfrist ?? "",
+    gueltig_bis: eintrag.gueltigBis ?? ""
   };
 }

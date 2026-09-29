@@ -64,6 +64,9 @@ async function seedMitglieder(
         spartenliste: '["Kickboxen"]',
         abweichenderEinzug: "15",
         vertragsbeginn: "2025-02-01",
+        vertragsende: "2026-01-31",
+        verlaengerung: "keine",
+        kuendigungsfrist: "3 Monate",
         vname: "Erika",
         zahlungsperiode: "monatlich"
       }
@@ -236,6 +239,7 @@ describe("Beitragsuebersicht im Dashboard", () => {
 });
 
 interface CheckinAntwort {
+  feldwerte: Array<Record<string, unknown>>;
   mitglieder: Array<Record<string, unknown>>;
   nicht_eingerechnet: Array<Record<string, unknown>>;
   quelle: string;
@@ -266,17 +270,28 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
     });
     expect(body.mitglieder[0]).toMatchObject({
       nachname: "Beispiel",
+      mitgliedsnummer: "M-1",
       schule: "Rosenheim",
       sparten: ["Kickboxen"],
       monatsbeitrag_cent: 5990,
       einzugstag: 15,
-      einzugsquelle: "abweichend"
+      einzugsquelle: "abweichend",
+      vertragsende: "2026-01-31",
+      verlaengerung: "keine",
+      kuendigungsfrist: "3 Monate",
+      gueltig_bis: "",
+      vertragsdatum: ""
     });
     expect(body.mitglieder[1]).toMatchObject({
       nachname: "Muster",
+      mitgliedsnummer: "M-2",
       einzugstag: 7,
       einzugsquelle: "vertragsbeginn"
     });
+    expect(body.feldwerte).toEqual(expect.arrayContaining([
+      expect.objectContaining({ feld: "verlaengerung" }),
+      expect.objectContaining({ feld: "kuendigungsfrist" })
+    ]));
     expect(body.zusammenfassung).toMatchObject({
       einzug_nach_tag: [
         { tag: 7, cent: 3950, zahler: 1 },
