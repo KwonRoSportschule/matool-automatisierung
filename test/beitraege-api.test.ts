@@ -35,7 +35,7 @@ async function seedMitglieder(
   optionen: { exMitglieder?: number; ohneNeuzugang?: boolean } = {}
 ): Promise<void> {
   await env.DB.prepare(
-    "DELETE FROM matool_snapshots WHERE area IN ('schueler', 'schueler_details', 'schueler_ex')"
+    "DELETE FROM matool_snapshots WHERE area IN ('schueler', 'schueler_details', 'schueler_ex', 'schueler_stilllegungen')"
   ).run();
   await env.DB.prepare("DELETE FROM beitrags_stichtage").run();
   const cipher = await storedPayloadCipher(env);
@@ -305,6 +305,87 @@ describe("Beitragsuebersicht fuer die Klassenauswertung", () => {
         expect.objectContaining({ matool_id: "9100003", grund: "stillgelegt", beitrag_cent: 5990 })
       ])
     );
+  });
+
+  it("liefert Stilllegungszeitraeume und laesst den Beitrag im Zeitraum ruhen", async () => {
+    await seedMitglieder();
+    await persistMatoolSnapshotRun(
+      env.DB,
+      {
+        allowedPayloadFields: ["anzahl", "mitglied_id", "zeitraeume"],
+        area: "schueler_stilllegungen",
+        finishedAt: "2026-09-30T10:00:04.000Z",
+        observedAt: "2026-09-30T10:00:03.000Z",
+        records: [
+          {
+            sourceId: "9100001",
+            payload: {
+              anzahl: 1,
+              mitglied_id: "9100001",
+              zeitraeume: "2099-10 bis 2099-12 (aktiv)"
+            }
+          },
+          {
+            // Offen seit 2020: ruht an jedem heutigen Stichtag.
+            sourceId: "9100002",
+            payload: {
+              anzahl: 2,
+              mitglied_id: "9100002",
+              zeitraeume: "2020-01 bis offen (aktiv); 2020-02 bis 2020-03 (storniert)"
+            }
+          },
+          {
+            sourceId: "9100003",
+            payload: { anzahl: 0, mitglied_id: "9100003", zeitraeume: "" }
+          }
+        ],
+        runId: `beitraege_stilllegungen_${crypto.randomUUID()}`,
+        startedAt: "2026-09-30T10:00:03.000Z"
+      },
+      await storedPayloadCipher(env)
+    );
+
+    const response = await dispatch(checkinRequest("/api/checkin/v1/beitraege"));
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as CheckinAntwort;
+    expect(body.zusammenfassung).toMatchObject({
+      monatssumme_cent: 5990,
+      stillgelegt: 2,
+      stillgelegt_zeitraum: 1,
+      stilllegungen_gelesen: 3
+    });
+    expect(body.mitglieder[0]).toMatchObject({
+      matool_id: "9100001",
+      abschluss: "",
+      stilllegungen: [{ von: "2099-10", bis: "2099-12", status: "aktiv" }],
+      stilllegungen_gelesen: true
+    });
+    expect(body.nicht_eingerechnet).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          matool_id: "9100002",
+          grund: "stillgelegt",
+          detail: "Stilllegung ab 01/2020",
+          stilllegung_zeitraum: true,
+          monatsbeitrag_cent: 3950,
+          stilllegungen: [
+            { von: "2020-01", bis: "", status: "aktiv" },
+            { von: "2020-02", bis: "2020-03", status: "storniert" }
+          ]
+        }),
+        expect.objectContaining({
+          matool_id: "9100004",
+          grund: "stammdaten_fehlen",
+          stilllegungen: [],
+          stilllegungen_gelesen: false
+        })
+      ])
+    );
+    // Die Stilllegung ueber die Kundenart bleibt ohne Zeitraum-Kennzeichen.
+    const kundenart = body.nicht_eingerechnet.find(
+      (eintrag) => eintrag.matool_id === "9100003"
+    );
+    expect(kundenart).not.toHaveProperty("stilllegung_zeitraum");
   });
 
   it("zaehlt Ex-Mitglieder erst, wenn ihre Liste gelesen wurde", async () => {

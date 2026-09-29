@@ -16,7 +16,8 @@ import {
   xmlText,
   zaehleFeldwerte,
   zahlungsperiodeInMonaten,
-  type BeitragsQuelle
+  type BeitragsQuelle,
+  type StilllegungsZeitraum
 } from "../src/core/beitraege";
 
 // Vollstaendig synthetische Mitglieder; keine realen Namen oder Kennungen.
@@ -385,6 +386,73 @@ describe("erstelleBeitragsUebersicht", () => {
       einzugstag: 7,
       einzugsquelle: "abweichend"
     });
+  });
+
+  it("laesst Mitglieder im Stilllegungszeitraum ruhen und nur dort", () => {
+    const mitZeitraeumen = (
+      sourceId: string,
+      stilllegungen: StilllegungsZeitraum[] | null
+    ): BeitragsQuelle => ({
+      ...mitglied(sourceId, {
+        beitrag: "40",
+        kundenart: "Vertragskunde",
+        zahlart: "Lastschrift",
+        jahresgebuehr: "25"
+      }),
+      stilllegungen
+    });
+    const quellen = [
+      // Wie im MATOOL-Beispiel: 10/2026-12/2026 und 01/2027-02/2027.
+      mitZeitraeumen("90", [
+        { von: "2027-01", bis: "2027-02", status: "aktiv" },
+        { von: "2026-10", bis: "2026-12", status: "aktiv" }
+      ]),
+      mitZeitraeumen("91", [{ von: "2026-11", bis: "2026-12", status: "aktiv" }]),
+      mitZeitraeumen("92", [{ von: "2026-09", bis: "", status: "aktiv" }]),
+      mitZeitraeumen("93", [{ von: "2026-10", bis: "2026-10", status: "storniert" }]),
+      mitZeitraeumen("94", []),
+      mitZeitraeumen("95", null)
+    ];
+
+    const oktober = erstelleBeitragsUebersicht(quellen, optionen);
+    expect(oktober.zusammenfassung).toMatchObject({
+      monatssummeCent: 4 * 4000,
+      eingerechnet: 4,
+      stillgelegt: 2,
+      stillgelegtZeitraum: 2,
+      stilllegungenGelesen: 5,
+      // Ruhend heisst nicht unvollstaendig.
+      vollstaendig: true
+    });
+    expect(oktober.nichtEingerechnet.map((eintrag) => [eintrag.matoolId, eintrag.detail])).toEqual([
+      ["90", "Stilllegung 10/2026–12/2026"],
+      ["92", "Stilllegung ab 09/2026"]
+    ]);
+    expect(oktober.nichtEingerechnet[0]).toMatchObject({
+      grund: "stillgelegt",
+      beitragCent: 4000,
+      ruhend: {
+        monatsbeitragCent: 4000,
+        zahlart: "Lastschrift",
+        jahresgebuehrCent: 2500
+      },
+      stilllegungenGelesen: true,
+      stilllegungen: [
+        { von: "2026-10", bis: "2026-12", status: "aktiv" },
+        { von: "2027-01", bis: "2027-02", status: "aktiv" }
+      ]
+    });
+    expect(oktober.positionen.find((position) => position.matoolId === "91")).toMatchObject({
+      stilllegungen: [{ von: "2026-11", bis: "2026-12", status: "aktiv" }]
+    });
+    expect(oktober.positionen.find((position) => position.matoolId === "95")).toMatchObject({
+      stilllegungen: [],
+      stilllegungenGelesen: false
+    });
+
+    const maerz = erstelleBeitragsUebersicht(quellen, { ...optionen, stichtag: "2027-03-01" });
+    expect(maerz.zusammenfassung).toMatchObject({ stillgelegtZeitraum: 1, eingerechnet: 5 });
+    expect(maerz.nichtEingerechnet.map((eintrag) => eintrag.matoolId)).toEqual(["92"]);
   });
 
   it("gilt ohne gelesene Mitgliederliste nie als vollstaendig", () => {

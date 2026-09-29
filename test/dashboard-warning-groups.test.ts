@@ -198,17 +198,17 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
       expect.objectContaining({
         key: "area_schueler_ex", occurrenceCount: 0,
         firstOccurredAt: null, lastOccurredAt: null,
-        occurredAt: "2026-09-22T10:00:06.000Z"
+        occurredAt: "2026-09-22T10:00:07.000Z"
       })
     ]));
     // The other old areas also remain stale; the group count covers them all.
-    expect(overview).toMatchObject({ overall: { reasonCount: 8 } });
-    expect(overview.warnings).toHaveLength(8);
+    expect(overview).toMatchObject({ overall: { reasonCount: 9 } });
+    expect(overview.warnings).toHaveLength(9);
   });
 
   it("behaelt fehlende Laufbestaetigungen als unknown und erfindet keine Fehlergruppe", async () => {
     expect(await getDashboardOverview(runtime, 1, now)).toMatchObject({
-      overall: { state: "unknown", reasonCount: 9 }, warnings: []
+      overall: { state: "unknown", reasonCount: 10 }, warnings: []
     });
   });
 

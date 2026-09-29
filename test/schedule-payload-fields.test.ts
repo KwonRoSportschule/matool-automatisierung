@@ -7,6 +7,7 @@ import {
   MATOOL_MAX_REQUESTS_PER_RUN,
   MATOOL_SNAPSHOT_AREAS,
   selectInteressentenDetailSourceIds,
+  selectSchuelerDetailSourceIds,
   snapshotPayloadFields
 } from "../src/worker/schedule";
 import { storedPayloadCipher } from "../src/worker/payload-encryption";
@@ -22,7 +23,8 @@ describe("Snapshot-Feldallowlist", () => {
       "schueler_details",
       "schueler_ex",
       "checkin",
-      "graduierungen"
+      "graduierungen",
+      "schueler_stilllegungen"
     ]);
     expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
     expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);
@@ -133,5 +135,46 @@ describe("Snapshot-Feldallowlist", () => {
     expect(fields).toHaveLength(80);
     expect(new Set(fields).size).toBe(fields.length);
     expect(fields).toEqual([...fields].sort());
+  });
+  it("rotiert die Stilllegungen ueber ihren eigenen Bestand", async () => {
+    await env.DB.prepare(
+      "DELETE FROM matool_snapshots WHERE area IN ('schueler', 'schueler_details', 'schueler_stilllegungen')"
+    ).run();
+    const cipher = await storedPayloadCipher(env);
+    const suffix = crypto.randomUUID();
+    const persist = async (
+      area: string,
+      sourceIds: string[],
+      observedAt: string
+    ) =>
+      persistMatoolSnapshotRun(
+        env.DB,
+        {
+          allowedPayloadFields: ["status"],
+          area,
+          finishedAt: observedAt,
+          observedAt,
+          records: sourceIds.map((sourceId) => ({
+            payload: { status: "SYNTHETISCH" },
+            sourceId
+          })),
+          runId: `stilllegung_rotation_${area}_${observedAt.slice(0, 10)}_${suffix}`,
+          startedAt: observedAt
+        },
+        cipher
+      );
+    await persist("schueler", ["7701", "7702", "7703"], "2098-02-01T00:00:00.000Z");
+    // Stammdaten sind fuer alle frisch; das darf die Stilllegungen nicht
+    // beeinflussen.
+    await persist("schueler_details", ["7701", "7702", "7703"], "2098-02-05T00:00:00.000Z");
+    await persist("schueler_stilllegungen", ["7702"], "2098-02-02T00:00:00.000Z");
+    await persist("schueler_stilllegungen", ["7701"], "2098-02-03T00:00:00.000Z");
+
+    await expect(
+      selectSchuelerDetailSourceIds(env.DB, 10, "schueler_stilllegungen")
+    ).resolves.toEqual(["7703", "7702", "7701"]);
+    await expect(
+      selectSchuelerDetailSourceIds(env.DB, 1, "schueler_stilllegungen")
+    ).resolves.toEqual(["7703"]);
   });
 });

@@ -48,7 +48,8 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "schueler_details",
   "schueler_ex",
   "checkin",
-  "graduierungen"
+  "graduierungen",
+  "schueler_stilllegungen"
 ] as const;
 
 const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
@@ -98,6 +99,15 @@ export const MATOOL_KLASSEN_RECORDS_PER_RUN = 500;
  */
 export const MATOOL_SCHUELER_DETAILS_PER_RUN = 150;
 export const MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN = 25;
+
+/**
+ * Stilllegungen je Lauf. Auch sie kosten drei Abrufe je Mitglied (oeffnen,
+ * lesen, schliessen). Sie aendern sich selten; mit 60 je Stundenlauf ist der
+ * ganze Bestand trotzdem mehrmals am Tag frisch, ohne den Lauf merklich zu
+ * verlaengern.
+ */
+export const MATOOL_STILLLEGUNGEN_PER_RUN = 60;
+export const MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN = 10;
 
 /**
  * Interne Obergrenze fuer den vollstaendigen Paid-Lauf. Sie deckt je bis zu
@@ -218,14 +228,15 @@ export async function selectInteressentenDetailSourceIds(
  */
 export async function selectSchuelerDetailSourceIds(
   db: D1Database,
-  limit: number = MATOOL_SCHUELER_DETAILS_PER_RUN
+  limit: number = MATOOL_SCHUELER_DETAILS_PER_RUN,
+  detailArea: "schueler_details" | "schueler_stilllegungen" = "schueler_details"
 ): Promise<string[]> {
   const candidates = await db
     .prepare(
       `SELECT liste.source_id
        FROM matool_snapshots AS liste
        LEFT JOIN matool_snapshots AS details
-         ON details.area = 'schueler_details'
+         ON details.area = ?
         AND details.source_id = liste.source_id
        WHERE liste.area = 'schueler'
          AND length(liste.source_id) BETWEEN 1 AND 32
@@ -236,12 +247,24 @@ export async function selectSchuelerDetailSourceIds(
          liste.source_id ASC
        LIMIT ?`
     )
-    .bind(limit)
+    .bind(detailArea, limit)
     .all<InteressentenDetailCandidateRow>();
 
   return candidates.results
     .map((row) => row.source_id)
     .filter((sourceId) => /^\d{1,32}$/u.test(sourceId));
+}
+
+/** Paketgroesse eines Detailbereichs fuer den Stunden- bzw. Handlauf. */
+function detailLimitFor(area: string, trigger: MatoolSyncTrigger): number {
+  if (area === "schueler_stilllegungen") {
+    return trigger === "scheduled"
+      ? MATOOL_STILLLEGUNGEN_PER_RUN
+      : MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN;
+  }
+  return trigger === "scheduled"
+    ? MATOOL_SCHUELER_DETAILS_PER_RUN
+    : MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN;
 }
 
 /**
@@ -476,9 +499,7 @@ export async function collectMatoolSnapshots(
                 credentials,
                 area,
                 env.DB,
-                trigger === "scheduled"
-                  ? MATOOL_SCHUELER_DETAILS_PER_RUN
-                  : MATOOL_SCHUELER_DETAILS_PER_MANUAL_RUN,
+                detailLimitFor(area, trigger),
                 async () => {
                   activeLease = await renewExactSyncLease(env.DB, activeLease);
                 }
@@ -699,6 +720,21 @@ async function readDirectArea(
       await client.extractGraduierungen(
         credentials,
         await selectSchuelerDetailSourceIds(db, detailLimit),
+        onProgress
+      )
+    ).records;
+  }
+  // Je Mitglied ein Datensatz mit allen Stilllegungszeitraeumen; rotiert
+  // ueber den eigenen Bestand, damit jedes Mitglied regelmaessig frisch ist.
+  if (area === "schueler_stilllegungen") {
+    return (
+      await client.extractStilllegungen(
+        credentials,
+        await selectSchuelerDetailSourceIds(
+          db,
+          detailLimit,
+          "schueler_stilllegungen"
+        ),
         onProgress
       )
     ).records;
