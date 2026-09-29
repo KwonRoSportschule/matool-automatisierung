@@ -254,3 +254,54 @@ describe("Stundenlauf bei belegter Sperre", () => {
     }
   });
 });
+
+describe("Manueller Abruf liest alle ungelesenen Stilllegungen", () => {
+  it("zaehlt ungelesene Mitglieder und fragt sie alle ab", async () => {
+    const { vi } = await import("vitest");
+    const { MatoolClient } = await import("../src/matool/client");
+    const { persistMatoolSnapshotRun } = await import("../src/worker/matool-store");
+    const { storedPayloadCipher } = await import("../src/worker/payload-encryption");
+    const { collectMatoolSnapshots, countUnreadStilllegungen, MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN } =
+      await import("../src/worker/schedule");
+
+    await env.DB.prepare(
+      "DELETE FROM matool_snapshots WHERE area IN ('schueler', 'schueler_stilllegungen')"
+    ).run();
+    const cipher = await storedPayloadCipher(env);
+    const ids = Array.from({ length: 30 }, (_, i) => String(8800 + i));
+    const persist = (area: string, sourceIds: string[], payload: Record<string, string>) =>
+      persistMatoolSnapshotRun(env.DB, {
+        allowedPayloadFields: Object.keys(payload),
+        area,
+        finishedAt: "2098-08-01T00:00:00.000Z",
+        observedAt: "2098-08-01T00:00:00.000Z",
+        records: sourceIds.map((sourceId) => ({ payload, sourceId })),
+        runId: `fill_${area}_${crypto.randomUUID()}`,
+        startedAt: "2098-08-01T00:00:00.000Z"
+      }, cipher);
+    await persist("schueler", ids, { status: "SYNTHETISCH" });
+    await persist("schueler_stilllegungen", ids.slice(0, 5), { zeitraeume: "" });
+    await expect(countUnreadStilllegungen(env.DB)).resolves.toBe(25);
+
+    let angefragt = 0;
+    const abruf = vi.spyOn(MatoolClient.prototype, "extractStilllegungen").mockImplementation(
+      async (_credentials, sourceIds) => {
+        angefragt = sourceIds.length;
+        return { area: "schueler_stilllegungen", bodyBytes: 0, records: [], rowCount: 0 };
+      }
+    );
+    const runtimeEnv = { ...env, MATOOL_EMAIL: "x@example.invalid", MATOOL_PASSWORD: "synthetic" } as Env;
+    try {
+      await collectMatoolSnapshots(runtimeEnv, Date.now(), ["schueler_stilllegungen"], "manual", {
+        fillUnreadStilllegungen: true
+      });
+      // Alle 25 ungelesenen plus die 5 aeltesten gelesenen (Paket 10 → 30 Mitglieder in der Liste).
+      expect(angefragt).toBe(Math.min(30, 25 + MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN));
+
+      await collectMatoolSnapshots(runtimeEnv, Date.now(), ["schueler_stilllegungen"], "manual");
+      expect(angefragt).toBe(MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN);
+    } finally {
+      abruf.mockRestore();
+    }
+  });
+});

@@ -121,6 +121,31 @@ export const MATOOL_STILLLEGUNGEN_PER_RUN = 60;
 export const MATOOL_STILLLEGUNGEN_PER_MANUAL_RUN = 10;
 
 /**
+ * Der manuelle Abruf als Workflow hat kein 15-Minuten-Limit. Er liest
+ * deshalb zusaetzlich die Stilllegungen aller Mitglieder, fuer die sie noch
+ * nie gelesen wurden -- ein Klick fuellt den Bestand, statt ihn tagelang
+ * stundenweise nachzulesen. Obergrenze: 650 Mitglieder (je drei Abrufe),
+ * damit der Lauf unter MATOOL_MAX_REQUESTS_PER_RUN bleibt.
+ */
+export const MATOOL_STILLLEGUNGEN_FILL_MAX = 650;
+
+/** Mitglieder der Liste, deren Stilllegungen noch nie gelesen wurden. */
+export async function countUnreadStilllegungen(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS anzahl
+       FROM matool_snapshots AS liste
+       LEFT JOIN matool_snapshots AS stilllegung
+         ON stilllegung.area = 'schueler_stilllegungen'
+        AND stilllegung.source_id = liste.source_id
+       WHERE liste.area = 'schueler'
+         AND stilllegung.source_id IS NULL`
+    )
+    .first<{ anzahl: number }>();
+  return Number(row?.anzahl ?? 0);
+}
+
+/**
  * Graduierungen je Lauf: ein Abruf je Mitglied. Sie rotieren ueber eine
  * eigene Tabelle (detail-rotation.ts), weil Mitglieder ohne Pruefung keinen
  * Datensatz haben.
@@ -539,9 +564,14 @@ export async function collectMatoolSnapshots(
      * Bereich mehr, und Abrufe je Mitglied enden mit dem bis dahin Gelesenen.
      */
     deadline?: number;
+    /**
+     * Stilllegungen aller noch nie gelesenen Mitglieder mitlesen (nur der
+     * manuelle Abruf als Workflow, der kein Zeitlimit hat).
+     */
+    fillUnreadStilllegungen?: boolean;
   } = {}
 ): Promise<CollectSnapshotsResult> {
-  const { deadline } = options;
+  const { deadline, fillUnreadStilllegungen = false } = options;
   const directAreas = areas.filter(
     (area) =>
       area !== "interessenten" && area !== "interessenten_details"
@@ -561,7 +591,11 @@ export async function collectMatoolSnapshots(
 
   const startedAt = new Date().toISOString();
   // Ein von Cloudflare beendeter Lauf bleibt sonst fuer immer "laeuft".
-  await markAbandonedMatoolSyncRuns(env.DB, startedAt);
+  // Haelt gerade jemand die Sperre, lebt dieser Lauf noch (ein langer
+  // manueller Abruf) und wird nicht angefasst.
+  if (!(await isDirectSyncLeaseHeld(env.DB))) {
+    await markAbandonedMatoolSyncRuns(env.DB, startedAt);
+  }
   const syncId = await beginMatoolSyncRun(env.DB, {
     ...(trigger === "scheduled"
       ? { scheduledFor: new Date(scheduledTime).toISOString() }
@@ -645,7 +679,13 @@ export async function collectMatoolSnapshots(
                 credentials,
                 area,
                 env.DB,
-                detailLimitFor(area, trigger),
+                area === "schueler_stilllegungen" && fillUnreadStilllegungen
+                  ? detailLimitFor(area, trigger) +
+                      Math.min(
+                        MATOOL_STILLLEGUNGEN_FILL_MAX,
+                        await countUnreadStilllegungen(env.DB)
+                      )
+                  : detailLimitFor(area, trigger),
                 async () => {
                   activeLease = await renewExactSyncLease(env.DB, activeLease);
                 },
