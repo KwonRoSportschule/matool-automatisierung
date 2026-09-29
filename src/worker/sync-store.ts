@@ -82,6 +82,54 @@ export async function markAbandonedMatoolSyncRuns(
   }
 }
 
+/**
+ * Merkt sich, welche Bereiche ein Lauf lesen will (fuer die
+ * Fortschrittskarte). Eigene, selbst angelegte Tabelle; scheitert nie am Lauf.
+ */
+export async function recordMatoolSyncRunPlan(
+  db: D1Database,
+  syncId: string,
+  areas: readonly string[]
+): Promise<void> {
+  try {
+    await db.batch([
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS matool_sync_run_plans (
+          sync_id TEXT PRIMARY KEY,
+          areas_json TEXT NOT NULL
+        )`
+      ),
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO matool_sync_run_plans (sync_id, areas_json)
+           VALUES (?, ?)`
+        )
+        .bind(syncId, JSON.stringify([...areas]))
+    ]);
+  } catch {
+    // Nur fuer die Anzeige; ohne Plan zeigt die Karte alle Bereiche.
+  }
+}
+
+/** Geplante Bereiche eines Laufs oder null, wenn keiner hinterlegt ist. */
+export async function readMatoolSyncRunPlan(
+  db: D1Database,
+  syncId: string
+): Promise<string[] | null> {
+  try {
+    const row = await db
+      .prepare("SELECT areas_json FROM matool_sync_run_plans WHERE sync_id = ?")
+      .bind(syncId)
+      .first<{ areas_json: string }>();
+    const areas = row ? (JSON.parse(row.areas_json) as unknown) : null;
+    return Array.isArray(areas) && areas.every((area) => typeof area === "string")
+      ? (areas as string[])
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function finishMatoolSyncRun(
   db: D1Database,
   syncId: string,
