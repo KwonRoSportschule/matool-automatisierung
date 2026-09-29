@@ -57,7 +57,7 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
         "abruf",
         {
           retries: { limit: 0, delay: "1 second", backoff: "constant" },
-          timeout: "45 minutes"
+          timeout: "90 minutes"
         },
         async () => {
           const zeitpunkt = Date.parse(requestedAt) || Date.now();
@@ -67,7 +67,13 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
             // Der Interessenten-Workflow hat seinen eigenen Status; er darf
             // den Mitgliederabruf nicht verhindern.
           }
-          const summary = await collectMatoolSnapshots(this.env, zeitpunkt);
+          const summary = await collectMatoolSnapshots(
+            this.env,
+            zeitpunkt,
+            undefined,
+            "manual",
+            { fillUnreadStilllegungen: true }
+          );
           return {
             failed: summary.failed,
             failedAreas: summary.areas

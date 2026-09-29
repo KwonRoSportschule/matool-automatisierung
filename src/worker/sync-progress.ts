@@ -44,8 +44,12 @@ export interface SyncProgress {
 const DEFAULT_AREA_MS = 90_000;
 /** Laeuft ein Bereich laenger als geschaetzt, bleibt mindestens so viel Rest. */
 const MIN_REMAINING_WHEN_OVERDUE_MS = 30_000;
-/** Aeltere "laufende" Laeufe sind abgebrochen (vgl. sync-store.ts). */
-const MAX_RUN_AGE_MS = 30 * 60 * 1_000;
+/**
+ * Hoechstalter eines angezeigten Laufs. Ob er lebt, entscheidet die Sperre;
+ * ein manueller Abruf, der alle Stilllegungen nachliest, dauert ueber 30
+ * Minuten.
+ */
+const MAX_RUN_AGE_MS = 90 * 60 * 1_000;
 const HISTORY_RUNS = 5;
 
 /** Kurze Namen fuer die Karte; sonst die Beschriftung des Dashboards. */
