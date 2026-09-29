@@ -148,6 +148,13 @@ Login-Sperre auf. Die Kachel „Datenschutz“ im Dashboard zeigt den Stand.
   Einzugstag, Jahresgebühr samt Datum); IBAN, Bankdaten, Geburts- und
   Kontaktdaten verlassen den Hub auch hier nicht. Von den Ex-Mitgliedern
   wird nur die Anzahl gezählt.
+- Stilllegungen (`schueler_stilllegungen`) liest der Hub je Mitglied über
+  die reine Leseanfrage von `stilllegung_daten.php` (alle Formularfelder
+  `undefined`, wie im Browser beobachtet; nie Speichern oder Löschen). Der
+  Parser übernimmt ausschließlich Monat/Jahr von Beginn und Ende sowie den
+  Status; der mitgelieferte Name wird verworfen. Eine unbekannte Antwortform
+  bricht den Bereich ab, statt geraten zu werden. Zapier erhält diesen
+  Bereich nicht; er fließt nur in die Beitragsübersicht.
 - Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
   Beitragsübersicht mit einem eigenen Token (`CHECKIN_SERVICE_TOKEN`), der
   nichts anderes öffnet; der Zapier-Token gilt dort nicht und umgekehrt.

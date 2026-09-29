@@ -31,7 +31,11 @@ const SYNTHETIC_CLAIM_ID =
  * ausschliesslich ueber projectSnapshotPayloadForZapier, das auf beiden Wegen
  * (Hook-Zustellung und Datensatzliste) nur eine feste Feldliste durchlaesst.
  */
-const ZAPIER_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS;
+// Stilllegungen dienen allein der Beitragsrechnung und bleiben ausserhalb
+// von Zapier.
+const ZAPIER_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
+  (area) => area !== "schueler_stilllegungen"
+);
 
 export async function handleZapierApiRequest(
   request: Request,

@@ -14,6 +14,7 @@ import {
   parseKlassenDetailResponse
 } from "./klassen-detail";
 import { parseSchuelerDetailResponse } from "./schueler-detail";
+import { parseStilllegungResponse } from "./stilllegung";
 
 const ALLOWED_MATOOL_HOST = "core.matool.de";
 const MAX_PROBE_BYTES = 2_000_000;
@@ -153,7 +154,8 @@ export interface MatoolSafeAreaResult {
     | MatoolSafeArea
     | "interessenten_details"
     | MatoolExactDetailArea
-    | "graduierungen";
+    | "graduierungen"
+    | "schueler_stilllegungen";
   bodyBytes: number;
   records: MatoolSafeAreaRecord[];
   rowCount: number;
@@ -505,6 +507,63 @@ export class MatoolClient {
     }
     return {
       area: "graduierungen",
+      bodyBytes,
+      records,
+      rowCount: records.length
+    };
+  }
+
+  /**
+   * Liest die Stilllegungszeitraeume je Mitglied. Der Ablauf entspricht dem
+   * Browser: Mitglied oeffnen, `stilllegung_daten.php` mit exakt der
+   * beobachteten Leseanfrage abfragen (alle Formularfelder "undefined", also
+   * kein Speichern oder Loeschen), Mitglied wieder schliessen. Das Oeffnen
+   * sichert wie bei den Stammdaten, dass MATOOL zum richtigen Datensatz
+   * antwortet.
+   */
+  async extractStilllegungen(
+    credentials: MatoolCredentials,
+    sourceIds: readonly string[],
+    onProgress?: () => Promise<void>
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    const selectedIds = selectExactDetailIds(sourceIds, "schueler");
+    await this.login(credentials);
+
+    const records: MatoolSafeAreaRecord[] = [];
+    let bodyBytes = 0;
+    for (const [index, sourceId] of selectedIds.entries()) {
+      if (index > 0 && index % EXACT_DETAIL_PROGRESS_STEP === 0) {
+        await onProgress?.();
+      }
+      await this.setSchuelerOpenState(sourceId, "open");
+      try {
+        const response = await this.requestReadOnlyWithStatusRetry(
+          "/json/stilllegung_daten.php",
+          {
+            body: stilllegungLeseanfrage(sourceId),
+            headers: {
+              Accept: "application/json, text/javascript, */*; q=0.01",
+              "Content-Type":
+                "application/x-www-form-urlencoded; charset=UTF-8",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            method: "POST"
+          }
+        );
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw stilllegungFetchError();
+        }
+        const body = await readBoundedBody(response);
+        bodyBytes += body.byteLength;
+        records.push(parseStilllegungResponse(body, sourceId));
+      } finally {
+        await this.setSchuelerOpenState(sourceId, "close");
+      }
+    }
+    return {
+      area: "schueler_stilllegungen",
       bodyBytes,
       records,
       rowCount: records.length
@@ -1801,6 +1860,35 @@ function checkinFetchError(): AppError {
     "matool_checkin_fetch_failed",
     502,
     "Die MATOOL-Check-in-Daten konnten nicht gelesen werden."
+  );
+}
+
+/**
+ * Exakt die Leseanfrage des MATOOL-Browsers (HAR vom 29.09.2026). `todo`
+ * bleibt "undefined": Nur mit einem echten Wert (speichern, loeschen)
+ * wuerde MATOOL etwas veraendern.
+ */
+function stilllegungLeseanfrage(schuelerId: string): URLSearchParams {
+  return new URLSearchParams([
+    ["schueler_nr", schuelerId],
+    ["todo", "undefined"],
+    ["satz_id", "undefined"],
+    ["stilllegung_von_monat", "undefined"],
+    ["stilllegung_von_jahr", "undefined"],
+    ["stilllegung_bis_monat", "undefined"],
+    ["stilllegung_bis_jahr", "undefined"],
+    ["zahlungsperiode_schueler", "undefined"],
+    ["stilllegung_von_monat_periode", "undefined"],
+    ["stilllegung_von_jahr_periode", "undefined"],
+    ["show", "schueler"]
+  ]);
+}
+
+function stilllegungFetchError(): AppError {
+  return new AppError(
+    "matool_stilllegung_fetch_failed",
+    502,
+    "Die MATOOL-Stilllegungsdaten konnten nicht gelesen werden."
   );
 }
 

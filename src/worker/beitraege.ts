@@ -12,8 +12,10 @@ import {
   type BeitragsQuelle,
   type BeitragsRegeln,
   type BeitragsUebersicht,
-  type FeldwertVerteilung
+  type FeldwertVerteilung,
+  type StilllegungsZeitraum
 } from "../core/beitraege";
+import { stilllegungenAusText } from "../matool/stilllegung";
 import { parseStoredPayload } from "./dashboard-privacy";
 import type { Env } from "./env";
 import { storedPayloadCipher } from "./payload-encryption";
@@ -46,7 +48,7 @@ export async function ladeBeitragsQuellen(
       await env.DB.prepare(
         `SELECT area, source_id, payload_json, last_seen_at
          FROM matool_snapshots
-         WHERE area IN ('schueler', 'schueler_details')`
+         WHERE area IN ('schueler', 'schueler_details', 'schueler_stilllegungen')`
       ).all<BeitragsSnapshotRow>()
     ).results;
   } catch {
@@ -63,12 +65,19 @@ export async function ladeBeitragsQuellen(
     string,
     { payload: Record<string, unknown>; stand: string }
   >();
+  const stilllegungen = new Map<string, StilllegungsZeitraum[]>();
   for (const row of rows) {
     const payload = parseStoredPayload(
       await cipher.open({ area: row.area, sourceId: row.source_id }, row.payload_json)
     );
     if (row.area === "schueler") {
       liste.set(row.source_id, auswahl(payload, LISTEN_FELDER));
+    } else if (row.area === "schueler_stilllegungen") {
+      // Unlesbar gespeichert zaehlt wie "noch nicht gelesen".
+      const zeitraeume = stilllegungenAusText(payload.zeitraeume);
+      if (zeitraeume !== null) {
+        stilllegungen.set(row.source_id, zeitraeume);
+      }
     } else {
       stammdaten.set(row.source_id, {
         payload: auswahl(payload, stammdatenFelder),
@@ -83,7 +92,8 @@ export async function ladeBeitragsQuellen(
       sourceId,
       liste: listenFelder,
       stammdaten: details?.payload ?? null,
-      stammdatenStand: details?.stand ?? null
+      stammdatenStand: details?.stand ?? null,
+      stilllegungen: stilllegungen.get(sourceId) ?? null
     };
   });
 }
@@ -291,6 +301,9 @@ export function checkinBeitragsAntwort(
       mit_beitrag: z.mitBeitrag,
       ohne_beitrag: z.ohneBeitrag,
       stillgelegt: z.stillgelegt,
+      // Aeltere gesicherte Staende kennen die Zeitraeume noch nicht.
+      stillgelegt_zeitraum: z.stillgelegtZeitraum ?? 0,
+      stilllegungen_gelesen: z.stilllegungenGelesen ?? 0,
       stammdaten_fehlen: z.stammdatenFehlen,
       nicht_berechenbar: z.nichtBerechenbar,
       ex_mitglieder: z.exMitglieder ?? null,
@@ -338,14 +351,24 @@ export function checkinBeitragsAntwort(
       jahresgebuehrdatum: eintrag.jahresgebuehrdatum ?? "",
       grund: eintrag.grund,
       detail: eintrag.detail,
-      beitrag_cent: eintrag.beitragCent ?? null
+      beitrag_cent: eintrag.beitragCent ?? null,
+      ...(eintrag.ruhend
+        ? {
+            stilllegung_zeitraum: true,
+            monatsbeitrag_cent: eintrag.ruhend.monatsbeitragCent,
+            zahlungsperiode: eintrag.ruhend.zahlungsperiode,
+            zahlart: eintrag.ruhend.zahlart,
+            jahresgebuehr_cent: eintrag.ruhend.jahresgebuehrCent
+          }
+        : {})
     })),
     feldwerte
   };
 }
 
 /**
- * Laufzeitangaben, an denen die Telemetrieseite eine Kuendigung erkennt.
+ * Laufzeitangaben, an denen die Telemetrieseite eine Kuendigung erkennt
+ * (in MATOOL "Austritt" = "gueltig bis"), dazu die Stilllegungszeitraeume.
  * Aeltere gesicherte Staende haben sie noch nicht; dann bleiben sie leer.
  */
 function laufzeit(eintrag: {
@@ -353,11 +376,21 @@ function laufzeit(eintrag: {
   verlaengerung?: string;
   kuendigungsfrist?: string;
   gueltigBis?: string;
-}): Record<string, string> {
+  abschluss?: string;
+  stilllegungen?: readonly StilllegungsZeitraum[];
+  stilllegungenGelesen?: boolean;
+}): Record<string, unknown> {
   return {
     vertragsdatum: eintrag.vertragsdatum ?? "",
     verlaengerung: eintrag.verlaengerung ?? "",
     kuendigungsfrist: eintrag.kuendigungsfrist ?? "",
-    gueltig_bis: eintrag.gueltigBis ?? ""
+    gueltig_bis: eintrag.gueltigBis ?? "",
+    abschluss: eintrag.abschluss ?? "",
+    stilllegungen: (eintrag.stilllegungen ?? []).map((zeitraum) => ({
+      von: zeitraum.von,
+      bis: zeitraum.bis,
+      status: zeitraum.status
+    })),
+    stilllegungen_gelesen: eintrag.stilllegungenGelesen ?? false
   };
 }

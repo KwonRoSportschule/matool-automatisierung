@@ -27,6 +27,7 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   pruefungen: "Pruefungen",
   schueler: "Schueler / Mitglieder",
   schueler_ex: "Ehemalige Mitglieder (Kuendigung abgeschlossen)",
+  schueler_stilllegungen: "Stilllegungen",
   telemetrie: "Telemetrie"
 };
 
@@ -176,6 +177,7 @@ const SCHUELER_FIELD_LABELS: Readonly<Record<string, string>> = {
 };
 
 const GENERIC_SAFE_FIELDS = new Set([
+  "anzahl",
   "checkin_datum",
   "checkin_uhrzeit",
   "checkin_zeitpunkt",
@@ -187,7 +189,8 @@ const GENERIC_SAFE_FIELDS = new Set([
   "pruefungsdatum",
   "sparte",
   "status",
-  "storniert"
+  "storniert",
+  "zeitraeume"
 ]);
 
 const PII_FIELD_PATTERN =
@@ -397,7 +400,9 @@ function fieldLabel(area: string, key: string): string {
       pruefungsdatum: "Prüfungsdatum",
       sparte: "Sparte",
       storniert: "Storniert",
-      status: "Status"
+      status: "Status",
+      anzahl: "Anzahl Stilllegungen",
+      zeitraeume: "Stilllegungszeiträume"
     }[key] ?? key.replaceAll("_", " ")
   );
 }

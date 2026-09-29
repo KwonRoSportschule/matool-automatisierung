@@ -113,6 +113,7 @@ export const DEFAULT_BEITRAGS_REGELN: BeitragsRegeln = {
  * unberuehrt.
  */
 export const BEITRAGS_STAMMDATEN_FELDER = [
+  "abschluss",
   "abweichenderEinzug",
   "beitrag",
   "gueltig_bis",
@@ -149,6 +150,16 @@ export const BEITRAGS_FELDWERT_FELDER = [
   "kuendigungsfrist"
 ] as const;
 
+/** Eine in MATOOL eingetragene Stilllegung, monatsgenau. */
+export interface StilllegungsZeitraum {
+  /** Erster ruhender Monat, JJJJ-MM. */
+  von: string;
+  /** Letzter ruhender Monat, JJJJ-MM; leer = ohne Ende. */
+  bis: string;
+  /** Status laut MATOOL, kleingeschrieben (z. B. "aktiv"). */
+  status: string;
+}
+
 export interface BeitragsQuelle {
   /** Stabile MATOOL-Mitglieds-ID. */
   sourceId: string;
@@ -158,6 +169,11 @@ export interface BeitragsQuelle {
   stammdaten: Readonly<Record<string, unknown>> | null;
   /** Zeitpunkt, zu dem die Stammdaten zuletzt aus MATOOL gelesen wurden. */
   stammdatenStand: string | null;
+  /**
+   * Stilllegungszeitraeume laut MATOOL; null bzw. fehlend, solange sie fuer
+   * dieses Mitglied noch nicht gelesen wurden.
+   */
+  stilllegungen?: readonly StilllegungsZeitraum[] | null;
 }
 
 export type NichtEingerechnetGrund =
@@ -184,6 +200,11 @@ export interface BeitragsPosition {
   verlaengerung: string;
   kuendigungsfrist: string;
   gueltigBis: string;
+  abschluss: string;
+  /** Alle Stilllegungen; leer, wenn keine eingetragen oder nicht gelesen. */
+  stilllegungen: StilllegungsZeitraum[];
+  /** true, sobald die Stilllegungen dieses Mitglieds gelesen wurden. */
+  stilllegungenGelesen: boolean;
   /** Einzugstag im Monat (1 bis 31); null, wenn nicht eindeutig lesbar. */
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
@@ -215,6 +236,9 @@ export interface NichtEingerechnetePosition {
   verlaengerung: string;
   kuendigungsfrist: string;
   gueltigBis: string;
+  abschluss: string;
+  stilllegungen: StilllegungsZeitraum[];
+  stilllegungenGelesen: boolean;
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
   jahresgebuehrdatum: string;
@@ -226,6 +250,17 @@ export interface NichtEingerechnetePosition {
    * welcher Betrag gerade ruht; in keiner Summe enthalten.
    */
   beitragCent: number | null;
+  /**
+   * Nur bei einer Stilllegung mit Zeitraum: Das Mitglied waere sonst
+   * eingerechnet. Die Werte zeigen, was nach der Stilllegung wieder
+   * eingezogen wird; in keiner Summe des Stichtags enthalten.
+   */
+  ruhend?: {
+    monatsbeitragCent: number;
+    zahlungsperiode: string;
+    zahlart: string;
+    jahresgebuehrCent: number | null;
+  };
 }
 
 export interface BeitragsZusammenfassung {
@@ -236,6 +271,10 @@ export interface BeitragsZusammenfassung {
   mitBeitrag: number;
   ohneBeitrag: number;
   stillgelegt: number;
+  /** Davon ueber einen Stilllegungszeitraum im Stichtagsmonat. */
+  stillgelegtZeitraum: number;
+  /** Mitglieder, deren Stilllegungen bereits gelesen wurden. */
+  stilllegungenGelesen: number;
   stammdatenFehlen: number;
   nichtBerechenbar: number;
   /**
@@ -289,6 +328,8 @@ export function erstelleBeitragsUebersicht(
   const positionen: BeitragsPosition[] = [];
   const nichtEingerechnet: NichtEingerechnetePosition[] = [];
   const staende: string[] = [];
+  const stichtagMonat = optionen.stichtag.slice(0, 7);
+  let stillgelegtZeitraum = 0;
 
   for (const quelle of quellen) {
     const person = personAngaben(quelle, regeln);
@@ -345,13 +386,29 @@ export function erstelleBeitragsUebersicht(
       monatsbeitragCent = Math.round(beitragCent / monate);
     }
 
+    const zahlart = textWert(quelle.stammdaten.zahlart);
+    const jahresgebuehrCent = parseEuroCent(quelle.stammdaten.jahresgebuehr);
+    // Stilllegung laut MATOOL-Zeitraum: Im Stichtagsmonat ruht der Beitrag.
+    const ruht = stilllegungIm(person.stilllegungen, stichtagMonat);
+    if (ruht !== null) {
+      stillgelegtZeitraum += 1;
+      nichtEingerechnet.push({
+        ...person,
+        grund: "stillgelegt",
+        detail: `Stilllegung ${zeitraumText(ruht)}`,
+        beitragCent,
+        ruhend: { monatsbeitragCent, zahlungsperiode, zahlart, jahresgebuehrCent }
+      });
+      continue;
+    }
+
     positionen.push({
       ...person,
       zahlungsperiode,
-      zahlart: textWert(quelle.stammdaten.zahlart),
+      zahlart,
       beitragCent,
       monatsbeitragCent,
-      jahresgebuehrCent: parseEuroCent(quelle.stammdaten.jahresgebuehr),
+      jahresgebuehrCent,
       stammdatenStand: quelle.stammdatenStand
     });
   }
@@ -406,6 +463,8 @@ export function erstelleBeitragsUebersicht(
       mitBeitrag,
       ohneBeitrag: positionen.length - mitBeitrag,
       stillgelegt,
+      stillgelegtZeitraum,
+      stilllegungenGelesen: quellen.filter((quelle) => Array.isArray(quelle.stilllegungen)).length,
       stammdatenFehlen,
       nichtBerechenbar,
       exMitglieder: optionen.exMitglieder ?? null,
@@ -466,6 +525,9 @@ function personAngaben(
   verlaengerung: string;
   kuendigungsfrist: string;
   gueltigBis: string;
+  abschluss: string;
+  stilllegungen: StilllegungsZeitraum[];
+  stilllegungenGelesen: boolean;
   einzugstag: number | null;
   einzugsquelle: EinzugsQuelle;
   jahresgebuehrdatum: string;
@@ -487,12 +549,75 @@ function personAngaben(
     verlaengerung: textWert(stammdaten.verlaengerung),
     kuendigungsfrist: textWert(stammdaten.kuendigungsfrist),
     gueltigBis: textWert(stammdaten.gueltig_bis),
+    abschluss: textWert(stammdaten.abschluss),
+    stilllegungen: gueltigeStilllegungen(quelle.stilllegungen),
+    stilllegungenGelesen: Array.isArray(quelle.stilllegungen),
     // Ohne Stammdaten ist auch der Einzugstag unbekannt.
     ...(quelle.stammdaten === null
       ? { einzugstag: null, einzugsquelle: "" as const }
       : einzugAus(stammdaten, regeln.einzugFeld)),
     jahresgebuehrdatum: textWert(stammdaten.jahresgebuehrdatum)
   };
+}
+
+/**
+ * Stornierte, geloeschte oder abgelehnte Stilllegungen ruhen nicht. Alle
+ * anderen Status (auch unbekannte) zaehlen: Eine eingetragene Stilllegung
+ * zu uebersehen waere teurer als sie einmal zu viel zu zeigen.
+ */
+const STILLLEGUNG_UNGUELTIG =
+  /storn|gel(?:ö|oe)scht|inaktiv|deaktiv|abgelehnt|widerruf|abgebrochen|aufgehoben/u;
+
+export function stilllegungZaehlt(zeitraum: StilllegungsZeitraum): boolean {
+  return !STILLLEGUNG_UNGUELTIG.test(zeitraum.status);
+}
+
+/** Zulaessige Zeitraeume, sortiert; ein vertauschtes Ende wird gedreht. */
+function gueltigeStilllegungen(
+  zeitraeume: readonly StilllegungsZeitraum[] | null | undefined
+): StilllegungsZeitraum[] {
+  if (!Array.isArray(zeitraeume)) {
+    return [];
+  }
+  const monat = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
+  return zeitraeume
+    .filter(
+      (zeitraum) =>
+        monat.test(zeitraum.von) && (zeitraum.bis === "" || monat.test(zeitraum.bis))
+    )
+    .map((zeitraum) =>
+      zeitraum.bis !== "" && zeitraum.bis < zeitraum.von
+        ? { von: zeitraum.bis, bis: zeitraum.von, status: zeitraum.status }
+        : { von: zeitraum.von, bis: zeitraum.bis, status: zeitraum.status }
+    )
+    .sort(
+      (links, rechts) =>
+        links.von.localeCompare(rechts.von) ||
+        (links.bis || "9999-99").localeCompare(rechts.bis || "9999-99")
+    );
+}
+
+/** Der Zeitraum, der den Monat (JJJJ-MM) abdeckt, oder null. */
+export function stilllegungIm(
+  zeitraeume: readonly StilllegungsZeitraum[],
+  monat: string
+): StilllegungsZeitraum | null {
+  return (
+    zeitraeume.find(
+      (zeitraum) =>
+        stilllegungZaehlt(zeitraum) &&
+        zeitraum.von <= monat &&
+        (zeitraum.bis === "" || monat <= zeitraum.bis)
+    ) ?? null
+  );
+}
+
+/** "10/2026–12/2026" bzw. "ab 10/2026". */
+export function zeitraumText(zeitraum: StilllegungsZeitraum): string {
+  const deutsch = (monat: string) => `${monat.slice(5, 7)}/${monat.slice(0, 4)}`;
+  return zeitraum.bis === ""
+    ? `ab ${deutsch(zeitraum.von)}`
+    : `${deutsch(zeitraum.von)}–${deutsch(zeitraum.bis)}`;
 }
 
 const NEIN_WERTE = new Set(["", "0", "nein", "n", "false", "off", "no", "-"]);

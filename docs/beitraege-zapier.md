@@ -80,10 +80,32 @@ Je Mitglied gilt:
 | Fall | Ergebnis |
 |---|---|
 | Kundenart oder Vertrag enthält ein Stilllegungsmuster | nicht eingerechnet, Grund `stillgelegt` |
+| In MATOOL ist eine Stilllegung eingetragen, deren Zeitraum den Monat des Stichtags abdeckt (Reiter „Stilllegung“, z. B. 10/2026–12/2026) | nicht eingerechnet, Grund `stillgelegt`, Detail „Stilllegung 10/2026–12/2026“; der ruhende Monatsbeitrag steht unter `ruhend` bzw. `monatsbeitrag_cent` |
 | Stammdaten noch nicht gelesen | nicht eingerechnet, Grund `stammdaten_fehlen` |
 | Beitrag nicht eindeutig lesbar (z. B. „auf Anfrage“) | nicht eingerechnet, Grund `beitrag_unlesbar` |
 | Beitrag leer | eingerechnet mit 0,00 € (z. B. Trainer) |
 | sonst | eingerechnet mit Monatsbeitrag |
+
+### Stilllegungszeiträume
+
+Der Hub liest je Mitglied die in MATOOL eingetragenen Stilllegungen
+(`/json/stilllegung_daten.php`, Bereich `schueler_stilllegungen`). Der
+Abruf läuft wie im Browser: Mitglied öffnen, Stilllegungen mit exakt der
+beobachteten Leseanfrage abfragen (`todo=undefined`, also nie Speichern
+oder Löschen), Mitglied schließen. Je Lauf kommen 60 Mitglieder dran
+(Handlauf: 10), zuerst die noch nie gelesenen, danach die ältesten – der
+ganze Bestand ist so mehrmals am Tag frisch.
+
+Gespeichert werden nur Monat und Jahr von Beginn und Ende sowie der Status,
+kein Name. Je Mitglied entsteht genau ein Datensatz, auch ohne Stilllegung:
+So verschwindet eine in MATOOL gelöschte Stilllegung beim nächsten Abruf.
+Stornierte, gelöschte oder abgelehnte Einträge ruhen nicht; jeder andere
+Status zählt. Ein Zeitraum ohne Ende gilt ab dem Beginn. Zapier bekommt
+diesen Bereich nicht.
+
+Die Telemetrieseite erhält je Mitglied alle Zeiträume (`stilllegungen`) und
+rechnet damit jeden Monat einzeln: Im Zeitraum ruht der Beitrag, davor und
+danach wird er eingezogen.
 
 Die Übersicht ist nur **vollständig**, wenn die Mitgliederliste gelesen ist
 und kein aktives Mitglied fehlt. Gerechnet wird in Cent, Beträge wie
@@ -132,7 +154,7 @@ jeweils mit Anzahl. Steht bei `schule` eine Zahl statt eines Namens,
 
 | Aufruf | Zugang | Inhalt |
 |---|---|---|
-| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; 1. oder 15. in der Vergangenheit: gesicherter Stand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag samt Laufzeit (Beginn, Ende, Abschluss, Verlängerung, Kündigungsfrist, gültig bis), Einzugstag samt Quelle, Jahresgebührdatum, Beträge in Cent; Summen gesamt und je Einzugstag (1–31); Feldwerte |
+| `GET /api/checkin/v1/beitraege?stichtag=JJJJ-MM-TT` | `CHECKIN_SERVICE_TOKEN` | Heute: Live-Stand; 1. oder 15. in der Vergangenheit: gesicherter Stand. Je Mitglied Name, Nr., Schule, Sparten, Vertrag samt Laufzeit (Datum, Beginn, Ende, Abschluss, Verlängerung, Kündigungsfrist, gültig bis = Austritt), Stilllegungszeiträume (`stilllegungen`, `stilllegungen_gelesen`), Einzugstag samt Quelle, Jahresgebührdatum, Beträge in Cent; bei einer Stilllegung mit Zeitraum zusätzlich der ruhende Monatsbeitrag; Summen gesamt und je Einzugstag (1–31), `stillgelegt_zeitraum`, `stilllegungen_gelesen`; Feldwerte |
 | `GET /api/checkin/v1/beitraege/stichtage` | `CHECKIN_SERVICE_TOKEN` | Alle gesicherten Stichtage (1./15.) mit Kennzahlen und Summen je Einzugstag (ohne Personen), neueste zuerst |
 | `GET /api/zapier/v1/beitraege?stichtag=JJJJ-MM-TT` | Zapier-Service-Token | Summen, Einzelposten und XML-Text für die Zapier-App |
 
