@@ -3,8 +3,9 @@ export interface Env {
   DB: D1Database;
   INTERESSENTEN_SYNC_WORKFLOW: Workflow<InteressentenSyncWorkflowParams>;
   /**
-   * Manueller Gesamtabruf (Knopf im Dashboard). Fehlt die Bindung, laeuft
-   * der Abruf wie frueher direkt in der Web-Anfrage.
+   * Gesamtabruf der Mitgliederbereiche als dauerhafter Workflow: Stundenlauf
+   * (Cron) und Knopf im Dashboard. Fehlt die Bindung, laeuft der Abruf wie
+   * frueher direkt im Cron-Aufruf bzw. in der Web-Anfrage.
    */
   DIRECT_SYNC_WORKFLOW?: Workflow<DirectSyncWorkflowParams>;
   VERSION_METADATA?: WorkerVersionMetadata;
@@ -108,6 +109,8 @@ export interface Env {
 export interface DirectSyncWorkflowParams {
   jobId: string;
   requestedAt: string;
+  /** Fehlt bei Instanzen aus der Zeit vor dem Stundenlauf-Workflow: manuell. */
+  trigger?: "manual" | "scheduled";
 }
 
 export interface InteressentenSyncWorkflowParams {

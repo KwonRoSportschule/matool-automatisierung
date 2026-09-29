@@ -212,6 +212,77 @@ describe.sequential("fortsetzbarer vollstaendiger Interessentenabgleich", () => 
       .first<{ count: number }>();
     expect(orphanHistory?.count).toBe(1);
   });
+
+  it("liest im Folgejob nur neue, geaenderte, zu alte und die neuesten Details", async () => {
+    const suffix = testSuffix();
+    await env.DB.prepare(
+      `UPDATE interessenten_sync_jobs
+       SET status = 'failed', finished_at = '2026-08-25T00:00:00.000Z'
+       WHERE status = 'running'`
+    ).run();
+    const ids = Array.from({ length: 200 }, (_, index) => String(5001 + index));
+    const listRunId = `delta_list_${suffix}`;
+    const persisted = await persistMatoolSnapshotRun(
+      env.DB,
+      snapshotInput("interessenten", listRunId, ids, "2026-08-25T06:00:00.000Z", true),
+      await storedPayloadCipher(env)
+    );
+    const jobId = `delta_job_${suffix}`;
+    const jobStart = "2026-08-26T12:00:00.000Z";
+    await startOrRestartInteressentenSyncJob(env.DB, {
+      initialListCount: 200,
+      initialListUniqueCount: 200,
+      jobId,
+      listCount: 200,
+      listCreatedCount: persisted.createdCount,
+      listDigest: "d".repeat(64),
+      listRunId,
+      listUpdatedCount: persisted.updatedCount,
+      staleListRemovedCount: persisted.staleRemovedCount,
+      startedAt: jobStart
+    });
+    await env.DB.prepare(
+      "DELETE FROM matool_snapshots WHERE area = 'interessenten_details'"
+    ).run();
+    // Frisch und nicht unter den 150 neuesten: bleibt.
+    await persistRecords("interessenten_details", `d1_${suffix}`, ["5001"], "2026-08-26T10:00:00.000Z");
+    // Vor der letzten Aenderung der Listenzeile gelesen: neu lesen.
+    await persistRecords("interessenten_details", `d2_${suffix}`, ["5002"], "2026-08-25T05:59:00.000Z");
+    // 5003 fehlt ganz. 5004 ist aelter als 20 Stunden: neu lesen.
+    await persistRecords("interessenten_details", `d4_${suffix}`, ["5004"], "2026-08-25T07:00:00.000Z");
+    // Neuester Interessent, vor Jobbeginn gelesen: neu lesen.
+    await persistRecords("interessenten_details", `d200_${suffix}`, ["5200"], "2026-08-26T11:00:00.000Z");
+    // Alle uebrigen in diesem Job bereits gelesen.
+    await persistRecords(
+      "interessenten_details",
+      `drest_${suffix}`,
+      ids.filter((id) => !["5001", "5002", "5003", "5004", "5200"].includes(id)),
+      "2026-08-26T12:05:00.000Z"
+    );
+
+    expect(await selectInteressentenSyncDetailSourceIds(env.DB, jobId, 50)).toEqual([
+      "5003",
+      "5002",
+      "5004",
+      "5200"
+    ]);
+    await expect(getInteressentenSyncParity(env.DB, jobId)).resolves.toMatchObject({
+      missingDetails: 1,
+      staleDetails: 3
+    });
+    const offen = await finalizeInteressentenSyncJob(env.DB, jobId, "2026-08-26T12:10:00.000Z");
+    expect(offen.completed).toBe(false);
+
+    await persistRecords(
+      "interessenten_details",
+      `dfix_${suffix}`,
+      ["5002", "5003", "5004", "5200"],
+      "2026-08-26T12:06:00.000Z"
+    );
+    expect(await selectInteressentenSyncDetailSourceIds(env.DB, jobId, 50)).toEqual([]);
+    const fertig = await finalizeInteressentenSyncJob(env.DB, jobId, "2026-08-26T12:11:00.000Z");
+    expect(fertig.completed).toBe(true);
+  });
 });
 
 function snapshotInput(

@@ -488,15 +488,15 @@ describe("MATOOL-Logging ohne Personendaten", () => {
     });
 
     const serializedLogs = JSON.stringify(errorLog.mock.calls);
-    // Der Client wiederholt einen abgebrochenen Netzwerkabruf genau einmal
-    // und protokolliert beide anonymisierten Versuche.
-    expect(errorLog).toHaveBeenCalledTimes(2);
+    // Der Client wiederholt einen abgebrochenen Netzwerkabruf zweimal
+    // und protokolliert alle drei anonymisierten Versuche.
+    expect(errorLog).toHaveBeenCalledTimes(3);
     expect(
       errorLog.mock.calls.map(([line]) => JSON.parse(String(line)).attempt)
-    ).toEqual([1, 2]);
+    ).toEqual([1, 2, 3]);
     expect(serializedLogs).toContain("matool_fetch_failed");
     expect(serializedLogs).not.toContain(piiSentinel);
     expect(serializedLogs).not.toContain("synthetic-privacy-test@example.invalid");
     expect(serializedLogs).not.toContain("synthetic-test-password");
-  });
+  }, 15_000);
 });

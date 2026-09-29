@@ -48,6 +48,19 @@ describe("reproduzierbare D1-Migrationskette", () => {
     );
   });
 
+  it("legt die Laufindizes an, ohne Tabellen zu entfernen", async () => {
+    const indizes = await env.DB
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+      .all<{ name: string }>();
+    expect(indizes.results.map((row) => row.name)).toEqual(
+      expect.arrayContaining([
+        "idx_matool_snapshot_changes_run",
+        "idx_matool_snapshot_runs_area_status_finished",
+        "idx_matool_sync_runs_status_started"
+      ])
+    );
+  });
+
   it("erhaelt beide Zapier-Filtergenerationen und den historischen Filterindex", async () => {
     const columns = await env.DB
       .prepare("PRAGMA table_info(zapier_snapshot_subscriptions)")
