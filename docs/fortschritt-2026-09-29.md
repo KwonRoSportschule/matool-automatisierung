@@ -188,6 +188,17 @@ täglich.
 - Bugs: „Gespeichert“ zeigte für alle Bereiche außer Interessenten/Mitglieder
   0; mehrere veraltete Bereiche jetzt eine Sammelwarnung statt vieler Karten.
 
+### Weitere Absicherungen
+
+- Interessentenliste bei kurzen Abgleichen nur einmal statt zweimal lesen
+  (Kontrolllesen erst ab 15 Minuten Laufzeit).
+- Zapier-Zustellung als eigener Workflow-Schritt (15 statt 2 Minuten); ein
+  langsamer Zapier-Abruf macht einen fertigen Lauf nicht mehr zum Fehler.
+- Abschluss eines Laufs idempotent; manueller Abruf meldet je Bereich ein
+  Lebenszeichen (sonst nach einer Stunde fälschlich „verwaist“).
+- Dashboard-Übersicht: letzter Lauf je Bereich per Indextreffer statt
+  Fensterfunktion über alle Läufe seit Projektbeginn.
+
 ### Nach dem Merge beobachten
 
 1. Erster Stundenlauf: Dashboard-Fortschrittskarte zeigt Bereiche einzeln.
