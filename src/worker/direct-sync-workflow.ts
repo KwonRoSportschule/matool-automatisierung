@@ -203,9 +203,17 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
 
       await step.do("abschluss", SMALL_STEP_CONFIG, async () => {
         await releaseDirectSyncLease(this.env.DB, leaseOwner, aktiverPlan.syncId);
-        await finishDirectSync(this.env, aktiverPlan.syncId, summary, aktiverPlan.areas.length, {
-          deliver: false
-        });
+        try {
+          await finishDirectSync(this.env, aktiverPlan.syncId, summary, aktiverPlan.areas.length, {
+            deliver: false
+          });
+        } catch (error) {
+          // Wiederholung nach verlorener Antwort: Der Lauf ist schon
+          // abgeschlossen, das ist kein Fehler.
+          if (!(await isSyncRunFinished(this.env.DB, aktiverPlan.syncId))) {
+            throw error;
+          }
+        }
         return { abgeschlossen: true };
       });
 
@@ -493,6 +501,14 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
       await step.sleep(`${input.name}-warten-${minute}`, "1 minute");
     }
   }
+}
+
+async function isSyncRunFinished(db: D1Database, syncId: string): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT status FROM matool_sync_runs WHERE sync_id = ?")
+    .bind(syncId)
+    .first<{ status: string }>();
+  return row !== null && row.status !== "running";
 }
 
 /** Besitzer der Sperre fuer eine Workflow-Instanz (stabil ueber Neustarts). */
