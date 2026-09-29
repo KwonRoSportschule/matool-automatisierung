@@ -159,7 +159,21 @@ export interface MatoolSafeAreaResult {
   bodyBytes: number;
   records: MatoolSafeAreaRecord[];
   rowCount: number;
+  /**
+   * Nur bei Abrufen je Mitglied: die Kennungen, die tatsaechlich gelesen
+   * wurden. Bricht ein Zeitbudget den Abruf ab, sind es weniger als
+   * angefordert.
+   */
+  processedSourceIds?: string[];
 }
+
+/**
+ * Gibt true zurueck, sobald ein Abruf je Mitglied aufhoeren soll (z. B. weil
+ * das Zeitbudget des Stundenlaufs aufgebraucht ist). Gefragt wird vor jedem
+ * weiteren Mitglied; das erste wird immer gelesen, damit jeder Lauf
+ * vorankommt.
+ */
+export type MatoolStopSignal = () => boolean;
 
 export interface MatoolStructureDiscoveryResult {
   bereich: MatoolArea;
@@ -469,15 +483,20 @@ export class MatoolClient {
   async extractGraduierungen(
     credentials: MatoolCredentials,
     sourceIds: readonly string[],
-    onProgress?: () => Promise<void>
+    onProgress?: () => Promise<void>,
+    shouldStop?: MatoolStopSignal
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
     const selectedIds = selectExactDetailIds(sourceIds, "schueler");
     await this.login(credentials);
 
     const records: MatoolSafeAreaRecord[] = [];
+    const processedSourceIds: string[] = [];
     let bodyBytes = 0;
     for (const [index, sourceId] of selectedIds.entries()) {
+      if (index > 0 && shouldStop?.()) {
+        break;
+      }
       if (index > 0 && index % EXACT_DETAIL_PROGRESS_STEP === 0) {
         await onProgress?.();
       }
@@ -501,6 +520,7 @@ export class MatoolClient {
       const body = await readBoundedBody(response);
       bodyBytes += body.byteLength;
       records.push(...parseGraduierungResponse(body, sourceId));
+      processedSourceIds.push(sourceId);
       if (records.length > MAX_EXACT_DETAIL_RECORDS) {
         throw graduierungFetchError();
       }
@@ -508,6 +528,7 @@ export class MatoolClient {
     return {
       area: "graduierungen",
       bodyBytes,
+      processedSourceIds,
       records,
       rowCount: records.length
     };
@@ -524,7 +545,8 @@ export class MatoolClient {
   async extractStilllegungen(
     credentials: MatoolCredentials,
     sourceIds: readonly string[],
-    onProgress?: () => Promise<void>
+    onProgress?: () => Promise<void>,
+    shouldStop?: MatoolStopSignal
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
     const selectedIds = selectExactDetailIds(sourceIds, "schueler");
@@ -533,6 +555,9 @@ export class MatoolClient {
     const records: MatoolSafeAreaRecord[] = [];
     let bodyBytes = 0;
     for (const [index, sourceId] of selectedIds.entries()) {
+      if (index > 0 && shouldStop?.()) {
+        break;
+      }
       if (index > 0 && index % EXACT_DETAIL_PROGRESS_STEP === 0) {
         await onProgress?.();
       }
@@ -565,6 +590,7 @@ export class MatoolClient {
     return {
       area: "schueler_stilllegungen",
       bodyBytes,
+      processedSourceIds: records.map((record) => record.sourceId),
       records,
       rowCount: records.length
     };
@@ -869,12 +895,18 @@ export class MatoolClient {
   async extractSchuelerDetails(
     credentials: MatoolCredentials,
     sourceIds: readonly string[],
-    onProgress?: () => Promise<void>
+    onProgress?: () => Promise<void>,
+    shouldStop?: MatoolStopSignal
   ): Promise<MatoolSafeAreaResult> {
     requireCredentials(credentials);
     const selectedIds = selectExactDetailIds(sourceIds, "schueler");
     await this.login(credentials);
-    return this.fetchExactDetails("schueler_details", selectedIds, onProgress);
+    return this.fetchExactDetails(
+      "schueler_details",
+      selectedIds,
+      onProgress,
+      shouldStop
+    );
   }
 
   /** Liest alle angeforderten Artikeldetails in stabiler ID-Reihenfolge. */
@@ -891,12 +923,16 @@ export class MatoolClient {
   private async fetchExactDetails(
     area: MatoolExactDetailArea,
     sourceIds: readonly string[],
-    onProgress?: () => Promise<void>
+    onProgress?: () => Promise<void>,
+    shouldStop?: MatoolStopSignal
   ): Promise<MatoolSafeAreaResult> {
     const records: MatoolSafeAreaRecord[] = [];
     let bodyBytes = 0;
 
-    for (const sourceId of sourceIds) {
+    for (const [index, sourceId] of sourceIds.entries()) {
+      if (index > 0 && shouldStop?.()) {
+        break;
+      }
       if (records.length > 0 && records.length % EXACT_DETAIL_PROGRESS_STEP === 0) {
         await onProgress?.();
       }

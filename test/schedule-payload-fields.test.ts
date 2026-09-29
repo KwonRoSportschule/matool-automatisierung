@@ -15,16 +15,18 @@ import { storedPayloadCipher } from "../src/worker/payload-encryption";
 describe("Snapshot-Feldallowlist", () => {
   it("ruft Interessenten und ihre Details vor den Mitglieder-Lebenszyklusbereichen ab", () => {
     // Fachlich benoetigt werden ausschliesslich Interessenten und
-    // Mitglieder; jeweils Liste vor Detailabruf.
+    // Mitglieder; jeweils Liste vor Detailabruf. Die Abrufe je Mitglied
+    // stehen am Ende, weil sie am Zeitbudget enden duerfen: Stilllegungen
+    // und Stammdaten (Beitragsuebersicht) vor den Graduierungen.
     expect(MATOOL_SNAPSHOT_AREAS).toEqual([
       "interessenten",
       "interessenten_details",
       "schueler",
-      "schueler_details",
       "schueler_ex",
       "checkin",
-      "graduierungen",
-      "schueler_stilllegungen"
+      "schueler_stilllegungen",
+      "schueler_details",
+      "graduierungen"
     ]);
     expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
     expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);

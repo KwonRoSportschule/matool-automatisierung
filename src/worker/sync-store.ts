@@ -42,6 +42,45 @@ export async function beginMatoolSyncRun(
   return syncId;
 }
 
+/**
+ * Ab diesem Alter gilt ein Lauf, der noch "laeuft", als abgebrochen.
+ * Cloudflare beendet einen Cron-Aufruf nach 15 Minuten ohne Vorwarnung;
+ * der Lauf kommt dann nie bis finishMatoolSyncRun. Die Grenze liegt
+ * deutlich ueber der Lease (20 Minuten), damit kein lebender Lauf
+ * getroffen wird.
+ */
+export const MATOOL_SYNC_RUN_ABANDONED_AFTER_MS = 30 * 60 * 1_000;
+
+/**
+ * Schliesst Laeufe ab, die seit mehr als 30 Minuten "laufen": Sie wurden
+ * abgebrochen (Wandzeitlimit, Neustart). Ohne das zeigt das Dashboard sie
+ * dauerhaft als laufend. Scheitert nie am neuen Lauf.
+ */
+export async function markAbandonedMatoolSyncRuns(
+  db: D1Database,
+  now: string
+): Promise<number> {
+  const grenze = new Date(
+    Date.parse(now) - MATOOL_SYNC_RUN_ABANDONED_AFTER_MS
+  ).toISOString();
+  try {
+    const result = await db
+      .prepare(
+        `UPDATE matool_sync_runs
+         SET status = 'failed',
+             finished_at = ?,
+             error_code = 'matool_run_aborted'
+         WHERE status = 'running'
+           AND started_at < ?`
+      )
+      .bind(now, grenze)
+      .run();
+    return result.meta.changes ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function finishMatoolSyncRun(
   db: D1Database,
   syncId: string,
