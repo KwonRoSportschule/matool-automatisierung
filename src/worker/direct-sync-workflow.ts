@@ -192,6 +192,7 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
         addAreaResult(
           summary,
           await this.leseBereich(step, area, {
+            jobId,
             leaseOwner,
             scheduledTime: zeitpunkt,
             syncId: aktiverPlan.syncId,
@@ -297,13 +298,28 @@ export class DirectSyncWorkflow extends WorkflowEntrypoint<Env, DirectSyncWorkfl
   private async leseBereich(
     step: WorkflowStep,
     area: string,
-    lauf: { leaseOwner: string; scheduledTime: number; syncId: string; trigger: MatoolSyncTrigger }
+    lauf: {
+      jobId: string;
+      leaseOwner: string;
+      scheduledTime: number;
+      syncId: string;
+      trigger: MatoolSyncTrigger;
+    }
   ): Promise<DirectSyncAreaResult> {
     let result: DirectSyncAreaResult = { area, errorCode: "internal_error", status: "failed" };
     for (let versuch = 1; versuch <= DIRECT_SYNC_AREA_ATTEMPTS; versuch += 1) {
       const name = versuch === 1 ? `bereich-${area}` : `bereich-${area}-versuch-${versuch}`;
       try {
         result = await step.do(name, AREA_STEP_CONFIG, async () => {
+          if (lauf.trigger === "manual") {
+            // Lebenszeichen: Ein Auftrag ohne Aktualisierung seit einer
+            // Stunde gilt sonst als verwaist und gibt einen zweiten frei.
+            try {
+              await markManualSyncJob(this.env.DB, lauf.jobId, "running");
+            } catch {
+              // Nur Anzeige; der Abruf laeuft weiter.
+            }
+          }
           const budget = WORKFLOW_DETAIL_AREA_BUDGET_MS[area];
           const limit = WORKFLOW_DETAIL_LIMITS[area];
           return syncDirectArea(this.env, area, {
