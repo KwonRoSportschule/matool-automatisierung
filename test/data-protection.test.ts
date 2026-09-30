@@ -158,6 +158,40 @@ describe("Wartungslauf Datenschutz", () => {
     ).resolves.toBe('{"name":"Altbestand"}');
   });
 
+  it("verschluesselt mehr Altzeilen als ein Batch fasst, jede genau einmal", async () => {
+    const { area, suffix } = testArea();
+    const count = 230;
+    const observedAt = new Date().toISOString();
+    await persistMatoolSnapshotRun(
+      legacyEnv.DB,
+      {
+        allowedPayloadFields: ["name"],
+        area,
+        finishedAt: observedAt,
+        observedAt,
+        records: Array.from({ length: count }, (_, index) => ({
+          sourceId: String(index + 1),
+          payload: { name: `Alt ${index + 1}` }
+        })),
+        runId: `run_${suffix}`,
+        startedAt: observedAt
+      },
+      await storedPayloadCipher(legacyEnv)
+    );
+
+    const result = await runDataProtectionMaintenance(env);
+    expect(result.unprotectedPayloads).toBe(0);
+    expect(result.sealedPayloads).toBeGreaterThanOrEqual(count * 2);
+
+    const rows = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM matool_snapshots
+       WHERE area = ? AND payload_json LIKE 'enc:v1:%'`
+    )
+      .bind(area)
+      .first<{ count: number }>();
+    expect(rows?.count).toBe(count);
+  });
+
   it("versiegelt nach einem Schluesselwechsel alles mit dem neuen Schluessel", async () => {
     const { area, suffix } = testArea();
     await persistPayload(env, area, `run_${suffix}`, "1", { name: "Rotation" });

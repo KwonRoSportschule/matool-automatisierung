@@ -479,3 +479,15 @@ tbody tr:hover { background: #fafcf9; }
 .sync-progress-areas li[data-state="failed"] .sync-progress-area-bar span { background: var(--critical); }
 .sync-progress-areas li[data-state="failed"] .sync-progress-area-head span { color: var(--critical); }
 .dialog-content section > h3:not(:first-child) { margin-top: 1.5rem; }
+
+.change-history li { flex-wrap: wrap; }
+.change-fields,
+.change-note {
+  flex-basis: 100%;
+  margin: 0.4rem 0 0;
+  font-size: 0.9rem;
+}
+.change-fields { padding-left: 1.1rem; }
+.change-field-name { font-weight: 600; }
+.change-fields del { color: var(--muted, #6b6b6b); text-decoration: line-through; overflow-wrap: anywhere; }
+.change-fields ins { text-decoration: none; font-weight: 600; overflow-wrap: anywhere; }
