@@ -8,7 +8,7 @@ import {
   setRegionBusy
 } from "./dom";
 import { changeLabel, formatDateTime } from "./format";
-import type { DashboardRecordDetail } from "./types";
+import type { DashboardRecordDetail, FieldChange } from "./types";
 
 export class RecordDetailDialog {
   private readonly closeButton = byId<HTMLButtonElement>("record-dialog-close");
@@ -145,13 +145,18 @@ export class RecordDetailDialog {
       );
     } else {
       for (const item of detail.changeHistory) {
+        const kind = item.changeKind ?? item.change;
         const row = document.createElement("li");
         const label = document.createElement("strong");
-        label.textContent = changeLabel(item.changeKind ?? item.change);
+        label.textContent = changeLabel(kind);
         const time = document.createElement("time");
-        time.dateTime = item.observedAt;
-        time.textContent = formatDateTime(item.observedAt);
+        const observedAt = item.occurredAt ?? item.observedAt ?? "";
+        time.dateTime = observedAt;
+        time.textContent = formatDateTime(observedAt);
         row.append(label, time);
+        if (kind === "updated") {
+          row.append(changedFields(item.fieldChanges));
+        }
         history.append(row);
       }
       historySection.append(historyHeading, history);
@@ -159,6 +164,44 @@ export class RecordDetailDialog {
 
     this.content.replaceChildren(meta, fieldsSection, historySection);
   }
+}
+
+function changedFields(changes: FieldChange[] | null | undefined): HTMLElement {
+  if (!changes) {
+    const note = document.createElement("p");
+    note.className = "change-note";
+    note.textContent =
+      "Was sich geändert hat, ist nicht mehr gespeichert (Aufbewahrung 30 Tage).";
+    return note;
+  }
+  if (changes.length === 0) {
+    const note = document.createElement("p");
+    note.className = "change-note";
+    note.textContent = "Keine sichtbaren Feldänderungen.";
+    return note;
+  }
+  const list = document.createElement("ul");
+  list.className = "change-fields";
+  for (const change of changes) {
+    const item = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "change-field-name";
+    name.textContent = change.label;
+    item.append(name, " ");
+    if (change.masked) {
+      const hidden = document.createElement("small");
+      hidden.textContent = "geändert (Wert geschützt)";
+      item.append(hidden);
+    } else {
+      const before = document.createElement("del");
+      before.textContent = change.before || "leer";
+      const after = document.createElement("ins");
+      after.textContent = change.after || "leer";
+      item.append(before, " → ", after);
+    }
+    list.append(item);
+  }
+  return list;
 }
 
 function metaItem(label: string, value: string): HTMLDivElement {

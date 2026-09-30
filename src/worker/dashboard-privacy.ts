@@ -248,6 +248,41 @@ export function dashboardFieldValues(
   }));
 }
 
+export interface DashboardFieldChange {
+  after: string | null;
+  before: string | null;
+  key: string;
+  label: string;
+  masked: boolean;
+}
+
+/**
+ * Felder, die sich zwischen zwei gespeicherten Staenden unterscheiden.
+ * Verglichen wird der Rohwert; geschuetzte Felder nennen nur, dass sie sich
+ * geaendert haben, nie den alten oder neuen Wert.
+ */
+export function dashboardFieldChanges(
+  area: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  plaintext = false
+): DashboardFieldChange[] {
+  const changes: DashboardFieldChange[] = [];
+  for (const field of dashboardColumns(area, [before, after], plaintext)) {
+    if (JSON.stringify(before[field.key] ?? null) === JSON.stringify(after[field.key] ?? null)) {
+      continue;
+    }
+    changes.push({
+      key: field.key,
+      label: field.label,
+      masked: field.masked,
+      before: field.masked ? null : formatDashboardValue(before[field.key], false, field.key),
+      after: field.masked ? null : formatDashboardValue(after[field.key], false, field.key)
+    });
+  }
+  return changes;
+}
+
 export function dashboardValues(
   area: string,
   payload: Record<string, unknown>,

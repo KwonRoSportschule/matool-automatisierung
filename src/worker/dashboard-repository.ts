@@ -3,8 +3,10 @@ import { FIRST_TRIAL_COLLECTOR } from "../core/first-trial";
 import { getBuildInfo } from "./build-info";
 import {
   PROTECTED_DASHBOARD_VALUE,
+  type DashboardFieldChange,
   areaLabel,
   dashboardColumns,
+  dashboardFieldChanges,
   dashboardFieldValues,
   dashboardSummaryColumns,
   dashboardSummaryValues,
@@ -1129,7 +1131,11 @@ interface DashboardRecordDetailRow extends DashboardRecordMetaRow {
 }
 
 interface DashboardRecordHistoryRow {
+  area: string;
+  change_id: number;
   change_kind: "created" | "updated";
+  payload_json: string | null;
+  source_id: string;
   error_code: string | null;
   finished_at: string | null;
   observed_at: string;
@@ -1851,18 +1857,20 @@ export async function getDashboardRecord(
         .bind(area, publicId)
         .first<DashboardRecordDetailRow>(),
       env.DB.prepare(
-        `SELECT changes.change_kind, changes.observed_at,
+        `SELECT changes.change_id, changes.area, changes.source_id,
+                changes.change_kind, changes.observed_at, changes.payload_json,
                 runs.status, runs.started_at, runs.finished_at, runs.error_code
-         FROM matool_snapshot_changes AS changes
-         INNER JOIN matool_snapshots AS snapshots
-           ON snapshots.area = changes.area
-          AND snapshots.source_id = changes.source_id
+         FROM matool_snapshots AS snapshots
+         INNER JOIN matool_snapshot_changes AS changes
+           ON changes.source_id = snapshots.source_id
+          AND (changes.area = snapshots.area
+               OR changes.area = snapshots.area || '_details')
          LEFT JOIN matool_snapshot_runs AS runs
            ON runs.run_id = changes.run_id
          WHERE snapshots.area = ?
            AND snapshots.public_id = ?
          ORDER BY changes.observed_at DESC, changes.change_id DESC
-         LIMIT 101`
+         LIMIT 201`
       )
         .bind(area, publicId)
         .all<DashboardRecordHistoryRow>()
@@ -1894,6 +1902,15 @@ export async function getDashboardRecord(
           )
     );
     const historyTruncated = history.results.length > 100;
+    const historyEntries = history.results.slice(0, 100);
+    const plaintext = isDashboardPlaintext(env);
+    const diffs = await changeDiffs(
+      cipher,
+      area,
+      historyEntries,
+      history.results.slice(100),
+      plaintext
+    );
     return {
       schemaVersion: 2,
       generatedAt: new Date().toISOString(),
@@ -1921,8 +1938,9 @@ export async function getDashboardRecord(
         payload,
         isDashboardPlaintext(env)
       ),
-      changeHistory: history.results.slice(0, 100).map((entry) => ({
+      changeHistory: historyEntries.map((entry) => ({
         change: entry.change_kind,
+        fieldChanges: diffs.get(entry.change_id) ?? null,
         occurredAt: entry.observed_at,
         status: entry.status ?? "succeeded",
         runStartedAt: entry.started_at,
@@ -1945,6 +1963,58 @@ export async function getDashboardRecord(
       "Die maskierte Datensatzansicht kann momentan nicht geladen werden."
     );
   }
+}
+
+const MAX_DIFFED_HISTORY_ENTRIES = 30;
+
+/**
+ * Vergleicht jede Aenderung mit dem naechstaelteren Stand derselben Tabelle
+ * (Liste bzw. Details). Fehlt ein Stand (aelter als die Aufbewahrungsfrist der
+ * Historie) oder ist er nicht lesbar, gibt es keinen Eintrag: die Anzeige sagt
+ * dann, dass Einzelheiten nicht mehr vorliegen, statt etwas zu raten.
+ */
+async function changeDiffs(
+  cipher: StoredPayloadCipher,
+  area: string,
+  entries: readonly DashboardRecordHistoryRow[],
+  older: readonly DashboardRecordHistoryRow[],
+  plaintext: boolean
+): Promise<Map<number, DashboardFieldChange[]>> {
+  const all = [...entries, ...older];
+  const result = new Map<number, DashboardFieldChange[]>();
+  for (const [index, entry] of entries.entries()) {
+    if (index >= MAX_DIFFED_HISTORY_ENTRIES) {
+      break;
+    }
+    if (entry.change_kind !== "updated" || entry.payload_json === null) {
+      continue;
+    }
+    const previous = all
+      .slice(index + 1)
+      .find((candidate) => candidate.area === entry.area);
+    if (!previous || previous.payload_json === null) {
+      continue;
+    }
+    try {
+      const context = (row: DashboardRecordHistoryRow) => ({
+        area: row.area,
+        sourceId: row.source_id
+      });
+      const after = parseStoredPayload(
+        await cipher.open(context(entry), entry.payload_json)
+      );
+      const before = parseStoredPayload(
+        await cipher.open(context(previous), previous.payload_json)
+      );
+      result.set(
+        entry.change_id,
+        dashboardFieldChanges(area, before, after, plaintext)
+      );
+    } catch {
+      // Nicht lesbarer Altstand: kein Vergleich statt eines Fehlers.
+    }
+  }
+  return result;
 }
 
 function mapDashboardActivity(

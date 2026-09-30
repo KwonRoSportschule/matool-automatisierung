@@ -239,10 +239,21 @@ export interface DashboardField extends DashboardColumn {
   value: string;
 }
 
+export interface FieldChange {
+  after: string | null;
+  before: string | null;
+  key: string;
+  label: string;
+  masked: boolean;
+}
+
 export interface ChangeHistoryItem {
   change?: RecordChange;
   changeKind?: RecordChange;
-  observedAt: string;
+  /** Was sich geaendert hat; null, wenn der alte Stand nicht mehr vorliegt. */
+  fieldChanges?: FieldChange[] | null;
+  observedAt?: string;
+  occurredAt?: string;
 }
 
 export interface DashboardRecordDetail {
