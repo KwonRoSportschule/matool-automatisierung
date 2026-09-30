@@ -8,8 +8,8 @@ import {
   type StoredPayloadCipher
 } from "./payload-encryption";
 
-const SEAL_BATCH_SIZE = 50;
-const MAX_SEALED_PER_RUN = 5_000;
+const SEAL_BATCH_SIZE = 100;
+const MAX_SEALED_PER_RUN = 20_000;
 const DEFAULT_CHANGE_PAYLOAD_RETENTION_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -29,6 +29,7 @@ interface CountRow {
 
 interface SnapshotPayloadRow {
   area: string;
+  row_id?: number;
   payload_json: string;
   source_id: string;
 }
@@ -195,6 +196,11 @@ function changePayloadRetentionDays(env: Env): number {
  * verschluesselt sind: Klartext aus der Zeit vor der Verschluesselung und
  * Chiffrat eines vorherigen Schluessels. Das UPDATE greift nur, solange die
  * Zeile unveraendert ist, damit ein paralleler Sync nie ueberschrieben wird.
+ *
+ * Jede Tabelle wird mit einem aufsteigenden Zeiger genau einmal durchlaufen.
+ * Ohne Zeiger suchte jede Runde wieder vom Tabellenanfang und las dabei alle
+ * schon versiegelten Zeilen erneut; bei ~90.000 Zeilen war das der Grund,
+ * warum der Altbestand kaum kleiner wurde.
  */
 async function sealStoredPayloads(
   db: D1Database,
@@ -202,32 +208,27 @@ async function sealStoredPayloads(
   header: string
 ): Promise<number> {
   let sealed = 0;
-  while (sealed < MAX_SEALED_PER_RUN) {
-    const snapshots = await db
-      .prepare(
-        `SELECT area, source_id, payload_json
-         FROM matool_snapshots
-         WHERE substr(payload_json, 1, ?) <> ?
-         LIMIT ?`
-      )
-      .bind(STORED_PAYLOAD_HEADER_LENGTH, header, SEAL_BATCH_SIZE)
-      .all<SnapshotPayloadRow>();
-    const changes = await db
-      .prepare(
-        `SELECT change_id, area, source_id, payload_json
-         FROM matool_snapshot_changes
-         WHERE payload_json IS NOT NULL
-           AND substr(payload_json, 1, ?) <> ?
-         LIMIT ?`
-      )
-      .bind(STORED_PAYLOAD_HEADER_LENGTH, header, SEAL_BATCH_SIZE)
-      .all<ChangePayloadRow>();
-    if (snapshots.results.length === 0 && changes.results.length === 0) {
+  let snapshotCursor = 0;
+  let changeCursor = 0;
+  let snapshotsDone = false;
+  let changesDone = false;
+  while (sealed < MAX_SEALED_PER_RUN && !(snapshotsDone && changesDone)) {
+    const snapshots: SnapshotPayloadRow[] = snapshotsDone
+      ? []
+      : await nextUnsealedSnapshots(db, header, snapshotCursor);
+    const changes: ChangePayloadRow[] = changesDone
+      ? []
+      : await nextUnsealedChanges(db, header, changeCursor);
+    snapshotsDone = snapshots.length < SEAL_BATCH_SIZE;
+    changesDone = changes.length < SEAL_BATCH_SIZE;
+    if (snapshots.length === 0 && changes.length === 0) {
       break;
     }
+    snapshotCursor = snapshots.at(-1)?.row_id ?? snapshotCursor;
+    changeCursor = changes.at(-1)?.change_id ?? changeCursor;
 
     const statements = await Promise.all([
-      ...snapshots.results.map(async (row) =>
+      ...snapshots.map(async (row) =>
         db
           .prepare(
             `UPDATE matool_snapshots
@@ -241,7 +242,7 @@ async function sealStoredPayloads(
             row.payload_json
           )
       ),
-      ...changes.results.map(async (row) =>
+      ...changes.map(async (row) =>
         db
           .prepare(
             `UPDATE matool_snapshot_changes
@@ -255,6 +256,44 @@ async function sealStoredPayloads(
     sealed += statements.length;
   }
   return sealed;
+}
+
+async function nextUnsealedSnapshots(
+  db: D1Database,
+  header: string,
+  cursor: number
+): Promise<SnapshotPayloadRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT rowid AS row_id, area, source_id, payload_json
+       FROM matool_snapshots
+       WHERE rowid > ? AND substr(payload_json, 1, ?) <> ?
+       ORDER BY rowid
+       LIMIT ?`
+    )
+    .bind(cursor, STORED_PAYLOAD_HEADER_LENGTH, header, SEAL_BATCH_SIZE)
+    .all<SnapshotPayloadRow>();
+  return result.results;
+}
+
+async function nextUnsealedChanges(
+  db: D1Database,
+  header: string,
+  cursor: number
+): Promise<ChangePayloadRow[]> {
+  const result = await db
+    .prepare(
+      `SELECT change_id, area, source_id, payload_json
+       FROM matool_snapshot_changes
+       WHERE change_id > ?
+         AND payload_json IS NOT NULL
+         AND substr(payload_json, 1, ?) <> ?
+       ORDER BY change_id
+       LIMIT ?`
+    )
+    .bind(cursor, STORED_PAYLOAD_HEADER_LENGTH, header, SEAL_BATCH_SIZE)
+    .all<ChangePayloadRow>();
+  return result.results;
 }
 
 async function reseal(
