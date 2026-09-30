@@ -887,7 +887,7 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
     }
   });
 
-  it("wiederholt eine abgebrochene Anfrage einmal", async () => {
+  it("wiederholt eine abgebrochene Anfrage zweimal mit wachsender Pause", async () => {
     let versuche = 0;
     const client = new MatoolClient(
       "https://core.matool.de",
@@ -904,9 +904,9 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
         password: "synthetic-password"
       })
     ).rejects.toThrow(AppError);
-    expect(versuche).toBe(2);
-    expect(client.requestCount).toBe(2);
-  });
+    expect(versuche).toBe(3);
+    expect(client.requestCount).toBe(3);
+  }, 15_000);
 
   it("wiederholt Interessentenlisten bei 429 und 5xx hoechstens dreimal", async () => {
     const cancelledStatuses: number[] = [];
@@ -2969,6 +2969,84 @@ describe("MATOOL-Ausgangs-Host-Allowlist", () => {
       code: "matool_paginated_list_schema_mismatch",
       status: 502
     });
+  });
+
+  it("meldet sich nach abgelaufener Sitzung einmal neu an und liest die Seite erneut", async () => {
+    const offsets = [0, 30];
+    const seite = (offset: number, sourceId: string) =>
+      paginatedListPage({
+        area: "interessenten",
+        currentOffset: offset,
+        offsets,
+        rows: paginatedInteressentRows({
+          createdDate: "01.08.2026",
+          displayNumber: sourceId,
+          firstName: "Vorname",
+          lastName: "Name",
+          sourceId,
+          status: "Neu"
+        })
+      });
+    const loginSeite =
+      '<html><body><form method="post"><input name="mail"><input type="password" name="pass"></form></body></html>';
+    let folgeseiteAbrufe = 0;
+    const requests: string[] = [];
+    const client = new MatoolClient(
+      "https://core.matool.de",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        const path = `${url.pathname}${url.search}`;
+        requests.push(`${init?.method ?? "GET"} ${path}`);
+        if (path === "/index.php" && init?.method === "POST") {
+          return new Response(null, { headers: { Location: "/index.php" }, status: 302 });
+        }
+        if (path === "/index.php") {
+          return new Response("<html><body>Angemeldet</body></html>", {
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+            status: 200
+          });
+        }
+        const html =
+          path === "/index.php?show=interessenten&offset=0"
+            ? seite(0, "900001")
+            : path === "/index.php?show=interessenten&offset=30"
+              ? (folgeseiteAbrufe += 1) === 1
+                ? loginSeite
+                : seite(30, "900002")
+              : undefined;
+        if (html === undefined) {
+          throw new Error(`unexpected synthetic request: ${path}`);
+        }
+        return new Response(html, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+          status: 200
+        });
+      }) as typeof fetch
+    );
+
+    await expect(
+      client.extractSafeArea(
+        { email: "service-account@example.invalid", password: "synthetic-password" },
+        "interessenten"
+      )
+    ).resolves.toMatchObject({ rowCount: 2 });
+    expect(folgeseiteAbrufe).toBe(2);
+    // Zwei Anmeldungen: zu Beginn und nach der abgelaufenen Sitzung.
+    expect(requests.filter((request) => request === "POST /index.php")).toHaveLength(2);
+  });
+
+  it("meldet sich nicht neu an, wenn eine kaputte Seite keine Loginseite ist", async () => {
+    const pages = new Map<string, { body?: string; status?: number }>([
+      ["/index.php?show=interessenten&offset=0", { body: "<html><body>kaputt</body></html>" }]
+    ]);
+    const requests: string[] = [];
+    await expect(
+      clientForPaginatedPages(pages, requests).extractSafeArea(
+        { email: "service-account@example.invalid", password: "synthetic-password" },
+        "interessenten"
+      )
+    ).rejects.toMatchObject({ code: "matool_paginated_list_schema_mismatch" });
+    expect(requests.filter((path) => path.startsWith("/index.php?show="))).toHaveLength(1);
   });
 
   it("bricht bei einer fehlgeschlagenen Folgeseite ohne Teilresultat ab", async () => {

@@ -5,6 +5,61 @@ const INTERESSENTEN_DETAILS_AREA = "interessenten_details";
 const MAX_INTERESSENTEN_COUNT = 20_000;
 const MAX_DETAIL_BATCH_SIZE = 500;
 
+/**
+ * Details werden gleichmaessig ueber die Stundenlaeufe eines Werktags
+ * aufgefrischt: Jeder Interessent gehoert ueber seine MATOOL-Nummer zu einer
+ * von INTERESSENTEN_DETAIL_BUCKETS Gruppen, und jede Stunde ist genau eine
+ * Gruppe dran (elf Laeufe je Werktag, also jede Gruppe einmal taeglich).
+ *
+ * Bis zum 29.09.2026 las jeder stuendliche Abgleich alle rund 3.500 Details
+ * neu (gut 3.500 MATOOL-Anfragen je Stunde, parallel zum Mitgliederabruf).
+ * Das war die Hauptursache fuer Verbindungsabbrueche und lange Laufzeiten.
+ */
+export const INTERESSENTEN_DETAIL_BUCKETS = 11;
+
+/**
+ * Sicherheitsnetz: Ein Detail, das so lange nicht gelesen wurde (etwa weil
+ * der Lauf seiner Gruppe ausfiel), liest der naechste Abgleich in jedem Fall.
+ */
+export const INTERESSENTEN_DETAIL_MAX_AGE_HOURS = 48;
+
+/**
+ * Die neuesten Interessenten (hoechste MATOOL-Nummern) liest jeder Abgleich
+ * neu: Bei ihnen aendern sich Probetraining, Kontakt und Status laufend.
+ */
+export const INTERESSENTEN_HOT_DETAIL_COUNT = 150;
+
+/**
+ * Ein Detail muss (neu) gelesen werden, wenn es fehlt oder veraltet ist:
+ * - seine Listenzeile hat sich seit dem letzten Lesen geaendert,
+ * - es ist aelter als INTERESSENTEN_DETAIL_MAX_AGE_HOURS vor Jobbeginn,
+ * - seine Gruppe ist in dieser Stunde dran und es wurde in diesem Job noch
+ *   nicht gelesen, oder
+ * - es gehoert zu den neuesten Interessenten und wurde in diesem Job noch
+ *   nicht gelesen.
+ * Erwartet die Aliase `job`, `current_list` und `details`.
+ */
+const DETAIL_NEEDS_READ_SQL = `(
+  details.source_id IS NULL
+  OR details.last_seen_at < current_list.last_changed_at
+  OR details.last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ', job.started_at, '-${INTERESSENTEN_DETAIL_MAX_AGE_HOURS} hours')
+  OR (
+    details.last_seen_at < job.started_at
+    AND CAST(current_list.source_id AS INTEGER) % ${INTERESSENTEN_DETAIL_BUCKETS}
+      = CAST(strftime('%H', job.started_at) AS INTEGER) % ${INTERESSENTEN_DETAIL_BUCKETS}
+  )
+  OR (
+    details.last_seen_at < job.started_at
+    AND CAST(current_list.source_id AS INTEGER) >= COALESCE((
+      SELECT CAST(hot.source_id AS INTEGER)
+      FROM matool_snapshots AS hot
+      WHERE hot.area = 'interessenten'
+      ORDER BY CAST(hot.source_id AS INTEGER) DESC
+      LIMIT 1 OFFSET ${INTERESSENTEN_HOT_DETAIL_COUNT - 1}
+    ), 0)
+  )
+)`;
+
 export type InteressentenSyncJobStatus = "failed" | "running" | "succeeded";
 
 export interface InteressentenSyncJob {
@@ -293,8 +348,9 @@ export async function getCurrentInteressentenSyncJob(
 }
 
 /**
- * Liefert nur IDs des exakten aktuellen Listenlaufs. Bereits seit Jobstart
- * erfolgreich gespeicherte Details werden beim Fortsetzen uebersprungen.
+ * Liefert nur IDs des exakten aktuellen Listenlaufs, deren Detail fehlt oder
+ * veraltet ist (DETAIL_NEEDS_READ_SQL). Bereits in diesem Job gelesene
+ * Details werden beim Fortsetzen uebersprungen.
  */
 export async function selectInteressentenSyncDetailSourceIds(
   db: D1Database,
@@ -321,10 +377,7 @@ export async function selectInteressentenSyncDetailSourceIds(
            AND job.status = 'running'
            AND length(current_list.source_id) BETWEEN 1 AND 32
            AND current_list.source_id NOT GLOB '*[^0-9]*'
-           AND (
-             details.source_id IS NULL
-             OR details.last_seen_at < job.started_at
-           )
+           AND ${DETAIL_NEEDS_READ_SQL}
          ORDER BY
            CASE WHEN details.source_id IS NULL THEN 0 ELSE 1 END,
            COALESCE(details.last_seen_at, current_list.first_seen_at),
@@ -631,10 +684,7 @@ export async function finalizeInteressentenSyncJob(
                  ON details.area = 'interessenten_details'
                 AND details.source_id = current_list.source_id
                WHERE current_list.area = 'interessenten'
-                 AND (
-                   details.source_id IS NULL
-                   OR details.last_seen_at < job.started_at
-                 )
+                 AND ${DETAIL_NEEDS_READ_SQL}
              )`
         )
         .bind(finishedAt, finishedAt, jobId),
@@ -709,7 +759,7 @@ function buildParityStatement(
              ON details.area = 'interessenten_details'
             AND details.source_id = current_list.source_id
            WHERE current_list.area = 'interessenten'
-             AND details.last_seen_at < job.started_at
+             AND ${DETAIL_NEEDS_READ_SQL}
          ) AS stale_details,
          (
            SELECT COUNT(*)

@@ -1,3 +1,4 @@
+import { errorLabel } from "./error-labels";
 import { ActivityView } from "./activity";
 import { buildInfoText } from "./build-info";
 import {
@@ -47,6 +48,8 @@ const elements = {
   buildInfo: byId("build-info"),
   refresh: byId<HTMLButtonElement>("refresh"),
   privacyShort: byId("privacy-short"),
+  databasePrivacyChip: byId("database-privacy-chip"),
+  databasePrivacyText: byId("database-privacy-text"),
   privacyNotice: byId("privacy-notice"),
   overallPanel: byId("overall-panel"),
   overallSymbol: byId("overall-symbol"),
@@ -172,6 +175,13 @@ function renderOverview(overview: DashboardOverview): void {
     ? "Serverseitig maskiert"
     : "Klartext · Testphase";
   elements.privacyNotice.textContent = overview.privacy.notice;
+  // Hinweis an der Datenbankansicht passend zum tatsaechlichen Modus.
+  elements.databasePrivacyChip.textContent = overview.privacy.masked
+    ? "● Personenwerte geschützt"
+    : "● Klartext hinter Passwortschutz";
+  elements.databasePrivacyText.textContent = overview.privacy.masked
+    ? "Alle Ergebnisse werden serverseitig gesucht, sortiert und maskiert."
+    : "Alle Ergebnisse werden serverseitig gesucht und sortiert. Kontonummern zeigen nur die letzten vier Stellen.";
 
   renderOverall(overview);
   renderWarnings(overview.warnings);
@@ -265,7 +275,13 @@ function warningCard(warning: WarningSummary): HTMLElement {
     copy.append(recurrence);
   }
 
-  const details = [warning.action, warning.technicalCode]
+  if (warning.lastSuccessAt) {
+    const stand = document.createElement("p");
+    stand.textContent = `Letzter erfolgreicher Abruf: ${formatDateTime(warning.lastSuccessAt)}.`;
+    copy.append(stand);
+  }
+
+  const details = [warning.action, errorLabel(warning.technicalCode)]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
   if (details) {
@@ -349,7 +365,7 @@ function connectionCard(connection: ConnectionSummary): HTMLElement {
   }
   if (connection.lastError) {
     notes.push(
-      `Letzter Fehler: ${connection.lastError.code ?? "ohne technischen Code"} · ${formatDateTime(connection.lastError.at)}`
+      `Letzter Fehler: ${errorLabel(connection.lastError.code) || "ohne technischen Code"} · ${formatDateTime(connection.lastError.at)}`
     );
   }
   if (connection.activeSubscriptions !== undefined) {
@@ -481,7 +497,7 @@ function areaCard(area: AreaSummary): HTMLElement {
   header.append(title, createStatusBadge(area.state, stateLabel(area.state)));
   const list = document.createElement("dl");
   appendDefinition(list, "Gespeichert", formatNumber(area.storedCount));
-  appendDefinition(list, "Aktuell", formatNumber(area.currentCount));
+  appendDefinition(list, "Im letzten Abruf", formatNumber(area.currentCount));
   appendDefinition(list, "Neu", formatNumber(area.newCount));
   appendDefinition(list, "Geändert", formatNumber(area.changedCount));
   appendDefinition(list, "Letzte Änderung", formatDateTime(area.lastChangedAt));
@@ -690,7 +706,7 @@ function renderManualSyncStatus(status: SyncStatusResponse): void {
   elements.adminSyncMessage.textContent =
     `Letzter manueller Abruf: ${MANUAL_STATUS_TEXT[manual.status]}${wann}` +
     (manual.errorCode
-      ? ` · Fehlercode ${manual.errorCode}`
+      ? ` · ${errorLabel(manual.errorCode)}`
       : ` · ${formatNumber(manual.storedTotal)} Datensätze gespeichert · ` +
         `${formatNumber(manual.succeeded)} Bereiche erfolgreich` +
         (failed.length > 0 ? ` · Fehlgeschlagen: ${failed.join(", ")}` : ""));
@@ -887,7 +903,8 @@ function appendAreaCountCell(
   const total = document.createElement("strong");
   total.textContent = formatNumber(stored);
   const currentValue = document.createElement("small");
-  currentValue.textContent = `${formatNumber(current)} aktuell`;
+  // Rotierende Bereiche lesen je Lauf nur ein Paket; "aktuell" war missverstaendlich.
+  currentValue.textContent = `${formatNumber(current)} im letzten Abruf gelesen`;
   currentValue.style.display = "block";
   cell.append(total, currentValue);
   row.append(cell);

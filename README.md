@@ -9,7 +9,34 @@ deduplizierte Ereignisse für Zapier erzeugen. MATOOL stellt dafür keine
 öffentliche API bereit; deshalb wird ausschließlich der technisch verifizierte
 HTTP-Verkehr der Webanwendung nachgebildet.
 
-## Aktueller Stand
+## So läuft der Hub (Stand 29.09.2026)
+
+Keine manuelle Einrichtung nötig: Ein Merge nach `main` deployt, alles Weitere
+richtet der Worker selbst ein (Tabellen, Indizes, Aufräumen).
+
+```text
+Cron (werktags stündlich)
+  └─ startet Workflow "stunde_<Stunde>" (DirectSyncWorkflow) und ist fertig
+       1. wartet höchstens 20 Min. auf einen noch laufenden Abruf
+       2. übernimmt die Abrufsperre für den ganzen Lauf
+       3. je fälligem Bereich ein eigener Schritt:
+          Mitglieder · Ex-Mitglieder (1× täglich) · Check-ins ·
+          Stilllegungen · Stammdaten · Graduierungen
+          → vorübergehender Fehler: nur dieser Bereich, Pause 30 s / 2 min
+       4. Abschluss, Zapier-Zustellung, Beitragsstichtag (1./15.)
+       5. danach Interessenten-Workflow (nie parallel zum Mitgliederabruf):
+          Liste + Details nur für neue, geänderte, die 150 neuesten und
+          je Stunde ein Elftel des Bestands (jeder Interessent 1× täglich)
+```
+
+- Der Knopf „Manuellen Abruf starten“ nutzt denselben Workflow (liest alle
+  Bereiche und holt fehlende Stilllegungen nach).
+- Ein Deploy oder Neustart mitten im Lauf setzt beim nächsten Bereich fort.
+- Datenbank: Aufbau, Aufbewahrung und offene Aufräumentscheidung in
+  [docs/datenbank.md](docs/datenbank.md).
+- Details zum Umbau: [docs/fortschritt-2026-09-29.md](docs/fortschritt-2026-09-29.md).
+
+## Ursprünglicher Stand (Projektbeginn)
 
 Stand: 29. Juli 2026
 

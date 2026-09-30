@@ -1,6 +1,6 @@
 import { AppError } from "../core/app-error";
 
-export const PROTECTED_DASHBOARD_VALUE = "Geschuetzt";
+export const PROTECTED_DASHBOARD_VALUE = "Geschützt";
 
 export interface DashboardFieldDefinition {
   key: string;
@@ -24,9 +24,10 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   klassen: "Klassen",
   lager: "Lager",
   newsletter: "Newsletter",
-  pruefungen: "Pruefungen",
-  schueler: "Schueler / Mitglieder",
-  schueler_ex: "Ehemalige Mitglieder (Kuendigung abgeschlossen)",
+  pruefungen: "Prüfungen",
+  schueler: "Mitglieder",
+  schueler_details: "Mitglieder-Stammdaten",
+  schueler_ex: "Ehemalige Mitglieder",
   schueler_stilllegungen: "Stilllegungen",
   telemetrie: "Telemetrie"
 };
@@ -42,7 +43,7 @@ const CLASS_FIELD_LABELS: Readonly<Record<string, string>> = {
   freiklasse: "Freie Klasse",
   id: "MATOOL-Klassen-ID",
   id_schulintern: "Interne Klassen-ID",
-  kapazitaet: "Kapazitaet",
+  kapazitaet: "Kapazität",
   klassenende: "Klassenende",
   klassenfarbe: "Klassenfarbe",
   klassenstart: "Klassenstart",
@@ -87,11 +88,12 @@ const CLASS_SAFE_FIELDS = new Set([
 
 const INTERESSENT_FIELD_LABELS: Readonly<Record<string, string>> = {
   id: "MATOOL-Interessenten-ID",
+  nr: "Nr. in der Liste",
   datum: "Datum",
   anrede: "Anrede",
   vorname: "Vorname",
   name: "Nachname",
-  strasse: "Strasse",
+  strasse: "Straße",
   plz: "PLZ",
   ort: "Ort",
   telefon: "Telefon",
@@ -135,7 +137,7 @@ const SCHUELER_FIELD_LABELS: Readonly<Record<string, string>> = {
   anrede: "Anrede",
   vorname: "Vorname",
   name: "Nachname",
-  strasse: "Strasse",
+  strasse: "Straße",
   plz: "PLZ",
   stadt: "Stadt",
   ort: "Ort",
@@ -145,19 +147,19 @@ const SCHUELER_FIELD_LABELS: Readonly<Record<string, string>> = {
   beruf: "Beruf",
   geburtstag: "Geburtstag",
   geburtsort: "Geburtsort",
-  nationalitaet: "Nationalitaet",
-  anmeldegebuehr: "Anmeldegebuehr",
+  nationalitaet: "Nationalität",
+  anmeldegebuehr: "Anmeldegebühr",
   kundenart: "Kundenart",
   vertragdatum: "Vertragsdatum",
   vertrag: "Vertrag",
   vertragsbeginn: "Vertragsbeginn",
   vertragsende: "Vertragsende",
-  verlaengerung: "Verlaengerung",
-  kuendigungsfrist: "Kuendigungsfrist",
+  verlaengerung: "Verlängerung",
+  kuendigungsfrist: "Kündigungsfrist",
   zahlungsperiode: "Zahlungsperiode",
   beitrag: "Beitrag",
-  jahresgebuehr: "Jahresgebuehr",
-  faellig_am: "Faellig am",
+  jahresgebuehr: "Jahresgebühr",
+  faellig_am: "Fällig am (Tag)",
   abschluss: "Abschluss",
   zahlungsart: "Zahlungsart",
   bank: "Bank",
@@ -440,6 +442,81 @@ function fieldOrder(area: string, key: string): number {
  */
 const LAST_DIGITS_ONLY_FIELDS = new Set(["iban", "konto"]);
 
+/** MATOOL speichert Ja/Nein als 0/1. */
+const YES_NO_FIELDS = new Set([
+  "bildDa",
+  "einfuehrung_anwesend",
+  "freiklasse",
+  "online",
+  "pdf_verfuegbar",
+  "probetraining_anwesend",
+  "storniert"
+]);
+
+/** Betraege in Euro. */
+const MONEY_FIELDS = new Set(["anmeldegebuehr", "beitrag", "jahresgebuehr"]);
+
+/** Uhrzeiten als HH:MM:SS; 00:00:00 heisst "keine Uhrzeit". */
+const TIME_FIELDS = new Set(["einfuehrung_zeit", "probetraining_zeit"]);
+
+/** Verweise, bei denen 0 "nicht gesetzt" bedeutet. */
+const ZERO_MEANS_EMPTY_FIELDS = new Set([
+  "einfuehrung_benutzer",
+  "einfuehrung_klasse",
+  "probetraining_benutzer",
+  "probetraining_klasse"
+]);
+
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?Z?)?$/u;
+const euroFormatter = new Intl.NumberFormat("de-DE", {
+  currency: "EUR",
+  style: "currency"
+});
+
+/**
+ * Macht einen gespeicherten MATOOL-Wert fuer Menschen lesbar: deutsches
+ * Datum statt 2026-02-01 00:00:00, leer statt 0000-00-00, Ja/Nein statt 0/1,
+ * Euro-Betraege und Uhrzeiten. Der gespeicherte Rohwert bleibt unveraendert.
+ */
+export function readableDashboardValue(key: string, text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === "") {
+    return "";
+  }
+  if (YES_NO_FIELDS.has(key)) {
+    if (trimmed === "1" || trimmed.toLowerCase() === "true") {
+      return "Ja";
+    }
+    if (trimmed === "0" || trimmed.toLowerCase() === "false") {
+      return "Nein";
+    }
+  }
+  if (ZERO_MEANS_EMPTY_FIELDS.has(key) && trimmed === "0") {
+    return "";
+  }
+  if (TIME_FIELDS.has(key)) {
+    const time = /^(\d{2}):(\d{2})(?::\d{2})?$/u.exec(trimmed);
+    if (time) {
+      return time[1] === "00" && time[2] === "00" ? "" : `${time[1]}:${time[2]} Uhr`;
+    }
+  }
+  if (MONEY_FIELDS.has(key) && /^-?\d+(?:[.,]\d{1,2})?$/u.test(trimmed)) {
+    return euroFormatter.format(Number(trimmed.replace(",", ".")));
+  }
+  const date = ISO_DATE_PATTERN.exec(trimmed);
+  if (date) {
+    const [, year, month, day, hour, minute] = date;
+    if (year === "0000" || month === "00" || day === "00") {
+      return "";
+    }
+    const tag = `${day}.${month}.${year}`;
+    return hour && minute && !(hour === "00" && minute === "00")
+      ? `${tag}, ${hour}:${minute} Uhr`
+      : tag;
+  }
+  return text;
+}
+
 function formatDashboardValue(
   value: unknown,
   masked: boolean,
@@ -461,7 +538,112 @@ function formatDashboardValue(
       const compact = text.replace(/\s+/gu, "");
       return compact.length > 4 ? `•••• ${compact.slice(-4)}` : "••••";
     }
-    return text.slice(0, 2_000);
+    return readableDashboardValue(key, text).slice(0, 2_000);
   }
   return PROTECTED_DASHBOARD_VALUE;
+}
+
+export interface DashboardSummaryColumn {
+  key: string;
+  label: string;
+}
+
+/**
+ * Feste, fachliche Uebersichtsspalten je Bereich. Frueher zeigte die Tabelle
+ * einfach die ersten vier Rohfelder -- bei Interessenten also ID, Datum,
+ * Anrede (0/1) und Vorname, aber weder Nachname noch Status, Probetraining
+ * oder Kontakt.
+ */
+const SUMMARY_COLUMNS: Readonly<Record<string, readonly DashboardSummaryColumn[]>> = {
+  interessenten: [
+    { key: "person", label: "Name" },
+    { key: "status", label: "Status" },
+    { key: "probetraining", label: "1. Probetraining" },
+    { key: "kontakt", label: "Kontakt" },
+    { key: "angelegt", label: "Angelegt" },
+    { key: "quelle", label: "Quelle" }
+  ],
+  schueler: [
+    { key: "person", label: "Name" },
+    { key: "mitgliedsnummer", label: "Mitglieds-Nr." },
+    { key: "vertrag", label: "Vertrag" },
+    { key: "vertragsbeginn", label: "Vertragsbeginn" },
+    { key: "beitrag", label: "Beitrag" },
+    { key: "kontakt", label: "Kontakt" }
+  ]
+};
+
+export function dashboardSummaryColumns(area: string): readonly DashboardSummaryColumn[] {
+  return SUMMARY_COLUMNS[area] ?? [];
+}
+
+/**
+ * Werte der Uebersichtsspalten, zusammengesetzt aus Listen- und
+ * Detailfeldern. Jedes Einzelfeld wird wie in der Detailansicht maskiert;
+ * ist ein Bestandteil geschuetzt, ist es der ganze Wert.
+ */
+export function dashboardSummaryValues(
+  area: string,
+  payload: Record<string, unknown>,
+  plaintext = false
+): Record<string, string> {
+  const columns = SUMMARY_COLUMNS[area];
+  if (!columns) {
+    return {};
+  }
+  const field = (key: string): string =>
+    formatDashboardValue(
+      payload[key],
+      plaintext ? false : isSensitiveDashboardField(area, key),
+      key
+    );
+  const join = (parts: readonly string[], separator: string): string => {
+    const filled = parts.filter((part) => part !== "");
+    return filled.includes(PROTECTED_DASHBOARD_VALUE)
+      ? PROTECTED_DASHBOARD_VALUE
+      : filled.join(separator);
+  };
+  // Zeilenumbruch statt Trennpunkt: E-Mail und Telefon stehen untereinander.
+  const kontakt = join(
+    [field("email"), field("handy") || field("telefon")],
+    "\n"
+  );
+  const person = join([field("vorname"), field("name")], " ");
+
+  if (area === "interessenten") {
+    const termin = field("einfuehrung");
+    const erschienen = field("einfuehrung_anwesend");
+    return {
+      angelegt: field("datum"),
+      kontakt,
+      person,
+      probetraining:
+        termin === ""
+          ? ""
+          : join(
+              [
+                join([termin, field("einfuehrung_zeit")], ", "),
+                join(
+                  [
+                    field("einfuehrung_klasse_name"),
+                    erschienen === "Ja" ? "erschienen" : ""
+                  ],
+                  " · "
+                )
+              ],
+              "\n"
+            ),
+      quelle: join([field("quelle"), field("werbung_bezeichnung")], " · "),
+      status: field("status")
+    };
+  }
+  const beitrag = field("beitrag");
+  return {
+    beitrag: beitrag === "" ? "" : join([beitrag, field("zahlungsperiode")], " "),
+    kontakt,
+    mitgliedsnummer: field("nr"),
+    person,
+    vertrag: field("vertrag"),
+    vertragsbeginn: field("vertragsbeginn")
+  };
 }

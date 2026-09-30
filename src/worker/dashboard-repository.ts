@@ -6,6 +6,8 @@ import {
   areaLabel,
   dashboardColumns,
   dashboardFieldValues,
+  dashboardSummaryColumns,
+  dashboardSummaryValues,
   dashboardValues,
   parseStoredPayload,
   searchableDashboardFields
@@ -19,7 +21,7 @@ import {
   storedPayloadCipher,
   type StoredPayloadCipher
 } from "./payload-encryption";
-import { MATOOL_SNAPSHOT_AREAS } from "./schedule";
+import { MATOOL_SLOW_AREA_MAX_AGE_MS, MATOOL_SNAPSHOT_AREAS } from "./schedule";
 import { getBerlinScheduleSummary } from "./schedule-window";
 
 export type DashboardState =
@@ -188,11 +190,10 @@ export async function getDashboardOverview(
                 MAX(last_seen_at) AS last_seen_at,
                 MAX(last_changed_at) AS last_changed_at
          FROM matool_snapshots
-         WHERE area IN ('interessenten', 'schueler')
          GROUP BY area`
       ).all<AreaCountRow>(),
-      env.DB.prepare(latestAreaRunSql(false)).all<AreaRunRow>(),
-      env.DB.prepare(latestAreaRunSql(true)).all<AreaRunRow>(),
+      queryLatestAreaRuns(env.DB, false),
+      queryLatestAreaRuns(env.DB, true),
       env.DB.prepare(
         `SELECT area, error_code, COUNT(*) AS occurrence_count,
                 MIN(finished_at) AS first_occurred_at,
@@ -306,7 +307,7 @@ export async function getDashboardOverview(
       const lastRun = latestRunByArea.get(area);
       const lastSuccess = latestSuccessByArea.get(area);
       const changes = changesByArea.get(area);
-      const state = areaState(lastRun, lastSuccess, previousScheduledMs);
+      const state = areaState(area, lastRun, lastSuccess, previousScheduledMs);
       return {
         key: area,
         label: areaLabel(area),
@@ -352,7 +353,7 @@ export async function getDashboardOverview(
       lastActivityAt:
         areas.map((area) => area.lastObservedAt).filter(Boolean).sort().at(-1) ?? null,
       lastError: null,
-      description: "Die Betriebsdatenbank antwortet und alle Dashboard-Abfragen konnten ausgefuehrt werden.",
+      description: "Die Betriebsdatenbank antwortet und alle Dashboard-Abfragen konnten ausgeführt werden.",
       action: null
     };
 
@@ -434,18 +435,30 @@ export async function getDashboardOverview(
   }
 }
 
-function latestAreaRunSql(successOnly: boolean): string {
-  return `WITH ranked AS (
-    SELECT run_id, area, status, started_at, finished_at, fetched_count,
-           success_count, failure_count, error_code, sync_id,
-           ROW_NUMBER() OVER (PARTITION BY area ORDER BY started_at DESC) AS position
-    FROM matool_snapshot_runs
-    ${successOnly ? "WHERE status = 'succeeded'" : ""}
-  )
-  SELECT run_id, area, status, started_at, finished_at, fetched_count,
-         success_count, failure_count, error_code, sync_id
-  FROM ranked
-  WHERE position = 1`;
+/**
+ * Letzter (erfolgreicher) Lauf je angezeigtem Bereich: je Bereich ein
+ * Indextreffer auf (area, started_at), gebuendelt in einem D1-Batch, statt
+ * einer Fensterfunktion ueber alle Bereichslaeufe seit Projektbeginn, die bei
+ * jedem Dashboard-Aufruf lief. (D1 erlaubt nur wenige UNION-Glieder.)
+ */
+async function queryLatestAreaRuns(
+  db: D1Database,
+  successOnly: boolean
+): Promise<{ results: AreaRunRow[] }> {
+  const statements = MATOOL_SNAPSHOT_AREAS.map((area) =>
+    db
+      .prepare(
+        `SELECT run_id, area, status, started_at, finished_at, fetched_count,
+                success_count, failure_count, error_code, sync_id
+         FROM matool_snapshot_runs
+         WHERE area = ?${successOnly ? " AND status = 'succeeded'" : ""}
+         ORDER BY started_at DESC
+         LIMIT 1`
+      )
+      .bind(area)
+  );
+  const results = await db.batch<AreaRunRow>(statements);
+  return { results: results.flatMap((result) => result.results) };
 }
 
 function mapAreaRun(row: AreaRunRow | undefined): unknown {
@@ -463,7 +476,20 @@ function mapAreaRun(row: AreaRunRow | undefined): unknown {
     : null;
 }
 
+/**
+ * Wie alt der letzte Erfolg eines Bereichs hoechstens sein darf, gemessen am
+ * letzten geplanten Lauf. Ex-Mitglieder liest der Stundenlauf bewusst nur
+ * einmal taeglich (schedule.ts); sie sind deshalb erst nach gut einem Tag
+ * veraltet, nicht nach zwei Stunden.
+ */
+export function areaMaxAgeMs(area: string): number {
+  return area === "schueler_ex"
+    ? MATOOL_SLOW_AREA_MAX_AGE_MS + 6 * 3_600_000
+    : 7_200_000;
+}
+
 function areaState(
+  area: string,
   lastRun: AreaRunRow | undefined,
   lastSuccess: AreaRunRow | undefined,
   previousScheduledMs: number
@@ -474,7 +500,7 @@ function areaState(
   if (lastRun.status === "failed") {
     return "critical";
   }
-  if (!lastSuccess || Date.parse(lastSuccess.started_at) < previousScheduledMs - 7_200_000) {
+  if (!lastSuccess || Date.parse(lastSuccess.started_at) < previousScheduledMs - areaMaxAgeMs(area)) {
     return "warning";
   }
   return "healthy";
@@ -495,16 +521,16 @@ function matoolConnection(
     .sort((left, right) => right.started_at.localeCompare(left.started_at))[0];
 
   let state: DashboardState = "unknown";
-  let statusLabel = "Noch nicht bestaetigt";
-  let action: string | null = "Ersten erfolgreichen MATOOL-Abruf pruefen.";
+  let statusLabel = "Noch nicht bestätigt";
+  let action: string | null = "Ersten erfolgreichen MATOOL-Abruf prüfen.";
   if (!configured || env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
     state = "critical";
     statusLabel = "Nicht betriebsbereit";
-    action = "MATOOL-Konfiguration und Read-only-Freigabe pruefen.";
+    action = "MATOOL-Konfiguration und Read-only-Freigabe prüfen.";
   } else if (lastRun?.status === "failed") {
     state = "critical";
     statusLabel = "Letzter Abruf fehlgeschlagen";
-    action = "Fehlercode des letzten Abrufs pruefen.";
+    action = "Fehlercode des letzten Abrufs prüfen.";
   } else if (lastSuccess && Date.parse(lastSuccess.started_at) >= previousScheduledMs - 7_200_000) {
     state = "healthy";
     statusLabel = "Verbunden und aktuell";
@@ -512,7 +538,7 @@ function matoolConnection(
   } else if (lastSuccess) {
     state = "warning";
     statusLabel = "Daten sind veraltet";
-    action = "Naechsten automatischen Lauf beobachten.";
+    action = "Nächsten automatischen Lauf beobachten.";
   }
 
   return {
@@ -528,7 +554,7 @@ function matoolConnection(
       ? { at: lastFailure.finished_at, code: lastFailure.error_code }
       : null,
     description:
-      "Die Verbindung wird aus den tatsaechlichen read-only Datenabrufen abgeleitet, nicht nur aus vorhandenen Zugangsdaten.",
+      "Die Verbindung wird aus den tatsächlichen read-only Datenabrufen abgeleitet, nicht nur aus vorhandenen Zugangsdaten.",
     action
   };
 }
@@ -556,15 +582,15 @@ function scheduleConnection(
         : null;
   let state: DashboardState = "unknown";
   let statusLabel = "Noch kein geplanter Lauf";
-  let action: string | null = "Den naechsten geplanten Lauf beobachten.";
+  let action: string | null = "Den nächsten geplanten Lauf beobachten.";
   if (lastRun?.status === "failed") {
     state = "critical";
     statusLabel = "Geplanter Lauf fehlgeschlagen";
-    action = "Fehler des letzten Gesamtlaufs pruefen.";
+    action = "Fehler des letzten Gesamtlaufs prüfen.";
   } else if (lastRun?.status === "partial_failed") {
     state = "warning";
     statusLabel = "Geplanter Lauf teilweise fehlgeschlagen";
-    action = "Fehlgeschlagene Datenbereiche pruefen.";
+    action = "Fehlgeschlagene Datenbereiche prüfen.";
   } else if (lastRun && representsLatestWindow) {
     state = "healthy";
     statusLabel = "Zeitplan arbeitet";
@@ -619,13 +645,13 @@ function zapierConnection(
     : !outboundEnabled
       ? "Datenabholung bereit"
       : hasProblem
-        ? "Pruefung erforderlich"
+        ? "Prüfung erforderlich"
         : "Ausgabe aktiv";
   const description = !configured
-    ? "Der Zapier-Service-Token fuer die Read-only-Datenabholung fehlt."
+    ? "Der Zapier-Service-Token für die Read-only-Datenabholung fehlt."
     : !outboundEnabled
       ? "Die Read-only-Datenabholung ist bereit; Kontakt und ausgehende Zustellung bleiben absichtlich ausgeschaltet."
-      : "Zapier-Ereignisse duerfen verarbeitet werden.";
+      : "Zapier-Ereignisse dürfen verarbeitet werden.";
   return {
     key: "zapier",
     label: "Zapier",
@@ -649,7 +675,7 @@ function zapierConnection(
         : null,
     description,
     action: hasProblem
-      ? "Offene Zapier-Vorgaenge pruefen."
+      ? "Offene Zapier-Vorgänge prüfen."
       : configured
         ? null
         : "Zapier-Service-Token einrichten.",
@@ -663,7 +689,13 @@ function zapierConnection(
 function buildWarnings(
   matool: Record<string, unknown> & { state: DashboardState },
   schedule: Record<string, unknown> & { state: DashboardState },
-  areas: ReadonlyArray<{ key: string; label: string; state: DashboardState; lastRun: unknown }>,
+  areas: ReadonlyArray<{
+    key: string;
+    label: string;
+    state: DashboardState;
+    lastRun: unknown;
+    lastSuccessfulRun: unknown;
+  }>,
   zapier: Record<string, unknown> & { state: DashboardState },
   context: {
     failureGroups: readonly AreaFailureGroupRow[];
@@ -715,7 +747,7 @@ function buildWarnings(
         title: `${connection.label}: ${connection.statusLabel}`,
         impact:
           connection.state === "critical"
-            ? "Aktuelle Daten koennen fehlen."
+            ? "Aktuelle Daten können fehlen."
             : "Ein Teil des Betriebs sollte kontrolliert werden.",
         action: connection.action,
         occurredAt: connection.lastActivityAt ?? connection.checkedAt,
@@ -724,19 +756,54 @@ function buildWarnings(
       });
     }
   }
-  for (const area of areas.filter(
+  const affected = areas.filter(
     (entry) => entry.state === "warning" || entry.state === "critical"
-  )) {
+  );
+  // Veralten mehrere Bereiche ohne eigenen Fehler, hat das eine gemeinsame
+  // Ursache (meist ein ausgefallener Stundenlauf): eine Karte statt vieler
+  // gleichlautender.
+  const staleOnly = affected.filter(
+    (area) => !currentFailures.some((run) => run.area === area.key)
+  );
+  if (staleOnly.length >= 2) {
+    const lastSuccessTimes = staleOnly
+      .map((area) => (area.lastSuccessfulRun as { finishedAt?: string } | null)?.finishedAt)
+      .filter((value): value is string => typeof value === "string")
+      .sort();
+    warnings.push({
+      key: "areas_stale",
+      state: "warning",
+      title: `${staleOnly.length} Datenbereiche nicht mehr aktuell`,
+      impact: `Betroffen: ${staleOnly.map((area) => area.label).join(", ")}. Angezeigt wird jeweils der Stand des letzten erfolgreichen Abrufs.`,
+      action: "Den nächsten Stundenlauf abwarten; er liest die Bereiche automatisch neu.",
+      lastSuccessAt: lastSuccessTimes[0] ?? null,
+      occurredAt: null,
+      technicalCode: null
+    });
+  }
+  const einzeln = staleOnly.length >= 2
+    ? affected.filter((area) => !staleOnly.includes(area))
+    : affected;
+  for (const area of einzeln) {
     const failure = currentFailures.find((run) => run.area === area.key);
     const repeated = failure && context.failureGroups.find((group) =>
       group.area === area.key && group.error_code === failure.error_code
     );
+    const lastSuccessAt =
+      (area.lastSuccessfulRun as { finishedAt?: string } | null)?.finishedAt ?? null;
     warnings.push({
       key: `area_${area.key}`,
       state: area.state,
-      title: `${area.label}: letzter Abruf pruefen`,
-      impact: "Der Datenbereich kann unvollstaendig oder veraltet sein.",
-      action: "Laufstatus und Fehlercode im Aktivitaetsverlauf pruefen.",
+      title: failure
+        ? `${area.label}: letzter Abruf fehlgeschlagen`
+        : `${area.label}: Daten nicht mehr aktuell`,
+      impact: lastSuccessAt
+        ? "Angezeigt wird der Stand des letzten erfolgreichen Abrufs."
+        : "Für diesen Bereich gibt es noch keinen erfolgreichen Abruf.",
+      action: failure
+        ? "Der nächste Stundenlauf versucht es automatisch erneut. Bleibt der Fehler, die Ursache unten im Verlauf prüfen."
+        : "Den nächsten Stundenlauf abwarten; er liest den Bereich automatisch neu.",
+      lastSuccessAt,
       occurredAt: failure?.finished_at ?? null,
       technicalCode: failure?.error_code ?? null,
       ...(failure ? {
@@ -762,14 +829,14 @@ function deriveOverall(
       label: "Handlungsbedarf",
       summary: "Mindestens ein wichtiger Teil des Hubs ist ausgefallen oder nicht aktuell.",
       reasonCount: warnings.length,
-      recommendedAction: "Die roten Statuskarten und Warnungen zuerst pruefen."
+      recommendedAction: "Die roten Statuskarten und Warnungen zuerst prüfen."
     };
   }
   if (warning > 0 || warnings.length > 0) {
     return {
       state: "warning",
       label: "Betrieb mit Warnungen",
-      summary: "Der Hub arbeitet, einzelne Bereiche benoetigen jedoch Aufmerksamkeit.",
+      summary: "Der Hub arbeitet, einzelne Bereiche benötigen jedoch Aufmerksamkeit.",
       reasonCount: warnings.length,
       recommendedAction: "Gelbe Hinweise im Verlauf kontrollieren."
     };
@@ -778,14 +845,14 @@ function deriveOverall(
     return {
       state: "unknown",
       label: "Status noch unklar",
-      summary: "Fuer mindestens einen wichtigen Teil fehlen noch verlaessliche Laufdaten.",
+      summary: "Für mindestens einen wichtigen Teil fehlen noch verlässliche Laufdaten.",
       reasonCount: unknown,
-      recommendedAction: "Den naechsten automatischen Lauf abwarten."
+      recommendedAction: "Den nächsten automatischen Lauf abwarten."
     };
   }
   return {
     state: "healthy",
-    label: "Hub arbeitet ordnungsgemaess",
+    label: "Hub arbeitet ordnungsgemäß",
     summary: "Datenbank, MATOOL-Abruf und Zeitplan melden einen aktuellen Zustand.",
     reasonCount: 0,
     recommendedAction: null
@@ -858,7 +925,7 @@ function dataProtectionConnection(
     return {
       ...base,
       state: "critical" as const,
-      statusLabel: "Nicht verschluesselt",
+      statusLabel: "Nicht verschlüsselt",
       lastSuccessAt: null,
       description:
         "Personendaten liegen unverschluesselt in D1, neue Daten werden nicht gespeichert.",
@@ -869,19 +936,19 @@ function dataProtectionConnection(
     return {
       ...base,
       state: "warning" as const,
-      statusLabel: "Wird verschluesselt",
+      statusLabel: "Wird verschlüsselt",
       lastSuccessAt: null,
-      description: `${protection.unprotectedPayloads} aeltere Eintraege werden beim naechsten Wartungslauf verschluesselt.`,
-      action: "Den naechsten stuendlichen Lauf abwarten."
+      description: `${protection.unprotectedPayloads} ältere Einträge werden beim nächsten Wartungslauf verschlüsselt.`,
+      action: "Den nächsten stündlichen Lauf abwarten."
     };
   }
   return {
     ...base,
     state: "healthy" as const,
-    statusLabel: "Verschluesselt",
+    statusLabel: "Verschlüsselt",
     lastSuccessAt: generatedAt,
     description:
-      "Alle Personendaten liegen AES-256-GCM-verschluesselt in D1; alte Datensatzstaende werden automatisch geloescht.",
+      "Alle Personendaten liegen AES-256-GCM-verschlüsselt in D1; alte Datensatzstände werden automatisch gelöscht.",
     action: null
   };
 }
@@ -914,7 +981,7 @@ function buildFunctionCatalogue(
     {
       key: "manual_matool_sync",
       name: "Manueller MATOOL-Datenabruf",
-      description: "Startet denselben read-only Abruf geschuetzt fuer Mitarbeiter.",
+      description: "Startet denselben read-only Abruf geschützt für Mitarbeiter.",
       areas: [...MATOOL_SNAPSHOT_AREAS],
       state: matoolReady ? "enabled" : "unavailable",
       execution: "manual",
@@ -923,10 +990,10 @@ function buildFunctionCatalogue(
     },
     {
       key: "class_extraction",
-      name: "Vollstaendiger Klassenabruf",
+      name: "Vollständiger Klassenabruf",
       description: classExtractionEnabled
-        ? "Liest Klassen ueber den bestaetigten Detail-Endpunkt ohne Schuelerlisten."
-        : "Der Klassenabruf ist fuer die aktuelle Datensynchronisation deaktiviert.",
+        ? "Liest Klassen über den bestätigten Detail-Endpunkt ohne Schülerlisten."
+        : "Der Klassenabruf ist für die aktuelle Datensynchronisation deaktiviert.",
       areas: ["klassen"],
       state: classExtractionEnabled
         ? matoolReady ? "enabled" : "unavailable"
@@ -950,8 +1017,8 @@ function buildFunctionCatalogue(
     },
     {
       key: "matool_structure_tools",
-      name: "MATOOL-Strukturpruefung",
-      description: "Prueft die lesbare Interessentenstruktur und technische Tabellenmerkmale fuer die Fehlersuche.",
+      name: "MATOOL-Strukturprüfung",
+      description: "Prüft die lesbare Interessentenstruktur und technische Tabellenmerkmale für die Fehlersuche.",
       areas: ["interessenten"],
       state: matoolReady ? "enabled" : "unavailable",
       execution: "manual",
@@ -960,8 +1027,8 @@ function buildFunctionCatalogue(
     },
     {
       key: "health_check",
-      name: "Betriebsbereitschaftspruefung",
-      description: "Stellt einen minimalen Nur-Lese-Endpunkt fuer die technische Erreichbarkeitspruefung bereit.",
+      name: "Betriebsbereitschaftsprüfung",
+      description: "Stellt einen minimalen Nur-Lese-Endpunkt für die technische Erreichbarkeitsprüfung bereit.",
       areas: [],
       state: "enabled",
       execution: "on_demand",
@@ -980,9 +1047,9 @@ function buildFunctionCatalogue(
     },
     {
       key: "beitragsuebersicht",
-      name: "Beitragsuebersicht",
+      name: "Beitragsübersicht",
       description:
-        "Summiert die Monatsbeitraege aller nicht stillgelegten Mitglieder und erzeugt die XML-Datei fuer Dashboard und Zapier.",
+        "Summiert die Monatsbeiträge aller nicht stillgelegten Mitglieder und erzeugt die XML-Datei für Dashboard und Zapier.",
       areas: ["schueler", "schueler_details"],
       state: "enabled",
       execution: "on_demand",
@@ -992,7 +1059,7 @@ function buildFunctionCatalogue(
     {
       key: "zapier_snapshot_polling",
       name: "Zapier-Datenabholung",
-      description: "Stellt gespeicherte MATOOL-Snapshots fuer die private Zapier-App bereit.",
+      description: "Stellt gespeicherte MATOOL-Snapshots für die private Zapier-App bereit.",
       areas: [...MATOOL_SNAPSHOT_AREAS],
       state: env.ZAPIER_SERVICE_TOKEN ? "enabled" : "unavailable",
       execution: "on_demand",
@@ -1002,22 +1069,22 @@ function buildFunctionCatalogue(
     {
       key: "zapier_subscription_management",
       name: "Zapier-Abonnementverwaltung",
-      description: "Registriert und beendet autorisierte Zapier-Abonnements ueber den privaten Servicezugriff.",
+      description: "Registriert und beendet autorisierte Zapier-Abonnements über den privaten Servicezugriff.",
       areas: [],
       state: outbound && env.ZAPIER_WEBHOOK_SIGNING_SECRET ? "enabled" : "disabled",
       execution: "on_demand",
       lastRunAt: null,
-      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschluessel"]
+      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschlüssel"]
     },
     {
       key: "zapier_claim_confirm",
-      name: "Zapier Claim und Bestaetigung",
-      description: "Reserviert freigegebene Ereignisse einmalig und bestaetigt deren Ergebnis idempotent.",
+      name: "Zapier Claim und Bestätigung",
+      description: "Reserviert freigegebene Ereignisse einmalig und bestätigt deren Ergebnis idempotent.",
       areas: ["interessenten"],
       state: outbound && env.ZAPIER_WEBHOOK_SIGNING_SECRET ? "enabled" : "disabled",
       execution: "on_demand",
       lastRunAt: null,
-      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschluessel", "Cloudflare D1"]
+      dependencies: ["Ausgehende Zapier-Zustellung", "Webhook-Signierschlüssel", "Cloudflare D1"]
     },
     {
       key: "first_trial_contact",
@@ -1125,7 +1192,7 @@ const DASHBOARD_PRIVACY_PLAINTEXT = {
   masked: false,
   mode: "server-side",
   notice:
-    "Klartextansicht fuer die Testphase freigegeben. Vor dem ersten Echtdatenlauf PUBLIC_DASHBOARD_PLAINTEXT auf false setzen."
+    "Klartextansicht für die Testphase freigegeben. Vor dem ersten Echtdatenlauf PUBLIC_DASHBOARD_PLAINTEXT auf false setzen."
 } as const;
 
 /**
@@ -1351,7 +1418,7 @@ export async function listDashboardActivities(
     throw new AppError(
       "dashboard_activity_unavailable",
       503,
-      "Der Aktivitaetsverlauf kann momentan nicht geladen werden."
+      "Der Aktivitätsverlauf kann momentan nicht geladen werden."
     );
   }
 }
@@ -1508,6 +1575,7 @@ export async function listDashboardRecords(
     const columns = dashboardColumns(area, [schemaPayload], plaintext);
     return {
       schemaVersion: 2,
+      summaryColumns: dashboardSummaryColumns(area),
       generatedAt: new Date().toISOString(),
       privacy: dashboardPrivacyNotice(env),
       area,
@@ -1530,6 +1598,11 @@ export async function listDashboardRecords(
           area,
           payloads.get(row.source_id) ?? {},
           columns,
+          plaintext
+        ),
+        summary: dashboardSummaryValues(
+          area,
+          payloads.get(row.source_id) ?? {},
           plaintext
         )
       }))
@@ -1914,12 +1987,12 @@ function dashboardActivityPresentation(
     case "scheduled_sync":
       return {
         title: "Automatischer Gesamtabruf",
-        description: "Der geplante read-only MATOOL-Abruf wurde ausgefuehrt."
+        description: "Der geplante read-only MATOOL-Abruf wurde ausgeführt."
       };
     case "manual_sync":
       return {
         title: "Manueller Gesamtabruf",
-        description: "Ein geschuetzter manueller read-only MATOOL-Abruf wurde ausgefuehrt."
+        description: "Ein geschützter manueller read-only MATOOL-Abruf wurde ausgeführt."
       };
     case "area_sync":
       return {
@@ -1929,12 +2002,12 @@ function dashboardActivityPresentation(
     case "record_created":
       return {
         title: "Datensatz neu gespeichert",
-        description: `${label ?? "Ein Datenbereich"} enthaelt einen neuen gespeicherten Datensatz.`
+        description: `${label ?? "Ein Datenbereich"} enthält einen neuen gespeicherten Datensatz.`
       };
     case "record_updated":
       return {
         title: "Datensatz aktualisiert",
-        description: `${label ?? "Ein Datenbereich"} enthaelt einen geaenderten gespeicherten Datensatz.`
+        description: `${label ?? "Ein Datenbereich"} enthält einen geänderten gespeicherten Datensatz.`
       };
     case "zapier_event":
       return {
@@ -1948,8 +2021,8 @@ function dashboardActivityPresentation(
       };
     default:
       return {
-        title: "Hub-Aktivitaet",
-        description: "Eine interne Hintergrundaktivitaet wurde protokolliert."
+        title: "Hub-Aktivität",
+        description: "Eine interne Hintergrundaktivität wurde protokolliert."
       };
   }
 }
@@ -2044,6 +2117,6 @@ function invalidDashboardQuery(): AppError {
   return new AppError(
     "invalid_dashboard_query",
     400,
-    "Die Dashboard-Abfrage enthaelt ungueltige Filterwerte."
+    "Die Dashboard-Abfrage enthält ungültige Filterwerte."
   );
 }

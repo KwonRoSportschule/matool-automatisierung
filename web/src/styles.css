@@ -345,13 +345,14 @@ tbody tr:hover { background: #fafcf9; }
 .database-table-wrap thead { position: sticky; z-index: 2; top: 0; }
 .database-table-wrap td { white-space: nowrap; }
 .truncate-cell { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; }
+.database-table-wrap td.summary-cell { min-width: 7rem; max-width: 17rem; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.35; }
 .database-cards { display: none; }
 .database-card { padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
 .database-card-header { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
 .database-card > p { color: var(--muted); font-size: .72rem; }
 .database-card dl { display: grid; margin: .75rem 0; gap: .55rem; }
 .database-card dl > div { display: grid; gap: .12rem; }
-.database-card dd { overflow: hidden; margin: 0; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.database-card dd { overflow: hidden; margin: 0; font-size: .78rem; overflow-wrap: anywhere; white-space: pre-line; }
 
 .admin-panel { margin-top: .35rem; color: white; background: linear-gradient(125deg, #20342a, #2e483b); }
 .admin-panel > summary { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 1rem; list-style: none; }
@@ -477,3 +478,4 @@ tbody tr:hover { background: #fafcf9; }
 .sync-progress-areas li[data-state="done"] .sync-progress-area-bar span { background: var(--healthy); }
 .sync-progress-areas li[data-state="failed"] .sync-progress-area-bar span { background: var(--critical); }
 .sync-progress-areas li[data-state="failed"] .sync-progress-area-head span { color: var(--critical); }
+.dialog-content section > h3:not(:first-child) { margin-top: 1.5rem; }

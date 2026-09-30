@@ -296,6 +296,18 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
     cycle: number,
     original: ListCycleState
   ): Promise<FinalCycleResult> {
+    // Kurzer Abgleich (stuendliches Delta): Die Liste vom Jobbeginn gilt;
+    // was in diesen Minuten neu hinzukam, liest der naechste Stundenlauf.
+    // Das zweite Lesen der ganzen, vielseitigen Liste entfaellt.
+    const current = await getCurrentInteressentenSyncJob(this.env.DB);
+    if (
+      current?.jobId === original.jobId &&
+      current.status === "running" &&
+      !needsFinalListCheck(current.startedAt, Date.now())
+    ) {
+      return this.finalizeCycle(original);
+    }
+
     const extraction = await extractFullInteressentenList(this.env);
     const sourceIds = validateExactSourceIds(extraction.records);
     const listDigest = await snapshotDigest(extraction.records);
@@ -367,6 +379,10 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
       };
     }
 
+    return this.finalizeCycle(original);
+  }
+
+  private async finalizeCycle(original: ListCycleState): Promise<FinalCycleResult> {
     const finalized = await finalizeInteressentenSyncJob(
       this.env.DB,
       original.jobId,
@@ -388,6 +404,19 @@ export class InteressentenSyncWorkflow extends WorkflowEntrypoint<
       restart: false
     };
   }
+}
+
+/**
+ * Ab dieser Laufzeit wird die Interessentenliste am Ende eines Abgleichs
+ * erneut gelesen und verglichen (lange Abgleiche, etwa der morgendliche
+ * Vollabgleich aller Details). Kuerzere Abgleiche uebernehmen die Liste vom
+ * Jobbeginn.
+ */
+export const INTERESSENTEN_FINAL_LIST_CHECK_AFTER_MS = 15 * 60_000;
+
+export function needsFinalListCheck(jobStartedAt: string, now: number): boolean {
+  const started = Date.parse(jobStartedAt);
+  return !Number.isFinite(started) || now - started >= INTERESSENTEN_FINAL_LIST_CHECK_AFTER_MS;
 }
 
 export async function startOrResumeInteressentenSyncWorkflow(

@@ -10,6 +10,7 @@ import {
 import { MATOOL_GRADUIERUNG_PAYLOAD_FIELDS } from "../matool/graduierung";
 import { sichereBeitragsStichtagSafely } from "./beitrags-archiv";
 import { runDataProtectionMaintenanceSafely } from "./data-protection";
+import { runDatabaseMaintenanceSafely } from "./db-maintenance";
 import { markRotationRead, selectRotatingSourceIds } from "./detail-rotation";
 import { isDirectSyncLeaseHeld } from "./direct-sync-store";
 import type { Env } from "./env";
@@ -18,7 +19,6 @@ import {
   assertExactSourceBaseline,
   persistFencedExactSnapshotRun,
   readMatchingExactSource,
-  releaseExactSyncLease,
   renewExactSyncLease,
   type ExactSyncLease
 } from "./exact-sync-safety";
@@ -386,8 +386,10 @@ export async function handleScheduledInvocation(
 ): Promise<void> {
   // Das 15-Minuten-Limit zaehlt ab Aufrufbeginn, also auch die Wartung.
   const deadline = Date.now() + MATOOL_SCHEDULED_RUN_BUDGET_MS;
-  // Verschluesselung, Loeschfristen und Aufraeumen laufen bei jedem Aufruf,
-  // auch ausserhalb des MATOOL-Zeitfensters.
+  // Indizes, Fristen technischer Hilfsdaten, Verschluesselung und
+  // Loeschfristen laufen bei jedem Aufruf, auch ausserhalb des
+  // MATOOL-Zeitfensters -- ohne manuell angewendete Migration.
+  await runDatabaseMaintenanceSafely(env);
   await runDataProtectionMaintenanceSafely(env);
 
   // Der Tag richtet sich nach dem geplanten Zeitpunkt, nicht nach dem Ende
@@ -464,6 +466,23 @@ async function runScheduledSync(
     return;
   }
 
+  // Regelbetrieb: Der Cron startet nur den dauerhaften Workflow und ist nach
+  // Sekunden fertig. Der Workflow liest jeden Bereich als eigenen,
+  // wiederholbaren Schritt -- ohne das 15-Minuten-Limit eines Cron-Aufrufs
+  // und ohne dass ein Neustart oder Deploy den ganzen Lauf verliert.
+  if (env.DIRECT_SYNC_WORKFLOW) {
+    const started = await startScheduledSyncWorkflow(env, controller.scheduledTime);
+    console.info(
+      JSON.stringify({
+        event: "matool_sync_workflow_started",
+        instanceId: started.instanceId,
+        started: started.started,
+        scheduledTime: new Date(controller.scheduledTime).toISOString()
+      })
+    );
+    return;
+  }
+
   if (!(await waitForFreeDirectSyncLease(env.DB))) {
     console.info(
       JSON.stringify({
@@ -530,6 +549,106 @@ async function runScheduledSync(
         })
       );
     }
+  }
+}
+
+/**
+ * Workflow-Instanz fuer eine geplante Stunde. Feuert der Cron fuer dieselbe
+ * Stunde doppelt, entsteht kein zweiter Lauf.
+ */
+export function scheduledSyncInstanceId(scheduledTime: number): string {
+  return `stunde_${Math.floor(scheduledTime / 3_600_000)}`;
+}
+
+export async function startScheduledSyncWorkflow(
+  env: Env,
+  scheduledTime: number
+): Promise<{ instanceId: string; started: boolean }> {
+  const instanceId = scheduledSyncInstanceId(scheduledTime);
+  const workflow = env.DIRECT_SYNC_WORKFLOW;
+  if (!workflow) {
+    throw new AppError(
+      "sync_workflow_unavailable",
+      503,
+      "Der Abruf-Workflow ist in dieser Umgebung nicht eingerichtet."
+    );
+  }
+  try {
+    await workflow.create({
+      id: instanceId,
+      params: {
+        jobId: instanceId,
+        requestedAt: new Date(scheduledTime).toISOString(),
+        trigger: "scheduled"
+      }
+    });
+    return { instanceId, started: true };
+  } catch {
+    // Bereits vorhanden (doppelter Cron) oder kurz nicht erreichbar: Ein
+    // zweiter Versuch unterscheidet beides; ein vorhandener Lauf bleibt.
+    try {
+      await workflow.get(instanceId);
+      return { instanceId, started: false };
+    } catch {
+      await recordSkippedMatoolSync(env.DB, {
+        reason: "workflow_unavailable",
+        scheduledFor: new Date(scheduledTime).toISOString()
+      });
+      return { instanceId, started: false };
+    }
+  }
+}
+
+/**
+ * Ehemalige Mitglieder aendern sich selten, ihre Liste ist aber mit Abstand
+ * die groesste (rund 67 Seiten, zur Sicherheit zweimal gelesen). Sie wird
+ * deshalb nur gelesen, wenn der letzte Erfolg laenger als diese Frist
+ * zurueckliegt -- im Werktagsbetrieb also einmal morgens -- und bei jedem
+ * manuellen Abruf.
+ */
+export const MATOOL_SLOW_AREA_MAX_AGE_MS = 20 * 60 * 60 * 1_000;
+const MATOOL_SLOW_AREAS = new Set(["schueler_ex"]);
+
+/** Bereiche, die dieser Lauf lesen soll, in fester Reihenfolge. */
+export async function selectDueDirectAreas(
+  db: D1Database,
+  trigger: MatoolSyncTrigger,
+  now: Date = new Date()
+): Promise<string[]> {
+  const due: string[] = [];
+  for (const area of MATOOL_DIRECT_SNAPSHOT_AREAS) {
+    if (trigger === "scheduled" && MATOOL_SLOW_AREAS.has(area)) {
+      const letzterErfolg = await lastSuccessfulAreaRun(db, area);
+      if (
+        letzterErfolg !== null &&
+        now.getTime() - letzterErfolg < MATOOL_SLOW_AREA_MAX_AGE_MS
+      ) {
+        continue;
+      }
+    }
+    due.push(area);
+  }
+  return due;
+}
+
+async function lastSuccessfulAreaRun(
+  db: D1Database,
+  area: string
+): Promise<number | null> {
+  try {
+    const row = await db
+      .prepare(
+        `SELECT MAX(finished_at) AS finished_at
+         FROM matool_snapshot_runs
+         WHERE area = ? AND status = 'succeeded'`
+      )
+      .bind(area)
+      .first<{ finished_at: string | null }>();
+    const parsed = row?.finished_at ? Date.parse(row.finished_at) : Number.NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    // Im Zweifel lesen: Lieber einmal zu viel als eine veraltete Liste.
+    return null;
   }
 }
 
@@ -610,254 +729,149 @@ export async function collectMatoolSnapshots(
   }
   // Vor dem Laufbeginn: Ein ungueltiger Schluessel darf keinen haengenden
   // Lauf hinterlassen.
-  const cipher = await storedPayloadCipher(env);
+  await storedPayloadCipher(env);
 
+  const syncId = await beginDirectSync(env, {
+    areas: directAreas,
+    scheduledTime,
+    trigger
+  });
+  // Ein Besitzer fuer den ganzen Lauf: Jeder Bereich uebernimmt die Sperre
+  // erneut (neuer Fencing-Token), gibt sie aber erst am Ende frei.
+  const leaseOwner = `direct_${crypto.randomUUID()}`;
+  try {
+    for (const [areaIndex, area] of directAreas.entries()) {
+      const result = await syncDirectArea(env, area, {
+        areaDeadline: detailAreaDeadline(
+          area,
+          directAreas.slice(areaIndex + 1),
+          deadline,
+          Date.now()
+        ),
+        leaseOwner,
+        ...(deadline !== undefined ? { runDeadline: deadline } : {}),
+        scheduledTime,
+        ...(area === "schueler_stilllegungen" && stilllegungenLimit !== undefined
+          ? { detailLimit: stilllegungenLimit }
+          : {}),
+        syncId,
+        trigger
+      });
+      addAreaResult(summary, result);
+      if (result.status === "failed" && isLeaseLossCode(result.errorCode)) {
+        // Ein anderer Lauf hat die Sperre uebernommen: Weitere Bereiche
+        // wuerden nur dieselbe Meldung erzeugen.
+        for (const remaining of directAreas.slice(areaIndex + 1)) {
+          addAreaResult(summary, {
+            area: remaining,
+            ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+            status: "failed"
+          });
+        }
+        break;
+      }
+    }
+  } finally {
+    await releaseDirectSyncLease(env.DB, leaseOwner, syncId);
+  }
+
+  await finishDirectSync(env, syncId, summary, directAreas.length);
+  return summary;
+}
+
+/** Zaehlt ein Bereichsergebnis in die Laufzusammenfassung ein. */
+export function addAreaResult(
+  summary: CollectSnapshotsResult,
+  result: CollectSnapshotsAreaResult
+): void {
+  if (result.status === "succeeded") {
+    summary.succeeded += 1;
+    summary.storedTotal += result.storedCount ?? 0;
+  } else {
+    summary.failed += 1;
+  }
+  summary.areas.push(
+    result.status === "succeeded"
+      ? {
+          area: result.area,
+          status: "succeeded",
+          ...(result.storedCount !== undefined
+            ? { storedCount: result.storedCount }
+            : {})
+        }
+      : {
+          area: result.area,
+          ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+          status: "failed"
+        }
+  );
+}
+
+function isLeaseLossCode(code: string | undefined): boolean {
+  return (
+    code === "matool_exact_sync_busy" ||
+    code === "matool_exact_sync_lease_lost"
+  );
+}
+
+/**
+ * Legt den Gesamtlauf an (Dashboard: "laeuft") und merkt sich die geplanten
+ * Bereiche. Ein von Cloudflare beendeter frueherer Lauf wird dabei als
+ * abgebrochen abgeschlossen, solange niemand die Sperre haelt.
+ */
+export async function beginDirectSync(
+  env: Env,
+  input: {
+    areas: readonly string[];
+    scheduledTime: number;
+    trigger: MatoolSyncTrigger;
+    /** Eigener Besitzer der Sperre (Workflow): zaehlt nicht als fremder Lauf. */
+    leaseOwner?: string;
+  }
+): Promise<string> {
   const startedAt = new Date().toISOString();
-  // Ein von Cloudflare beendeter Lauf bleibt sonst fuer immer "laeuft".
-  // Haelt gerade jemand die Sperre, lebt dieser Lauf noch (ein langer
-  // manueller Abruf) und wird nicht angefasst.
-  if (!(await isDirectSyncLeaseHeld(env.DB))) {
+  if (!(await isDirectSyncLeaseHeld(env.DB, new Date(), input.leaseOwner))) {
     await markAbandonedMatoolSyncRuns(env.DB, startedAt);
   }
   const syncId = await beginMatoolSyncRun(env.DB, {
-    ...(trigger === "scheduled"
-      ? { scheduledFor: new Date(scheduledTime).toISOString() }
+    ...(input.trigger === "scheduled"
+      ? { scheduledFor: new Date(input.scheduledTime).toISOString() }
       : {}),
     startedAt,
-    trigger
+    trigger: input.trigger
   });
   // Welche Bereiche dieser Lauf liest -- fuer die Fortschrittskarte.
-  await recordMatoolSyncRunPlan(env.DB, syncId, directAreas);
+  await recordMatoolSyncRunPlan(env.DB, syncId, input.areas);
+  return syncId;
+}
 
-  const credentials = {
-    email: env.MATOOL_EMAIL,
-    password: env.MATOOL_PASSWORD
-  } satisfies MatoolCredentials;
-  const leaseOwner = `direct_${crypto.randomUUID()}`;
-  let lease: ExactSyncLease | null = null;
-
-  if (directAreas.length > 0) {
-    try {
-      lease = await acquireExactSyncLease(env.DB, leaseOwner);
-    } catch (error) {
-      const errorCode = toAppError(error).code;
-      summary.failed = directAreas.length;
-      summary.areas.push(
-        ...directAreas.map((area) => ({
-          area,
-          errorCode,
-          status: "failed" as const
-        }))
-      );
-      console.error(
-        JSON.stringify({
-          errorCode,
-          event: "matool_direct_sync_lease_not_acquired",
-          scheduledTime: new Date(scheduledTime).toISOString(),
-          syncId
-        })
-      );
-    }
-  }
-
-  if (lease) {
-    let activeLease = lease;
-    // Nicht-exakte Bereiche teilen weiterhin eine Session. Die sechs
-    // Current-Set-Bereiche erzeugen dagegen pro Kontrollabruf einen eigenen
-    // Client und damit nachweislich zwei frische MATOOL-Sessions.
-    const sharedClient = createDirectMatoolClient(env);
-    try {
-      for (const [areaIndex, area] of directAreas.entries()) {
-        const runId = `snapshot_${area}_${crypto.randomUUID()}`;
-        const areaStartedAt = new Date().toISOString();
-        try {
-          if (
-            deadline !== undefined &&
-            deadline - Date.now() < MATOOL_AREA_MIN_REMAINING_MS
-          ) {
-            throw new AppError(
-              "matool_time_budget_exhausted",
-              503,
-              "Das Zeitbudget des Laufs war aufgebraucht; der Bereich folgt im naechsten Lauf."
-            );
-          }
-          activeLease = await renewExactSyncLease(env.DB, activeLease);
-          const areaDeadline = detailAreaDeadline(
-            area,
-            directAreas.slice(areaIndex + 1),
-            deadline,
-            Date.now()
-          );
-          let processedSourceIds: readonly string[] | undefined;
-          const records = EXACT_CURRENT_SET_AREAS.has(area)
-            ? await readMatchingExactSource(
-                () => exactAreaSession(env, credentials, area),
-                async () => {
-                  activeLease = await renewLeaseHeartbeat(env.DB, activeLease);
-                }
-              )
-            : await readDirectArea(
-                sharedClient,
-                credentials,
-                area,
-                env.DB,
-                area === "schueler_stilllegungen" && stilllegungenLimit !== undefined
-                  ? stilllegungenLimit
-                  : detailLimitFor(area, trigger),
-                async () => {
-                  activeLease = await renewLeaseHeartbeat(env.DB, activeLease);
-                },
-                areaDeadline === undefined
-                  ? undefined
-                  : () => Date.now() >= areaDeadline,
-                (ids) => {
-                  processedSourceIds = ids;
-                }
-              );
-          if (EXACT_CURRENT_SET_AREAS.has(area)) {
-            await assertExactSourceBaseline(env.DB, area, records.length);
-          }
-          activeLease = await renewExactSyncLease(env.DB, activeLease);
-
-          const finishedAt = new Date().toISOString();
-          const result = await persistFencedExactSnapshotRun(
-            env.DB,
-            activeLease,
-            {
-              allowedPayloadFields:
-                area === "klassen"
-                  ? MATOOL_KLASSEN_PAYLOAD_FIELDS
-                  : area === "checkin"
-                    ? MATOOL_CHECKIN_PAYLOAD_FIELDS
-                    : area === "graduierungen"
-                      ? MATOOL_GRADUIERUNG_PAYLOAD_FIELDS
-                      : snapshotPayloadFields(records),
-              area,
-              finishedAt,
-              observedAt: finishedAt,
-              records,
-              ...(EXACT_CURRENT_SET_AREAS.has(area)
-                ? { replaceCurrentSet: true }
-                : {}),
-              runId,
-              syncId,
-              startedAt: areaStartedAt
-            },
-            cipher
-          );
-          if (area === "graduierungen" && processedSourceIds) {
-            await markRotationRead(env.DB, area, processedSourceIds, finishedAt);
-          }
-          summary.succeeded += 1;
-          summary.storedTotal += result.storedCount;
-          summary.areas.push({
-            area,
-            status: "succeeded",
-            storedCount: result.storedCount
-          });
-          console.info(
-            JSON.stringify({
-              area,
-              event: "matool_snapshot_succeeded",
-              scheduledTime: new Date(scheduledTime).toISOString(),
-              storedCount: result.storedCount
-            })
-          );
-        } catch (error) {
-          const finishedAt = new Date().toISOString();
-          const errorCode = toAppError(error).code;
-          summary.failed += 1;
-          summary.areas.push({ area, errorCode, status: "failed" });
-          if (error instanceof MatoolShapeMismatchError) {
-            try {
-              await recordMatoolResponseShape(env.DB, {
-                area,
-                observedAt: finishedAt,
-                shape: error.shape
-              });
-            } catch {
-              // Die Diagnose darf den Lauf nicht zusaetzlich stoeren.
-            }
-          }
-          try {
-            await recordMatoolSnapshotFailure(env.DB, {
-              area,
-              errorCode,
-              finishedAt,
-              runId,
-              syncId,
-              startedAt: areaStartedAt
-            });
-          } catch {
-            console.error(
-              JSON.stringify({
-                area,
-                errorCode: "matool_snapshot_failure_not_recorded",
-                event: "matool_snapshot_failed",
-                scheduledTime: new Date(scheduledTime).toISOString()
-              })
-            );
-          }
-          console.error(
-            JSON.stringify({
-              area,
-              errorCode,
-              event: "matool_snapshot_failed",
-              scheduledTime: new Date(scheduledTime).toISOString()
-            })
-          );
-
-          try {
-            activeLease = await renewExactSyncLease(env.DB, activeLease);
-          } catch (leaseError) {
-            const leaseErrorCode = toAppError(leaseError).code;
-            const remainingAreas = directAreas.slice(areaIndex + 1);
-            summary.failed += remainingAreas.length;
-            summary.areas.push(
-              ...remainingAreas.map((remainingArea) => ({
-                area: remainingArea,
-                errorCode: leaseErrorCode,
-                status: "failed" as const
-              }))
-            );
-            console.error(
-              JSON.stringify({
-                errorCode: leaseErrorCode,
-                event: "matool_direct_sync_lease_lost",
-                scheduledTime: new Date(scheduledTime).toISOString(),
-                syncId
-              })
-            );
-            break;
-          }
-        }
-      }
-    } finally {
-      sharedClient.clearSession();
-      try {
-        await releaseExactSyncLease(env.DB, activeLease);
-      } catch {
-        // Die Lease bleibt begrenzt gueltig und ist danach automatisch
-        // uebernehmbar; ein fremder Owner wird durch Token-Pruefung nie
-        // geloescht.
-        console.error(
-          JSON.stringify({
-            errorCode: "matool_exact_sync_lease_release_failed",
-            event: "matool_direct_sync_lease_release_failed",
-            syncId
-          })
-        );
-      }
-    }
-  }
-
+/**
+ * Schliesst den Gesamtlauf ab und stellt neue Aenderungen an Zapier zu.
+ * Scheitert nie an der Zustellung.
+ */
+export async function finishDirectSync(
+  env: Env,
+  syncId: string,
+  summary: CollectSnapshotsResult,
+  totalAreas: number,
+  options: { deliver?: boolean } = {}
+): Promise<void> {
   await finishMatoolSyncRun(env.DB, syncId, new Date().toISOString(), {
     failed: summary.failed,
     storedTotal: summary.storedTotal,
     succeeded: summary.succeeded,
-    totalAreas: directAreas.length
+    totalAreas
   });
+  if (options.deliver !== false) {
+    await deliverSnapshotChanges(env, syncId);
+  }
+}
 
+/** Stellt neue Aenderungen an abonnierte Zaps zu; scheitert nie. */
+export async function deliverSnapshotChanges(
+  env: Env,
+  syncId: string
+): Promise<void> {
   if (env.OUTBOUND_DELIVERY_ENABLED === "true") {
     try {
       const delivery = await processSnapshotZapierDeliveries(env);
@@ -878,8 +892,276 @@ export async function collectMatoolSnapshots(
       );
     }
   }
+}
 
-  return summary;
+/** Gibt die Sperre frei, sofern sie noch diesem Besitzer gehoert. */
+export async function releaseDirectSyncLease(
+  db: D1Database,
+  leaseOwner: string,
+  syncId?: string
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `DELETE FROM matool_exact_sync_leases
+         WHERE lease_name = 'direct_snapshots' AND owner_id = ?`
+      )
+      .bind(leaseOwner)
+      .run();
+  } catch {
+    // Die Lease bleibt begrenzt gueltig und ist danach automatisch
+    // uebernehmbar; ein fremder Owner wird nie geloescht.
+    console.error(
+      JSON.stringify({
+        errorCode: "matool_exact_sync_lease_release_failed",
+        event: "matool_direct_sync_lease_release_failed",
+        ...(syncId ? { syncId } : {})
+      })
+    );
+  }
+}
+
+export interface DirectSyncAreaOptions {
+  /** Ende der Abrufe je Mitglied (ms); danach endet der Bereich mit dem Gelesenen. */
+  areaDeadline?: number | undefined;
+  /** Abweichende Paketgroesse eines Detailbereichs. */
+  detailLimit?: number;
+  /**
+   * Besitzer der Sperre. Mehrere Bereiche desselben Laufs verwenden denselben
+   * Besitzer; jede Uebernahme erhoeht den Fencing-Token, sodass ein haengender
+   * frueherer Versuch nichts mehr speichern kann.
+   */
+  leaseOwner: string;
+  /** Fehler sofort als Bereichslauf vermerken (Standard). Der Workflow vermerkt erst nach allen Versuchen. */
+  recordFailure?: boolean;
+  /** Mit weniger Restzeit wird der Bereich nicht begonnen. */
+  runDeadline?: number;
+  scheduledTime: number;
+  syncId: string;
+  trigger: MatoolSyncTrigger;
+}
+
+export interface DirectSyncAreaResult extends CollectSnapshotsAreaResult {
+  /** Ein weiterer Versuch kann helfen (Netz, Last, kurzer D1-Aussetzer). */
+  retryable?: boolean;
+}
+
+/**
+ * Fehlercodes, bei denen ein spaeterer zweiter Versuch sinnvoll ist. Alles
+ * andere (falsches Passwort, fehlender Schluessel, unplausibel kleine Liste)
+ * wird nicht wiederholt -- ein falsches Passwort darf das Konto nicht sperren.
+ */
+const RETRYABLE_AREA_ERROR_CODES = new Set([
+  "internal_error",
+  "matool_authentication_unverified",
+  "matool_exact_source_mismatch",
+  "matool_exact_sync_busy",
+  "matool_exact_sync_lease_lost",
+  "matool_exact_sync_lease_store_failed",
+  "matool_network_error",
+  "matool_schueler_open_failed",
+  "matool_session_prime_failed",
+  "matool_session_lost",
+  "matool_snapshot_persistence_failed",
+  "matool_sync_store_unavailable",
+  "matool_unexpected_content_type",
+  "matool_unexpected_status"
+]);
+
+export function isRetryableAreaError(code: string | undefined): boolean {
+  if (!code) {
+    return false;
+  }
+  // Eine unvollstaendig ausgelieferte Seite sieht wie ein Strukturfehler
+  // aus; ein zweiter Versuch unterscheidet Aussetzer von echter Aenderung.
+  return RETRYABLE_AREA_ERROR_CODES.has(code) || code.endsWith("_schema_mismatch");
+}
+
+/**
+ * Liest und speichert genau einen Bereich: Sperre uebernehmen, MATOOL lesen,
+ * gefenced speichern. Wirft nie; das Ergebnis sagt, ob ein weiterer Versuch
+ * sinnvoll ist. Die Sperre bleibt beim Besitzer, bis der Lauf sie freigibt.
+ */
+export async function syncDirectArea(
+  env: Env,
+  area: string,
+  options: DirectSyncAreaOptions
+): Promise<DirectSyncAreaResult> {
+  const runId = `snapshot_${area}_${crypto.randomUUID()}`;
+  const areaStartedAt = new Date().toISOString();
+  const { scheduledTime, syncId, trigger } = options;
+  try {
+    if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
+      throw new AppError(
+        "matool_not_configured",
+        409,
+        "Die MATOOL-Verbindung ist noch nicht eingerichtet."
+      );
+    }
+    if (
+      options.runDeadline !== undefined &&
+      options.runDeadline - Date.now() < MATOOL_AREA_MIN_REMAINING_MS
+    ) {
+      throw new AppError(
+        "matool_time_budget_exhausted",
+        503,
+        "Das Zeitbudget des Laufs war aufgebraucht; der Bereich folgt im naechsten Lauf."
+      );
+    }
+    const credentials = {
+      email: env.MATOOL_EMAIL,
+      password: env.MATOOL_PASSWORD
+    } satisfies MatoolCredentials;
+    const cipher = await storedPayloadCipher(env);
+    let activeLease = await acquireExactSyncLease(env.DB, options.leaseOwner);
+    const heartbeat = async () => {
+      activeLease = await renewLeaseHeartbeat(env.DB, activeLease);
+    };
+
+    let processedSourceIds: readonly string[] | undefined;
+    const isExact = EXACT_CURRENT_SET_AREAS.has(area);
+    let records: readonly MatoolSafeAreaRecord[];
+    if (isExact) {
+      records = await readMatchingExactSource(
+        () => exactAreaSession(env, credentials, area),
+        heartbeat
+      );
+    } else {
+      const client = createDirectMatoolClient(env);
+      const areaDeadline = options.areaDeadline;
+      try {
+        records = await readDirectArea(
+          client,
+          credentials,
+          area,
+          env.DB,
+          options.detailLimit ?? detailLimitFor(area, trigger),
+          heartbeat,
+          areaDeadline === undefined
+            ? undefined
+            : () => Date.now() >= areaDeadline,
+          (ids) => {
+            processedSourceIds = ids;
+          }
+        );
+      } finally {
+        client.clearSession();
+      }
+    }
+    if (isExact) {
+      await assertExactSourceBaseline(env.DB, area, records.length);
+    }
+    activeLease = await renewExactSyncLease(env.DB, activeLease);
+
+    const finishedAt = new Date().toISOString();
+    const result = await persistFencedExactSnapshotRun(
+      env.DB,
+      activeLease,
+      {
+        allowedPayloadFields:
+          area === "klassen"
+            ? MATOOL_KLASSEN_PAYLOAD_FIELDS
+            : area === "checkin"
+              ? MATOOL_CHECKIN_PAYLOAD_FIELDS
+              : area === "graduierungen"
+                ? MATOOL_GRADUIERUNG_PAYLOAD_FIELDS
+                : snapshotPayloadFields(records),
+        area,
+        finishedAt,
+        observedAt: finishedAt,
+        records,
+        ...(isExact ? { replaceCurrentSet: true } : {}),
+        runId,
+        syncId,
+        startedAt: areaStartedAt
+      },
+      cipher
+    );
+    if (area === "graduierungen" && processedSourceIds) {
+      await markRotationRead(env.DB, area, processedSourceIds, finishedAt);
+    }
+    console.info(
+      JSON.stringify({
+        area,
+        event: "matool_snapshot_succeeded",
+        scheduledTime: new Date(scheduledTime).toISOString(),
+        storedCount: result.storedCount
+      })
+    );
+    return { area, status: "succeeded", storedCount: result.storedCount };
+  } catch (error) {
+    const finishedAt = new Date().toISOString();
+    const errorCode = toAppError(error).code;
+    if (error instanceof MatoolShapeMismatchError) {
+      try {
+        await recordMatoolResponseShape(env.DB, {
+          area,
+          observedAt: finishedAt,
+          shape: error.shape
+        });
+      } catch {
+        // Die Diagnose darf den Lauf nicht zusaetzlich stoeren.
+      }
+    }
+    if (options.recordFailure !== false) {
+      await recordDirectAreaFailure(env, {
+        area,
+        errorCode,
+        runId,
+        scheduledTime,
+        startedAt: areaStartedAt,
+        syncId
+      });
+    }
+    console.error(
+      JSON.stringify({
+        area,
+        errorCode,
+        event: "matool_snapshot_failed",
+        scheduledTime: new Date(scheduledTime).toISOString()
+      })
+    );
+    return {
+      area,
+      errorCode,
+      retryable: isRetryableAreaError(errorCode),
+      status: "failed"
+    };
+  }
+}
+
+/** Vermerkt einen endgueltig gescheiterten Bereich; scheitert selbst nie. */
+export async function recordDirectAreaFailure(
+  env: Env,
+  input: {
+    area: string;
+    errorCode: string;
+    runId?: string;
+    scheduledTime: number;
+    startedAt?: string;
+    syncId: string;
+  }
+): Promise<void> {
+  const finishedAt = new Date().toISOString();
+  try {
+    await recordMatoolSnapshotFailure(env.DB, {
+      area: input.area,
+      errorCode: input.errorCode,
+      finishedAt,
+      runId: input.runId ?? `snapshot_${input.area}_${crypto.randomUUID()}`,
+      syncId: input.syncId,
+      startedAt: input.startedAt ?? finishedAt
+    });
+  } catch {
+    console.error(
+      JSON.stringify({
+        area: input.area,
+        errorCode: "matool_snapshot_failure_not_recorded",
+        event: "matool_snapshot_failed",
+        scheduledTime: new Date(input.scheduledTime).toISOString()
+      })
+    );
+  }
 }
 
 function createDirectMatoolClient(env: Env): MatoolClient {

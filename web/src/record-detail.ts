@@ -1,3 +1,4 @@
+import { groupFields } from "./field-groups";
 import { getRecordDetail, isAbortError } from "./api";
 import {
   byId,
@@ -100,31 +101,36 @@ export class RecordDetailDialog {
     meta.append(state);
 
     const fieldsSection = document.createElement("section");
-    const heading = document.createElement("h3");
-    heading.textContent = "Gespeicherte Felder";
-    const fields = document.createElement("dl");
-    fields.className = "record-fields";
     if (detail.fields.length === 0) {
+      const heading = document.createElement("h3");
+      heading.textContent = "Gespeicherte Felder";
       fieldsSection.append(
         heading,
         createEmptyState("Für diesen Datensatz sind keine Anzeigefelder gespeichert.")
       );
     } else {
-      for (const field of detail.fields) {
-        const group = document.createElement("div");
-        const term = document.createElement("dt");
-        term.textContent = field.label;
-        if (field.masked) {
-          const protectedLabel = document.createElement("small");
-          protectedLabel.textContent = "geschützt";
-          term.append(" ", protectedLabel);
+      // Fachliche Abschnitte (Person, Kontakt, Probetraining, Vertrag, ...).
+      for (const abschnitt of groupFields(detail.area, detail.fields)) {
+        const heading = document.createElement("h3");
+        heading.textContent = abschnitt.title;
+        const fields = document.createElement("dl");
+        fields.className = "record-fields";
+        for (const field of abschnitt.fields) {
+          const group = document.createElement("div");
+          const term = document.createElement("dt");
+          term.textContent = field.label;
+          if (field.masked) {
+            const protectedLabel = document.createElement("small");
+            protectedLabel.textContent = "geschützt";
+            term.append(" ", protectedLabel);
+          }
+          const value = document.createElement("dd");
+          value.textContent = field.value || "—";
+          group.append(term, value);
+          fields.append(group);
         }
-        const value = document.createElement("dd");
-        value.textContent = field.value || "—";
-        group.append(term, value);
-        fields.append(group);
+        fieldsSection.append(heading, fields);
       }
-      fieldsSection.append(heading, fields);
     }
 
     const historySection = document.createElement("section");

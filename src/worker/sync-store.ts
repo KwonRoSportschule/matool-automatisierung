@@ -5,7 +5,9 @@ export type MatoolSyncSkipReason =
   | "outside_schedule_window"
   | "matool_not_configured"
   | "real_runs_not_confirmed"
-  | "lease_busy";
+  | "lease_busy"
+  | "previous_run_active"
+  | "workflow_unavailable";
 
 export interface MatoolSyncSummary {
   failed: number;

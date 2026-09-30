@@ -138,19 +138,26 @@ export class DatabaseView {
   private render(response: DashboardRecordsResponse): void {
     this.page = response.page;
     this.totalPages = Math.max(1, response.totalPages);
-    const visibleColumns = response.columns.slice(0, 4);
+    // Fachliche Uebersicht (Name, Status, Probetraining, Kontakt, ...) statt
+    // der ersten vier Rohfelder. Alle Felder stehen in "Details oeffnen".
+    const summary = response.summaryColumns ?? [];
+    const visibleColumns: DashboardColumn[] =
+      summary.length > 0
+        ? summary.map((column) => ({ ...column, masked: false }))
+        : response.columns.slice(0, 4);
+    const useSummary = summary.length > 0;
     this.renderHead(visibleColumns);
     if (response.records.length === 0) {
       this.renderEmpty("Für diese Auswahl wurden keine Datensätze gefunden.");
     } else {
       this.body.replaceChildren(
         ...response.records.map((record) =>
-          this.recordRow(response.area, record, visibleColumns)
+          this.recordRow(response.area, record, visibleColumns, useSummary)
         )
       );
       this.cards.replaceChildren(
         ...response.records.map((record) =>
-          this.recordCard(response.area, record, visibleColumns)
+          this.recordCard(response.area, record, visibleColumns, useSummary)
         )
       );
     }
@@ -166,10 +173,9 @@ export class DatabaseView {
   private renderHead(columns: readonly DashboardColumn[]): void {
     const row = document.createElement("tr");
     for (const label of [
-      "Referenz",
+      ...columns.map((column) => column.label),
       "Änderung",
       "Zuletzt geändert",
-      ...columns.map((column) => column.label),
       "Details"
     ]) {
       const cell = document.createElement("th");
@@ -183,17 +189,22 @@ export class DatabaseView {
   private recordRow(
     area: string,
     record: DashboardRecord,
-    columns: readonly DashboardColumn[]
+    columns: readonly DashboardColumn[],
+    useSummary: boolean
   ): HTMLTableRowElement {
     const row = document.createElement("tr");
-    appendCell(row, record.recordRef);
+    for (const column of columns) {
+      // Uebersichtswerte umbrechen statt abschneiden; Rohfelder bleiben kurz.
+      appendCell(
+        row,
+        cellValue(record, column.key, useSummary),
+        useSummary ? "summary-cell" : "truncate-cell"
+      );
+    }
     const changeCell = document.createElement("td");
     changeCell.append(createStatusBadge(changeState(record.change), changeLabel(record.change)));
     row.append(changeCell);
     appendCell(row, formatDateTime(record.lastChangedAt));
-    for (const column of columns) {
-      appendCell(row, record.values[column.key] ?? "—", "truncate-cell");
-    }
     const actions = document.createElement("td");
     actions.append(this.detailButton(area, record));
     row.append(actions);
@@ -203,14 +214,17 @@ export class DatabaseView {
   private recordCard(
     area: string,
     record: DashboardRecord,
-    columns: readonly DashboardColumn[]
+    columns: readonly DashboardColumn[],
+    useSummary: boolean
   ): HTMLElement {
     const card = document.createElement("article");
     card.className = "database-card";
     const header = document.createElement("div");
     header.className = "database-card-header";
     const reference = document.createElement("strong");
-    reference.textContent = record.recordRef;
+    reference.textContent = useSummary
+      ? cellValue(record, columns[0]?.key ?? "", true)
+      : record.recordRef;
     header.append(
       reference,
       createStatusBadge(changeState(record.change), changeLabel(record.change))
@@ -218,12 +232,12 @@ export class DatabaseView {
     const meta = document.createElement("p");
     meta.textContent = `Zuletzt geändert: ${formatDateTime(record.lastChangedAt)}`;
     const values = document.createElement("dl");
-    for (const column of columns.slice(0, 3)) {
+    for (const column of columns.slice(useSummary ? 1 : 0, useSummary ? 5 : 3)) {
       const group = document.createElement("div");
       const term = document.createElement("dt");
       term.textContent = column.label;
       const value = document.createElement("dd");
-      value.textContent = record.values[column.key] ?? "—";
+      value.textContent = cellValue(record, column.key, useSummary);
       group.append(term, value);
       values.append(group);
     }
@@ -276,6 +290,11 @@ function appendCell(
     cell.title = value;
   }
   row.append(cell);
+}
+
+function cellValue(record: DashboardRecord, key: string, useSummary: boolean): string {
+  const value = useSummary ? record.summary?.[key] : record.values[key];
+  return value && value.trim() !== "" ? value : "—";
 }
 
 function changeState(change: string): string {

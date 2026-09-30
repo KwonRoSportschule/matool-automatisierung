@@ -240,20 +240,25 @@ export async function finishManualSyncJob(
     .run();
 }
 
-/** Haelt ein Abruf gerade die Sperre fuer die direkten Bereiche? */
+/**
+ * Haelt ein Abruf gerade die Sperre fuer die direkten Bereiche? Mit
+ * `exceptOwner` zaehlt die eigene Sperre nicht (ein Workflow, der nach einem
+ * Neustart fortsetzt, wartet nicht auf sich selbst).
+ */
 export async function isDirectSyncLeaseHeld(
   db: D1Database,
-  now: Date = new Date()
+  now: Date = new Date(),
+  exceptOwner?: string
 ): Promise<boolean> {
   try {
     const row = await db
       .prepare(
-        `SELECT 1 AS belegt FROM matool_exact_sync_leases
+        `SELECT owner_id FROM matool_exact_sync_leases
          WHERE lease_name = 'direct_snapshots' AND expires_at > ?`
       )
       .bind(now.toISOString())
-      .first<{ belegt: number }>();
-    return row !== null;
+      .first<{ owner_id: string }>();
+    return row !== null && row.owner_id !== exceptOwner;
   } catch {
     // Ohne Tabelle hat noch nie jemand die Sperre genommen.
     return false;

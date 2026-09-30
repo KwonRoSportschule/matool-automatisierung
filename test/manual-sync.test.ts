@@ -14,6 +14,7 @@ import {
   openManualSyncJob
 } from "../src/worker/direct-sync-store";
 import type { Env } from "../src/worker/env";
+import { isDirectSyncLeaseHeld } from "../src/worker/direct-sync-store";
 import { acquireExactSyncLease, releaseExactSyncLease } from "../src/worker/exact-sync-safety";
 import { berechneFortschritt, getSyncProgress } from "../src/worker/sync-progress";
 import { waitForFreeDirectSyncLease } from "../src/worker/schedule";
@@ -201,8 +202,27 @@ describe("Fortschritt des laufenden Abrufs", () => {
   });
 });
 
+/** Erfolgreiche Ergebnisse fuer alle Bereichsschritte eines Laufs. */
+async function mockeBereiche(
+  m: { mockStepResult: (step: { name: string }, result: unknown) => Promise<void> },
+  jeBereich: number,
+  ausser: readonly string[] = []
+): Promise<void> {
+  const { MATOOL_DIRECT_SNAPSHOT_AREAS } = await import("../src/worker/schedule");
+  for (const area of MATOOL_DIRECT_SNAPSHOT_AREAS) {
+    if (!ausser.includes(area)) {
+      await m.mockStepResult(
+        { name: `bereich-${area}` },
+        { area, status: "succeeded", storedCount: jeBereich }
+      );
+    }
+  }
+  // Der Interessentenabgleich ist ein eigener Workflow mit eigenem Test.
+  await m.mockStepResult({ name: "interessenten" }, { status: "idle" });
+}
+
 describe("DirectSyncWorkflow", () => {
-  it("wartet auf die Sperre, laeuft einmal und speichert das Ergebnis", async () => {
+  it("wartet auf die Sperre, liest jeden Bereich als eigenen Schritt und speichert das Ergebnis", async () => {
     const { introspectWorkflowInstance } = await import("cloudflare:test");
     const workflow = (env as unknown as Env).DIRECT_SYNC_WORKFLOW!;
     const jobId = `manuell_wf_${Date.now()}`;
@@ -215,10 +235,8 @@ describe("DirectSyncWorkflow", () => {
     try {
       await instance.modify(async (m) => {
         await m.disableSleeps();
-        await m.mockStepResult(
-          { name: "abruf" },
-          { failed: 0, failedAreas: [], storedTotal: 7, succeeded: 6 }
-        );
+        await mockeBereiche(m, 2);
+        await m.mockStepResult({ name: "stilllegungen-offen-0" }, 0);
       });
       await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
       await expect(instance.waitForStepResult({ name: "sperre-pruefen-0" })).resolves.toBe(true);
@@ -226,17 +244,126 @@ describe("DirectSyncWorkflow", () => {
       await releaseExactSyncLease(env.DB, lease);
 
       await instance.waitForStatus("complete");
-      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 7, succeeded: 6 });
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 12, succeeded: 6 });
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
         jobId,
         status: "succeeded",
-        storedTotal: 7,
+        storedTotal: 12,
         succeeded: 6
       });
+      // Der Gesamtlauf ist abgeschlossen und die Sperre wieder frei.
+      const lauf = await env.DB.prepare(
+        "SELECT status, succeeded_area_count FROM matool_sync_runs ORDER BY started_at DESC LIMIT 1"
+      ).first<{ status: string; succeeded_area_count: number }>();
+      expect(lauf).toMatchObject({ status: "succeeded", succeeded_area_count: 6 });
+      await expect(isDirectSyncLeaseHeld(env.DB)).resolves.toBe(false);
     } finally {
       await instance.dispose();
       await releaseExactSyncLease(env.DB, lease).catch(() => false);
     }
+  });
+
+  it("wiederholt nur den Bereich mit voruebergehendem Fehler", async () => {
+    const { introspectWorkflowInstance } = await import("cloudflare:test");
+    const workflow = (env as unknown as Env).DIRECT_SYNC_WORKFLOW!;
+    const jobId = `manuell_retry_${Date.now()}`;
+    await env.DB.prepare("DROP TABLE IF EXISTS matool_manual_sync_jobs").run();
+    await createManualSyncJob(env.DB, jobId);
+    const instance = await introspectWorkflowInstance(workflow, jobId);
+    try {
+      await instance.modify(async (m) => {
+        await m.disableSleeps();
+        await mockeBereiche(m, 1, ["checkin", "graduierungen"]);
+        await m.mockStepResult(
+          { name: "bereich-checkin" },
+          { area: "checkin", errorCode: "matool_network_error", retryable: true, status: "failed" }
+        );
+        await m.mockStepResult(
+          { name: "bereich-checkin-versuch-2" },
+          { area: "checkin", status: "succeeded", storedCount: 5 }
+        );
+        // Falsches Passwort: nie wiederholen.
+        await m.mockStepResult(
+          { name: "bereich-graduierungen" },
+          { area: "graduierungen", errorCode: "matool_login_failed", retryable: false, status: "failed" }
+        );
+        await m.mockStepResult({ name: "stilllegungen-offen-0" }, 0);
+      });
+      await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
+      await instance.waitForStatus("complete");
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 1, storedTotal: 9, succeeded: 5 });
+      await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
+        status: "partial_failed",
+        failedAreas: ["graduierungen"]
+      });
+      const fehler = await env.DB.prepare(
+        `SELECT area, error_code FROM matool_snapshot_runs
+         WHERE status = 'failed' AND sync_id = (
+           SELECT sync_id FROM matool_sync_runs ORDER BY started_at DESC LIMIT 1
+         )`
+      ).all<{ area: string; error_code: string }>();
+      // Nur der endgueltig gescheiterte Bereich wird als Fehler vermerkt.
+      expect(fehler.results).toEqual([{ area: "graduierungen", error_code: "matool_login_failed" }]);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it("liest im Stundenlauf die Ex-Mitglieder nur, wenn ihr letzter Erfolg aelter als 20 Stunden ist", async () => {
+    const { selectDueDirectAreas, MATOOL_DIRECT_SNAPSHOT_AREAS } = await import("../src/worker/schedule");
+    await env.DB.prepare("DELETE FROM matool_snapshot_runs WHERE area = 'schueler_ex' AND run_id LIKE 'faellig_%'").run();
+    const jetzt = new Date("2098-06-02T08:00:00.000Z");
+    const alle = [...MATOOL_DIRECT_SNAPSHOT_AREAS];
+    const ohneEx = alle.filter((area) => area !== "schueler_ex");
+    const erfolg = (runId: string, finishedAt: string) =>
+      env.DB.prepare(
+        `INSERT INTO matool_snapshot_runs (run_id, area, status, started_at, finished_at,
+           fetched_count, success_count, failure_count, error_code)
+         VALUES (?, 'schueler_ex', 'succeeded', ?, ?, 1, 1, 0, NULL)`
+      ).bind(runId, finishedAt, finishedAt).run();
+
+    await erfolg("faellig_alt", "2098-06-01T07:00:00.000Z");
+    await expect(selectDueDirectAreas(env.DB, "scheduled", jetzt)).resolves.toEqual(alle);
+    await erfolg("faellig_neu", "2098-06-02T07:10:00.000Z");
+    await expect(selectDueDirectAreas(env.DB, "scheduled", jetzt)).resolves.toEqual(ohneEx);
+    // Der Knopf liest immer alles.
+    await expect(selectDueDirectAreas(env.DB, "manual", jetzt)).resolves.toEqual(alle);
+    await env.DB.prepare("DELETE FROM matool_snapshot_runs WHERE run_id LIKE 'faellig_%'").run();
+  });
+
+  it("startet den Stundenlauf je Stunde genau einmal", async () => {
+    const { scheduledSyncInstanceId, startScheduledSyncWorkflow } = await import("../src/worker/schedule");
+    const erstellt: string[] = [];
+    const vorhanden = new Set<string>();
+    const runtimeEnv = {
+      ...env,
+      DIRECT_SYNC_WORKFLOW: {
+        create: async ({ id }: { id: string }) => {
+          if (vorhanden.has(id)) {
+            throw new Error("instance.already_exists");
+          }
+          vorhanden.add(id);
+          erstellt.push(id);
+          return { id };
+        },
+        get: async (id: string) => {
+          if (!vorhanden.has(id)) {
+            throw new Error("instance.not_found");
+          }
+          return { id };
+        }
+      }
+    } as unknown as Env;
+    const stunde = Date.parse("2098-06-03T09:00:00.000Z");
+    await expect(startScheduledSyncWorkflow(runtimeEnv, stunde)).resolves.toEqual({
+      instanceId: scheduledSyncInstanceId(stunde),
+      started: true
+    });
+    await expect(startScheduledSyncWorkflow(runtimeEnv, stunde + 30_000)).resolves.toEqual({
+      instanceId: scheduledSyncInstanceId(stunde),
+      started: false
+    });
+    expect(erstellt).toHaveLength(1);
   });
 });
 
@@ -325,7 +452,7 @@ describe("Stilllegungen nachlesen", () => {
     try {
       await instance.modify(async (m) => {
         await m.disableSleeps();
-        await m.mockStepResult({ name: "abruf" }, { failed: 0, failedAreas: [], storedTotal: 600, succeeded: 6 });
+        await mockeBereiche(m, 100);
         await m.mockStepResult({ name: "stilllegungen-offen-0" }, 150);
         await m.mockStepResult({ name: "stilllegungen-nachlesen-0" }, { storedTotal: 100 });
         await m.mockStepResult({ name: "stilllegungen-offen-1" }, 50);
@@ -352,7 +479,7 @@ describe("Stilllegungen nachlesen", () => {
       await instance.modify(async (m) => {
         await m.disableSleeps();
         await m.disableRetryDelays();
-        await m.mockStepResult({ name: "abruf" }, { failed: 0, failedAreas: [], storedTotal: 600, succeeded: 6 });
+        await mockeBereiche(m, 100);
         await m.mockStepResult({ name: "stilllegungen-offen-0" }, 150);
         await m.mockStepError({ name: "stilllegungen-nachlesen-0" }, new Error("matool_exact_sync_lease_store_failed"), 3);
       });

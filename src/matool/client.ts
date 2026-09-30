@@ -56,6 +56,10 @@ const MAX_INTERESSENTEN_DETAIL_HANDLES = 500;
 const MAX_INTERESSENT_DETAIL_VALUE_LENGTH = 2_000;
 const MAX_INTERESSENTEN_STATUS_ATTEMPTS = 3;
 const MAX_INTERESSENTEN_RETRY_AFTER_MS = 5_000;
+/** Versuche je Anfrage bei Verbindungsabbruch oder Timeout. */
+const MAX_NETWORK_ATTEMPTS = 3;
+/** Erneute Anmeldungen je Client nach abgelaufener Sitzung. */
+const MAX_RELOGINS_PER_CLIENT = 2;
 const MAX_EXACT_DETAIL_RECORDS = 20_000;
 /** Abstand, in dem der Aufrufer ein Lebenszeichen bekommt. */
 const EXACT_DETAIL_PROGRESS_STEP = 10;
@@ -214,6 +218,8 @@ export class MatoolClient {
   #lastRequestFinishedAt = 0;
   #requestCount = 0;
   #authenticated = false;
+  #credentials: MatoolCredentials | undefined;
+  #reloginCount = 0;
 
   /** Anzahl der in diesem Client-Lauf versuchten MATOOL-Anfragen. */
   get requestCount(): number {
@@ -721,7 +727,8 @@ export class MatoolClient {
 
   private async fetchSafeAreaPage(
     area: MatoolSafeArea,
-    offset?: number
+    offset?: number,
+    allowRelogin = true
   ): Promise<SafeAreaPageResult> {
     const query = new URLSearchParams({ show: matoolSafeAreaView(area) });
     if (area === "schueler_ex") {
@@ -739,10 +746,9 @@ export class MatoolClient {
       headers: { Accept: "text/html,application/xhtml+xml" },
       method: "GET"
     } satisfies RequestInit;
-    const response =
-      area === "interessenten"
-        ? await this.requestInteressentenWithStatusRetry(path, init)
-        : await this.request(path, init);
+    // Alle Listenansichten sind reine Leseabrufe: 429 und 5xx werden mit
+    // kurzer Pause wiederholt, statt den ganzen Bereich scheitern zu lassen.
+    const response = await this.requestReadOnlyWithStatusRetry(path, init);
     if (!response.ok) {
       await response.body?.cancel();
       throw new AppError(
@@ -762,11 +768,26 @@ export class MatoolClient {
     }
 
     const body = await readBoundedBody(response);
-    const page = await extractSafeAreaPage(
-      body,
-      contentType,
-      area
-    );
+    let page: ParsedSafeAreaPage;
+    try {
+      page = await extractSafeAreaPage(body, contentType, area);
+    } catch (error) {
+      // Eine abgelaufene Sitzung liefert statt der Liste die Loginseite (mit
+      // HTTP 200). Nur dann: neu anmelden und genau diese Seite erneut lesen.
+      if (
+        !allowRelogin ||
+        !(error instanceof AppError) ||
+        !(
+          error.code === "matool_authentication_unverified" ||
+          error.code.endsWith("_schema_mismatch")
+        ) ||
+        !looksLikeLoginPage(body) ||
+        !(await this.relogin())
+      ) {
+        throw error;
+      }
+      return this.fetchSafeAreaPage(area, offset, false);
+    }
     return {
       bodyBytes: body.byteLength,
       ...page
@@ -1143,16 +1164,39 @@ export class MatoolClient {
   clearSession(): void {
     this.#cookies.clear();
     this.#authenticated = false;
+    this.#credentials = undefined;
   }
 
   private async login(credentials: MatoolCredentials): Promise<void> {
     // Ein Lauf meldet sich genau einmal an; alle weiteren Bereiche
     // verwenden dieselbe Session und dasselbe Subrequest-Budget.
+    this.#credentials = credentials;
     if (this.#authenticated) {
       return;
     }
     await this.performLogin(credentials);
     this.#authenticated = true;
+  }
+
+  /**
+   * Meldet sich nach einer abgelaufenen MATOOL-Sitzung erneut an. Hoechstens
+   * zweimal je Client, damit falsche Zugangsdaten nie in eine Schleife von
+   * Anmeldeversuchen fuehren.
+   */
+  private async relogin(): Promise<boolean> {
+    const credentials = this.#credentials;
+    if (!credentials || this.#reloginCount >= MAX_RELOGINS_PER_CLIENT) {
+      return false;
+    }
+    this.#reloginCount += 1;
+    console.warn(
+      JSON.stringify({ event: "matool_session_relogin", relogin: this.#reloginCount })
+    );
+    this.#cookies.clear();
+    this.#authenticated = false;
+    await this.performLogin(credentials);
+    this.#authenticated = true;
+    return true;
   }
 
   private async performLogin(
@@ -1222,12 +1266,17 @@ export class MatoolClient {
     url: URL,
     init: RequestInit
   ): Promise<Response> {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_NETWORK_ATTEMPTS; attempt += 1) {
+      // Nach einem Abbruch wachsende Pausen (im Betrieb rund 3 und 7 s):
+      // MATOOL nimmt nach schnellen Folgen kurz keine Verbindungen an.
       const minimumWait =
         attempt === 0
           ? this.#minRequestIntervalMs -
             (Date.now() - this.#lastRequestFinishedAt)
-          : Math.max(1_500, this.#minRequestIntervalMs * 4);
+          : Math.max(
+              1_500,
+              this.#minRequestIntervalMs * (attempt === 1 ? 4 : 10)
+            );
       if (minimumWait > 0) {
         await new Promise((resolve) => setTimeout(resolve, minimumWait));
       }
@@ -1283,7 +1332,7 @@ export class MatoolClient {
             method: init.method ?? "GET"
           })
         );
-        if (attempt === 1) {
+        if (attempt === MAX_NETWORK_ATTEMPTS - 1) {
           throw new AppError(
             "matool_network_error",
             502,
@@ -1401,9 +1450,14 @@ export class MatoolClient {
         return response;
       }
 
-      const retryAfterMs = parseInteressentenRetryAfter(
-        response.headers.get("Retry-After")
-      );
+      const retryAfterHeader = response.headers.get("Retry-After");
+      const retryAfterMs =
+        retryAfterHeader === null
+          ? Math.min(
+              MAX_INTERESSENTEN_RETRY_AFTER_MS,
+              this.#minRequestIntervalMs * 3 * attempt
+            )
+          : parseInteressentenRetryAfter(retryAfterHeader);
       await response.body?.cancel();
       if (retryAfterMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
@@ -1412,6 +1466,16 @@ export class MatoolClient {
 
     throw new Error("unreachable Interessenten retry state");
   }
+}
+
+/** Loginformular statt Inhalt: Die MATOOL-Sitzung ist abgelaufen. */
+function looksLikeLoginPage(body: Uint8Array): boolean {
+  const text = new TextDecoder().decode(body);
+  return (
+    /name\s*=\s*["']mail["']/iu.test(text) &&
+    /name\s*=\s*["']pass["']/iu.test(text) &&
+    /type\s*=\s*["']password["']/iu.test(text)
+  );
 }
 
 function isRetryableInteressentenStatus(status: number): boolean {

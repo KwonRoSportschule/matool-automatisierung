@@ -201,9 +201,16 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
         occurredAt: "2026-09-22T10:00:07.000Z"
       })
     ]));
-    // The other old areas also remain stale; the group count covers them all.
-    expect(overview).toMatchObject({ overall: { reasonCount: 9 } });
-    expect(overview.warnings).toHaveLength(9);
+    // Die uebrigen alten Bereiche sind nur veraltet (ohne eigenen Fehler):
+    // eine Sammelkarte statt sieben gleichlautender Einzelkarten.
+    expect(overview.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        key: "areas_stale",
+        title: "7 Datenbereiche nicht mehr aktuell"
+      })
+    ]));
+    expect(overview).toMatchObject({ overall: { reasonCount: 3 } });
+    expect(overview.warnings).toHaveLength(3);
   });
 
   it("behaelt fehlende Laufbestaetigungen als unknown und erfindet keine Fehlergruppe", async () => {

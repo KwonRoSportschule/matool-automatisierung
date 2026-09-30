@@ -1,3 +1,4 @@
+import { errorLabel } from "./error-labels";
 import { getActivity, isAbortError, type ActivityQuery } from "./api";
 import {
   byId,
@@ -205,7 +206,7 @@ function activityItem(item: ActivityItem): HTMLLIElement {
 
 function safeTechnicalDetails(item: ActivityItem): string {
   if (item.technicalCode) {
-    return item.technicalCode.slice(0, 300);
+    return errorLabel(item.technicalCode).slice(0, 300);
   }
   if (typeof item.technicalDetails === "string") {
     return item.technicalDetails.slice(0, 300);

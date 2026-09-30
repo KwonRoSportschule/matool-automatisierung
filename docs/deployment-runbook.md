@@ -163,6 +163,15 @@ pnpm exec wrangler deploy --env staging --strict
 Die Migration wird nur gegen die zuvor geprüfte Staging-Bindung ausgeführt.
 Der erste Deploy darf weder MATOOL abrufen noch Outbox-Zustellungen auslösen.
 
+Laufender Betrieb (ab 29.09.2026): Die Migrationskette ist nur für die
+**Ersteinrichtung** einer neuen Datenbank nötig. Spätere Deploys aus `main`
+brauchen keinen Migrationsschritt: Zusatztabellen, Indizes und Fristen legt
+der Worker bei jedem Cron-Aufruf selbst an bzw. wendet sie an
+(`src/worker/db-maintenance.ts`, Übersicht in [datenbank.md](datenbank.md)).
+Der Stundenlauf braucht die Workflow-Bindung `DIRECT_SYNC_WORKFLOW`
+(steht in `wrangler.jsonc`); fehlt sie, fällt der Cron auf den früheren
+Direktlauf zurück.
+
 ## 7. Staging-Abnahme ohne Echtdaten
 
 Zu prüfen und zu protokollieren:

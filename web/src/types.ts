@@ -100,6 +100,7 @@ export interface WarningSummary {
   state: "critical" | "warning";
   technicalCode: string | null;
   title: string;
+  lastSuccessAt?: string | null;
   occurrenceCount?: number;
   firstOccurredAt?: string | null;
   lastOccurredAt?: string | null;
@@ -213,12 +214,16 @@ export interface DashboardRecord {
   lastSeenAt: string;
   publicId: string;
   recordRef: string;
+  /** Fachliche Uebersichtswerte (Name, Status, Probetraining, ...). */
+  summary?: Record<string, string>;
   values: Record<string, string>;
 }
 
 export interface DashboardRecordsResponse {
   area: string;
   columns: DashboardColumn[];
+  /** Feste Uebersichtsspalten; fehlen sie, zeigt die Tabelle Rohfelder. */
+  summaryColumns?: Array<{ key: string; label: string }>;
   generatedAt: string;
   label: string;
   page: number;
