@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  Bundle,
   HttpRequestOptionsWithUrl,
   ZObject
 } from "zapier-platform-core";
@@ -10,8 +11,10 @@ import matoolMemberRecord from "../src/triggers/matool-member-record.js";
 import matoolExMemberRecord from "../src/triggers/matool-ex-member-record.js";
 import matoolCheckinRecord from "../src/triggers/matool-checkin-record.js";
 import matoolGraduierungRecord from "../src/triggers/matool-graduierung-record.js";
+import { INTERESSENT_OUTPUT_FIELDS } from "../src/triggers/interessent-output-fields.js";
 import { performLegacy } from "../src/triggers/matool-record-legacy.js";
 import {
+  outputFieldsForArea,
   perform,
   performList,
   performSubscribe,
@@ -165,6 +168,34 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
       "Mitglieder-Details (minimiert)"
     );
     expect(SNAPSHOT_AREA_CHOICES.checkin).toBe("Check-ins");
+  });
+
+  it("beschriftet Probetraining 1 und 2 für Insert Data wie in MATOOL", async () => {
+    const labels = new Map(
+      INTERESSENT_OUTPUT_FIELDS.map((field) => [field.key, field.label])
+    );
+    expect(labels.get("einfuehrung")).toBe("Probetraining 1 - Datum");
+    expect(labels.get("ergebnis_einfuehrung")).toBe(
+      "Probetraining 1 - Ergebnis"
+    );
+    expect(labels.get("probetraining")).toBe("Probetraining 2 - Datum");
+    expect(labels.get("ergebnis_probetraining")).toBe(
+      "Probetraining 2 - Ergebnis"
+    );
+    // Jedes Detailfeld bekommt genau eine Bezeichnung.
+    expect([...labels.keys()].sort()).toEqual([...detailKeys, "is_new"].sort());
+    expect(matoolProspectRecord.operation.outputFields).toBe(
+      INTERESSENT_OUTPUT_FIELDS
+    );
+
+    const bundle = (area: string) =>
+      ({ inputData: { area } }) as unknown as Bundle;
+    await expect(
+      outputFieldsForArea(zObject(), bundle("interessenten_details"))
+    ).resolves.toBe(INTERESSENT_OUTPUT_FIELDS);
+    await expect(
+      outputFieldsForArea(zObject(), bundle("schueler_details"))
+    ).resolves.toEqual([]);
   });
 
   it("bietet einen festen, minimierten Mitglieder-Trigger an", () => {

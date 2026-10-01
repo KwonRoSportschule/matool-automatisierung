@@ -41,7 +41,9 @@ technische Ereignis-ID sorgt dafür, dass unveränderte Datensätze nicht erneut
 auslösen und echte Änderungen als neuer Vorgang erkannt werden.
 
 `Interessenten-Details` stellt zusätzlich alle 34 lesend erfassten Detailfelder
-für das Zapier-Mapping bereit. Mitglieder-Details werden serverseitig auf eine
+für das Zapier-Mapping bereit. Unter „Insert Data“ tragen sie dieselben
+Bezeichnungen wie in MATOOL, etwa „Probetraining 1 - Datum“ (MATOOL-Schlüssel
+`einfuehrung`) und „Probetraining 2 - Datum“ (`probetraining`). Mitglieder-Details werden serverseitig auf eine
 minimierte Auswahl von Kontakt-, Vertrags-, Klassen- und Statusfeldern
 reduziert; Bank-, Konto-, Mandats- und Zahlungsdaten werden nicht an Zapier
 ausgeliefert. Check-ins liefern ausschließlich Mitglieds- und Klassen-ID
