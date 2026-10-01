@@ -449,9 +449,15 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     expect(probetrainingText("2026-09-24", "17:00:00", "Tiger-Kids")).toBe(
       "24.09.2026, 17:00 Uhr, Tiger-Kids"
     );
-    // Bereits deutsches Format bleibt lesbar
+    // Deutsches Format, wie MATOOL es an Zapier liefert
+    expect(probetrainingText("25.09.2026", "17:00 Uhr", "Tiger-Kids")).toBe(
+      "25.09.2026, 17:00 Uhr, Tiger-Kids"
+    );
     expect(probetrainingText("01.10.2026", "17:00", "Tiger-Kids")).toBe(
       "01.10.2026, 17:00 Uhr, Tiger-Kids"
+    );
+    expect(probetrainingText("25.09.2026", "00:00 Uhr", "Tiger-Kids")).toBe(
+      "25.09.2026, Tiger-Kids"
     );
     // Ohne Uhrzeit oder Klasse nur das, was da ist
     expect(probetrainingText("2026-09-24", "00:00:00", "")).toBe("24.09.2026");

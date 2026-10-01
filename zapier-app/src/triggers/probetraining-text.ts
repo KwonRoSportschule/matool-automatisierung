@@ -21,9 +21,10 @@ export function probetrainingTexte(
 }
 
 /**
- * MATOOL liefert Datum und Uhrzeit roh (2026-09-24, 17:00:00); 0000-00-00
- * und 00:00:00 heißen "nicht gesetzt". Ohne Datum gibt es keinen Termin,
- * dann bleibt der Text leer.
+ * MATOOL liefert Datum und Uhrzeit meist schon deutsch (25.09.2026,
+ * 17:00 Uhr), je nach Maske auch roh (2026-09-24, 17:00:00). 0000-00-00,
+ * 00:00:00 und 00:00 Uhr heißen "nicht gesetzt". Ohne Datum gibt es keinen
+ * Termin, dann bleibt der Text leer.
  */
 export function probetrainingText(
   datum: unknown,
@@ -55,6 +56,12 @@ function readableDate(value: string): string {
 }
 
 function readableTime(value: string): string {
-  const time = /^(\d{1,2}):(\d{2})(?::\d{2})?$/u.exec(value);
-  return time ? `${time[1]?.padStart(2, "0")}:${time[2]} Uhr` : value;
+  const time = /^(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*Uhr)?$/iu.exec(value);
+  if (!time) {
+    return value;
+  }
+  const [, hour = "", minute = ""] = time;
+  return Number(hour) === 0 && minute === "00"
+    ? ""
+    : `${hour.padStart(2, "0")}:${minute} Uhr`;
 }

@@ -26,18 +26,24 @@ aktuellen Termin:
 | 1 | **MATOOL Middleware** – Neuer oder geänderter MATOOL-Interessent | Nur neue Interessenten: **Nein**, Nur Änderungen: **Nein** |
 | 2 | **Storage by Zapier** – Get Value | Key: `pt1-` + *MATOOL-Interessenten-ID* · Successful if no search results are found: **True** (neuer Interessent hat noch keinen Wert) · Create … if it doesn't exist: **aus** |
 | 3 | **Storage by Zapier** – Set Value | Key: wie Schritt 2 · Value: `PT:` + *Probetraining 1 - Datum* + Leerzeichen + *Probetraining 1 - Uhrzeit* |
-| 4 | **Filter** – Only continue if | (a) *Probetraining 1 - Datum* · (Text) Exists · (b) *Probetraining 1 - Datum* · (Text) Does not contain · `0000` · (c) Wert aus Schritt 2 · (Text) Does not exactly match · gleicher Text wie Value in Schritt 3 |
-| 5 | **Formatter** – Date / Time → Add/Subtract Time | Input: *Probetraining 1 - Datum* + ` 10:00` · Expression: `-1 day` · To Format: `YYYY-MM-DD HH:mm` · From Format: `YYYY-MM-DD HH:mm` · Time Zone: `Europe/Berlin` |
-| 6 | **Filter** | *Probetraining 1 - Datum* · (Date/time) After · `{{zap_meta_human_now}}` (Termin liegt noch in der Zukunft) |
-| 7 | **Delay by Zapier** – Delay Until | Date/Time: Ergebnis aus Schritt 5. Liegt der Zeitpunkt schon zurück (Anmeldung kurzfristig), läuft der Zap sofort weiter – genau richtig. |
-| 8 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 · Successful if no search results are found: **False** (fehlt der Wert, ist etwas faul → anhalten) |
-| 9 | **Filter** | Wert aus Schritt 8 · (Text) Exactly matches · gleicher Text wie Value in Schritt 3 (sonst wurde der Termin inzwischen verschoben/gelöscht) |
-| 10 | **Formatter** – Utilities → Lookup Table *(optional, für die variable Adresse)* | Lookup Key: *Probetraining 1 - Klassenname* · Tabelle z. B. `Tiger-Kids` → `kinder@…`, `Erwachsene` → `trainer@…` · Fallback: `info@…` |
-| 11 | **Gmail** – Send Email | To: Ergebnis aus Schritt 10 (oder feste Adresse) · Subject: `Morgen Probetraining: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
+| 4 | **Filter** – Only continue if | (a) *Probetraining 1 - Datum* · (Text) Exists · (b) *Probetraining 1 - Datum* · (Text) Does not contain · `0000` · (c) Value aus **Schritt 2** (nicht 3!) · (Text) Does not exactly match · gleicher Text wie Value in Schritt 3 |
+| 5 | **Formatter** – Date / Time → Add/Subtract Time (Versandzeitpunkt) | Input: *Probetraining 1 - Datum* + ` 10:00` · Expression: `-1 day` · From Format: Custom `DD.MM.YYYY HH:mm` · To Format: Custom `YYYY-MM-DD HH:mm` · Time Zone: `Europe/Berlin` |
+| 6 | **Formatter** – Date / Time → Format (Termin als ISO-Datum) | Input: *Probetraining 1 - Datum* · From Format: Custom `DD.MM.YYYY` · To Format: Custom `YYYY-MM-DD` · Time Zone: `Europe/Berlin` |
+| 7 | **Filter** | Output aus Schritt 6 · (Date/time) After · `{{zap_meta_human_now}}` (Termin liegt noch in der Zukunft; verhindert Mails für längst vergangene Probetrainings, wenn sich bei alten Interessenten etwas ändert) |
+| 8 | **Delay by Zapier** – Delay Until | Date/Time: Output aus Schritt 5. Liegt der Zeitpunkt schon zurück (Anmeldung kurzfristig), läuft der Zap sofort weiter – genau richtig. |
+| 9 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 · Successful if no search results are found: **False** (fehlt der Wert, ist etwas faul → anhalten) |
+| 10 | **Filter** | Value aus Schritt 9 · (Text) Exactly matches · gleicher Text wie Value in Schritt 3 (sonst wurde der Termin inzwischen verschoben/gelöscht) |
+| 11 | **Formatter** – Utilities → Lookup Table *(optional, für die variable Adresse)* | Lookup Key: *Probetraining 1 - Klassenname* · Tabelle z. B. `Tiger-Kids` → `kinder@…`, `Erwachsene` → `trainer@…` · Fallback: `info@…` |
+| 12 | **Gmail** – Send Email | To: Ergebnis aus Schritt 11 (oder feste Adresse) · Subject: `Morgen Probetraining: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
 
-Uhrzeit der Mail: In Schritt 5 steht „Vortag 10:00 Uhr“. Lieber genau 24 h
-vorher? Dann Input *Probetraining 1 - Datum* + Leerzeichen + *Probetraining 1 -
-Uhrzeit* und From Format `YYYY-MM-DD HH:mm:ss`.
+MATOOL liefert Datum und Uhrzeit deutsch (`25.09.2026`, `17:00 Uhr`), daher
+die Formate `DD.MM.YYYY` in Schritt 5 und 6. Die Mail kommt am Vortag um
+10:00 Uhr; andere Uhrzeit einfach in Schritt 5 ändern.
+
+Bis Zapier-App 1.3.0 freigeschaltet ist, heißen die Felder noch roh:
+*Probetraining 1 - Datum* = „Einfuehrung“, *- Uhrzeit* = „Einfuehrung Zeit“,
+*- Klassenname* = „Einfuehrung Klasse Name“, *MATOOL-Interessenten-ID* =
+„Matool Id“. Achtung: „Probetraining“ ist dort Probetraining **2**.
 
 ## Platzhalter in der HTML-Vorlage
 
