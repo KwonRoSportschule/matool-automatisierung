@@ -52,7 +52,7 @@ Platzhalter durch das Feld aus „Insert Data“ (Schritt 1) ersetzen:
 
 | Platzhalter | Feld |
 |---|---|
-| `[VORNAME]`, `[NACHNAME]`, `[ANREDE]` | Vorname, Nachname, Anrede |
+| `[VORNAME]`, `[NACHNAME]` | Vorname, Nachname |
 | `[PROBETRAINING_1]` | **Probetraining 1** (fertiger Text) |
 | `[KLASSENNAME_1]` | Probetraining 1 - Klassenname |
 | `[HANDY]`, `[TELEFON]`, `[EMAIL]` | Handy, Telefon, E-Mail |
