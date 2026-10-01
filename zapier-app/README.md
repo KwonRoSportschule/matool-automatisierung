@@ -48,6 +48,14 @@ ergänzt die App die fertigen Textfelder „Probetraining 1“ und „Probetrain
 (`probetraining_1`, `probetraining_2`), z. B. „24.09.2026, 17:00 Uhr,
 Tiger-Kids“; ohne Termin bleiben sie leer.
 
+„Probetraining 1 - Erinnerung am“ (`probetraining_1_erinnerung`) liefert den
+Versandzeitpunkt für eine Erinnerung, z. B. `2026-10-02T10:00:00+02:00`:
+10:00 Uhr am letzten Tag vor dem Termin, an dem die Schule erreichbar ist
+(Montag bis Freitag, kein Feiertag in Rosenheim, keine Schließzeit). Die
+Schließzeiten (vorletzte Sommerferienwoche, Weihnachtsferien) stehen in
+`src/triggers/probetraining-erinnerung.ts` und reichen bis Sommer 2030. Siehe
+[docs/zaps/probetraining-1-erinnerung.md](../docs/zaps/probetraining-1-erinnerung.md).
+
 Mitglieder-Details werden serverseitig auf eine minimierte Auswahl von
 Kontakt-, Vertrags-, Klassen- und Statusfeldern reduziert; Bank-, Konto-,
 Mandats- und Zahlungsdaten werden nicht an Zapier ausgeliefert. Check-ins

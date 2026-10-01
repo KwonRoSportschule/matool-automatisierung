@@ -5,8 +5,9 @@ import type { PlainOutputField } from "zapier-platform-core";
  * Zapier. MATOOL nennt Probetraining 1 intern `einfuehrung` und
  * Probetraining 2 `probetraining`; die Bezeichnungen entsprechen der
  * MATOOL-Maske und dem Dashboard. Die Schlüssel bleiben unverändert, damit
- * bestehende Zaps weiter funktionieren. `probetraining_1` und
- * `probetraining_2` ergänzt die Zapier-App selbst (probetraining-text.ts).
+ * bestehende Zaps weiter funktionieren. `probetraining_1`,
+ * `probetraining_2` (probetraining-text.ts) und `probetraining_1_erinnerung`
+ * (probetraining-erinnerung.ts) ergänzt die Zapier-App selbst.
  */
 export const INTERESSENT_OUTPUT_FIELDS: PlainOutputField[] = [
   { key: "matool_id", label: "MATOOL-Interessenten-ID" },
@@ -25,6 +26,11 @@ export const INTERESSENT_OUTPUT_FIELDS: PlainOutputField[] = [
   { key: "kontakt", label: "Kontakt" },
   { key: "kontaktart", label: "Kontaktart" },
   { key: "probetraining_1", label: "Probetraining 1" },
+  {
+    key: "probetraining_1_erinnerung",
+    label: "Probetraining 1 - Erinnerung am",
+    type: "datetime"
+  },
   { key: "einfuehrung", label: "Probetraining 1 - Datum" },
   { key: "einfuehrung_zeit", label: "Probetraining 1 - Uhrzeit" },
   { key: "einfuehrung_klasse_name", label: "Probetraining 1 - Klassenname" },

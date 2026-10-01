@@ -12,6 +12,7 @@ import {
 
 import { API_PATHS, middlewareApiUrl } from "../constants.js";
 import { INTERESSENT_OUTPUT_FIELDS } from "./interessent-output-fields.js";
+import { probetrainingErinnerung } from "./probetraining-erinnerung.js";
 import { probetrainingTexte } from "./probetraining-text.js";
 
 export const SNAPSHOT_AREA_CHOICES = {
@@ -144,6 +145,7 @@ export function normalizeSnapshotRecords(
     invalidSnapshotResponse(z);
   }
 
+  const jetzt = new Date();
   const records: ZapierRecord[] = [];
   const seenRecordIds = new Set<string>();
   for (const candidate of candidates) {
@@ -183,7 +185,15 @@ export function normalizeSnapshotRecords(
 
     records.push({
       ...record,
-      ...(area === "interessenten_details" ? probetrainingTexte(record) : {}),
+      ...(area === "interessenten_details"
+        ? {
+            ...probetrainingTexte(record),
+            probetraining_1_erinnerung: probetrainingErinnerung(
+              record.einfuehrung,
+              jetzt
+            )
+          }
+        : {}),
       // Die technische ID kommt aus der Middleware und bleibt unverändert.
       id: backendId,
       area,
@@ -307,6 +317,7 @@ export const sample = {
   schule: "Beispielschule",
   leistung: "Beispielleistung",
   probetraining_1: "12.08.2026, 15:00 Uhr, Beispielklasse",
+  probetraining_1_erinnerung: "2026-08-11T10:00:00+02:00",
   einfuehrung: "12.08.2026",
   einfuehrung_zeit: "15:00",
   einfuehrung_klasse: "synthetic-class-id",

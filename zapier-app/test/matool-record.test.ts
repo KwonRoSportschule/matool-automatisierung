@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   Bundle,
   HttpRequestOptionsWithUrl,
@@ -187,8 +187,17 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     // Jedes Detailfeld bekommt genau eine Bezeichnung.
     expect(labels.get("probetraining_1")).toBe("Probetraining 1");
     expect(labels.get("probetraining_2")).toBe("Probetraining 2");
+    expect(labels.get("probetraining_1_erinnerung")).toBe(
+      "Probetraining 1 - Erinnerung am"
+    );
     expect([...labels.keys()].sort()).toEqual(
-      [...detailKeys, "is_new", "probetraining_1", "probetraining_2"].sort()
+      [
+        ...detailKeys,
+        "is_new",
+        "probetraining_1",
+        "probetraining_1_erinnerung",
+        "probetraining_2"
+      ].sort()
     );
     expect(matoolProspectRecord.operation.outputFields).toBe(
       INTERESSENT_OUTPUT_FIELDS
@@ -469,6 +478,11 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
   });
 
   it("liefert die Probetraining-Texte bei Hook und Zap-Test nur für Interessenten-Details", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(new Date("2026-09-01T08:00:00Z"));
     const interessent = {
       ...snapshotRecord("e".repeat(64), "24680"),
       einfuehrung: "2026-09-24",
@@ -484,6 +498,7 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     } as unknown as Parameters<typeof perform>[1]);
     expect(hookRecord).toMatchObject({
       probetraining_1: "24.09.2026, 17:00 Uhr, Testklasse A",
+      probetraining_1_erinnerung: "2026-09-23T10:00:00+02:00",
       probetraining_2: "",
       // Einzelfelder bleiben unverändert erhalten
       einfuehrung: "2026-09-24",
@@ -498,6 +513,7 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
     );
     expect(listRecord).toMatchObject({
       probetraining_1: "24.09.2026, 17:00 Uhr, Testklasse A",
+      probetraining_1_erinnerung: "2026-09-23T10:00:00+02:00",
       probetraining_2: ""
     });
 
@@ -511,6 +527,7 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
       "schueler_details"
     );
     expect(mitglied).not.toHaveProperty("probetraining_1");
+    expect(mitglied).not.toHaveProperty("probetraining_1_erinnerung");
     expect(mitglied).not.toHaveProperty("probetraining_2");
   });
 
