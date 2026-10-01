@@ -24,13 +24,13 @@ aktuellen Termin:
 | # | App / Aktion | Einstellung |
 |---|---|---|
 | 1 | **MATOOL Middleware** – Neuer oder geänderter MATOOL-Interessent | Nur neue Interessenten: **Nein**, Nur Änderungen: **Nein** |
-| 2 | **Storage by Zapier** – Get Value | Key: `pt1-` + *MATOOL-Interessenten-ID* |
+| 2 | **Storage by Zapier** – Get Value | Key: `pt1-` + *MATOOL-Interessenten-ID* · Successful if no search results are found: **True** (neuer Interessent hat noch keinen Wert) · Create … if it doesn't exist: **aus** |
 | 3 | **Storage by Zapier** – Set Value | Key: wie Schritt 2 · Value: `PT:` + *Probetraining 1 - Datum* + Leerzeichen + *Probetraining 1 - Uhrzeit* |
 | 4 | **Filter** – Only continue if | (a) *Probetraining 1 - Datum* · (Text) Exists · (b) *Probetraining 1 - Datum* · (Text) Does not contain · `0000` · (c) Wert aus Schritt 2 · (Text) Does not exactly match · gleicher Text wie Value in Schritt 3 |
 | 5 | **Formatter** – Date / Time → Add/Subtract Time | Input: *Probetraining 1 - Datum* + ` 10:00` · Expression: `-1 day` · To Format: `YYYY-MM-DD HH:mm` · From Format: `YYYY-MM-DD HH:mm` · Time Zone: `Europe/Berlin` |
 | 6 | **Filter** | *Probetraining 1 - Datum* · (Date/time) After · `{{zap_meta_human_now}}` (Termin liegt noch in der Zukunft) |
 | 7 | **Delay by Zapier** – Delay Until | Date/Time: Ergebnis aus Schritt 5. Liegt der Zeitpunkt schon zurück (Anmeldung kurzfristig), läuft der Zap sofort weiter – genau richtig. |
-| 8 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 |
+| 8 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 · Successful if no search results are found: **False** (fehlt der Wert, ist etwas faul → anhalten) |
 | 9 | **Filter** | Wert aus Schritt 8 · (Text) Exactly matches · gleicher Text wie Value in Schritt 3 (sonst wurde der Termin inzwischen verschoben/gelöscht) |
 | 10 | **Formatter** – Utilities → Lookup Table *(optional, für die variable Adresse)* | Lookup Key: *Probetraining 1 - Klassenname* · Tabelle z. B. `Tiger-Kids` → `kinder@…`, `Erwachsene` → `trainer@…` · Fallback: `info@…` |
 | 11 | **Gmail** – Send Email | To: Ergebnis aus Schritt 10 (oder feste Adresse) · Subject: `Morgen Probetraining: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
