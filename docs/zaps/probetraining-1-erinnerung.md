@@ -36,7 +36,7 @@ aktuellen Termin:
 | 11 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 · Successful if no search results are found: **False** (fehlt der Wert, ist etwas faul → anhalten) |
 | 12 | **Filter** | Value aus Schritt 11 · (Text) Exactly matches · gleicher Text wie Value in Schritt 3 (sonst wurde der Termin inzwischen verschoben/gelöscht) |
 | 13 | **Formatter** – Utilities → Lookup Table *(optional, für die variable Adresse)* | Lookup Key: *Probetraining 1 - Klassenname* · Tabelle z. B. `Tiger-Kids` → `kinder@…`, `Erwachsene` → `trainer@…` · Fallback: `info@…` |
-| 14 | **Gmail** – Send Email | To: Ergebnis aus Schritt 13 (oder feste Adresse) · Subject: `Probetraining am ` + *Probetraining 1 - Datum* + `: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
+| 14 | **Email by Zapier** – Send Outbound Email | To: Ergebnis aus Schritt 13 (oder feste Adresse) · Reply To: eigene Adresse · Force Linebreaks: **No** · Subject: `Probetraining am ` + *Probetraining 1 - Datum* + `: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body: Inhalt von `probetraining-1-erinnerung.html` |
 
 MATOOL liefert Datum und Uhrzeit deutsch (`25.09.2026`, `17:00 Uhr`), daher
 die Formate `DD.MM.YYYY` in Schritt 5, 7 und 8. Die Mail kommt am Vortag um
@@ -51,24 +51,19 @@ Bis Zapier-App 1.3.0 freigeschaltet ist, heißen die Felder noch roh:
 
 ## Platzhalter in der HTML-Vorlage
 
-HTML aus `probetraining-1-erinnerung.html` in das Body-Feld kopieren und jeden
-Platzhalter durch das Feld aus „Insert Data“ (Schritt 1) ersetzen:
+Die Vorlage ist für **Email by Zapier** (Send Outbound Email, Force Linebreaks:
+No) gebaut und funktioniert genauso in Gmail/Outlook mit Body-Format HTML.
+Jeder Platzhalter heißt wie das Feld aus Schritt 1 (Namen vor App-Version
+1.3.0) und kommt einmal vor, nur `[Handy]` zweimal (Anruf-Link und
+Knopftext). In Zapier jeden `[…]`-Text löschen und an seiner Stelle das
+gleichnamige Feld aus Schritt 1 einfügen:
 
-| Platzhalter | Feld |
-|---|---|
-| `[VORNAME]`, `[NACHNAME]` | Vorname, Nachname |
-| `[PROBETRAINING_1]` | **Probetraining 1** (fertiger Text) |
-| `[KLASSENNAME_1]` | Probetraining 1 - Klassenname |
-| `[HANDY]`, `[TELEFON]`, `[EMAIL]` | Handy, Telefon, E-Mail |
-| `[PLZ]`, `[ORT]` | PLZ, Ort |
-| `[STATUS]`, `[DATUM]` | Status, Datum |
-| `[KONTAKT]`, `[KONTAKTART]`, `[WERBEQUELLE]` | Kontakt, Kontaktart, Werbequelle - Bezeichnung |
-| `[ANMERKUNG]` | Anmerkung |
-| `[MATOOL_ID]` | MATOOL-Interessenten-ID |
+`[Vorname]` `[Name]` `[Einfuehrung]` `[Einfuehrung Zeit]`
+`[Einfuehrung Klasse Name]` `[Handy]` (2×) `[Telefon]` `[Email]` `[Plz]`
+`[Ort]` `[Status]` `[Kontakt]` `[Werbung Bezeichnung]` `[Datum]` `[Text]`
+`[Matool Id]`
 
-Tipp: Platzhalter, die mehrfach vorkommen (`[VORNAME]`, `[HANDY]`,
-`[PROBETRAINING_1]` …), überall ersetzen. Einen Testlauf zuerst an die eigene
-Adresse schicken.
+Einen Testlauf zuerst an die eigene Adresse schicken.
 
 ## Grenzen
 

@@ -1,104 +1,61 @@
-<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Probetraining-Erinnerung</title>
-</head>
-<!--
-  E-Mail-Vorlage "Probetraining-Erinnerung" für Zapier (Gmail: Body Type = HTML).
-  Alles in [ECKIGEN_KLAMMERN] in Zapier durch das passende Feld aus
-  "Insert Data" ersetzen (Zuordnung: docs/zaps/probetraining-1-erinnerung.md).
-  Nur Tabellen und Inline-Styles: so sieht die Mail auch in Outlook gut aus.
--->
-<body style="margin:0;padding:0;background:#f2f2f2;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">
-  Probetraining am [PROBETRAINING_1]: [VORNAME] [NACHNAME] – bitte kurz anrufen.
-</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f2f2;">
 <tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:12px;font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;">
 
-  <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#1a1a1a;">
+<tr><td style="background:#141414;padding:24px 28px;border-radius:12px 12px 0 0;">
+<div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#e3343f;font-weight:bold;">Anstehendes Probetraining</div>
+<div style="font-size:26px;line-height:32px;font-weight:bold;color:#ffffff;padding-top:6px;">[Vorname] [Name]</div>
+<div style="font-size:16px;line-height:22px;color:#d0d0d0;padding-top:6px;">&#128197; [Einfuehrung] &nbsp;·&nbsp; &#128339; [Einfuehrung Zeit] &nbsp;·&nbsp; [Einfuehrung Klasse Name]</div>
+</td></tr>
+<tr><td style="height:4px;background:#e3343f;font-size:0;line-height:0;">&nbsp;</td></tr>
 
-    <!-- Kopf -->
-    <tr><td style="background:#141414;padding:24px 28px;">
-      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#e3343f;font-weight:bold;">Anstehendes Probetraining</div>
-      <div style="font-size:26px;line-height:32px;font-weight:bold;color:#ffffff;padding-top:6px;">[VORNAME] [NACHNAME]</div>
-      <div style="font-size:16px;line-height:22px;color:#d0d0d0;padding-top:4px;">[PROBETRAINING_1]</div>
-    </td></tr>
-    <tr><td style="height:4px;background:#e3343f;font-size:0;line-height:0;">&nbsp;</td></tr>
+<tr><td style="padding:24px 28px 8px 28px;font-size:15px;line-height:22px;">
+Bitte ruf kurz an, bestätige den Termin und beantworte offene Fragen. So kommt niemand unvorbereitet zum Probetraining – oder gar nicht.
+</td></tr>
 
-    <!-- Auftrag -->
-    <tr><td style="padding:24px 28px 8px 28px;font-size:15px;line-height:22px;">
-      Bitte ruf <strong>[VORNAME]</strong> heute kurz an, bestätige den Termin und
-      beantworte offene Fragen. So kommt niemand unvorbereitet zum Probetraining – oder gar nicht.
-    </td></tr>
+<tr><td align="center" style="padding:12px 28px 8px 28px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td align="center" style="background:#e3343f;border-radius:8px;">
+<a href="tel:[Handy]" style="display:inline-block;padding:14px 32px;font-size:18px;font-weight:bold;color:#ffffff;text-decoration:none;">&#128222;&nbsp; [Handy] anrufen</a>
+</td>
+</tr></table>
+</td></tr>
 
-    <!-- Anruf-Knopf -->
-    <tr><td align="center" style="padding:16px 28px 8px 28px;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-        <td align="center" style="background:#e3343f;border-radius:8px;">
-          <a href="tel:[HANDY]" style="display:inline-block;padding:14px 32px;font-size:18px;font-weight:bold;color:#ffffff;text-decoration:none;">&#128222;&nbsp; [HANDY] anrufen</a>
-        </td>
-      </tr></table>
-      <div style="font-size:13px;color:#666666;padding-top:10px;">
-        Festnetz: <a href="tel:[TELEFON]" style="color:#1a1a1a;">[TELEFON]</a>
-        &nbsp;·&nbsp; E-Mail: <a href="mailto:[EMAIL]" style="color:#1a1a1a;">[EMAIL]</a>
-      </div>
-    </td></tr>
+<tr><td style="padding:20px 28px 0 28px;">
+<div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Interessent</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;line-height:22px;background:#fafafa;border:1px solid #ececec;border-radius:8px;">
+<tr><td style="padding:10px 14px;color:#666666;width:38%;">Festnetz</td><td style="padding:10px 14px;">[Telefon]</td></tr>
+<tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">E-Mail</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[Email]</td></tr>
+<tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Wohnort</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[Plz] [Ort]</td></tr>
+<tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Status in MATOOL</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[Status]</td></tr>
+<tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Gekommen über</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[Kontakt] · [Werbung Bezeichnung]</td></tr>
+<tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Angelegt am</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[Datum]</td></tr>
+</table>
+</td></tr>
 
-    <!-- Termin -->
-    <tr><td style="padding:20px 28px 0 28px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Termin</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;line-height:22px;background:#fafafa;border:1px solid #ececec;border-radius:8px;">
-        <tr><td style="padding:10px 14px;color:#666666;width:40%;">Datum &amp; Uhrzeit</td><td style="padding:10px 14px;font-weight:bold;">[PROBETRAINING_1]</td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Klasse</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[KLASSENNAME_1]</td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Status in MATOOL</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[STATUS]</td></tr>
-      </table>
-    </td></tr>
+<tr><td style="padding:20px 28px 0 28px;">
+<div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Anmerkung aus MATOOL</div>
+<div style="font-size:15px;line-height:22px;background:#fff7e6;border-left:4px solid #f5a623;padding:12px 14px;white-space:pre-line;">[Text]</div>
+</td></tr>
 
-    <!-- Person -->
-    <tr><td style="padding:20px 28px 0 28px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Interessent</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;line-height:22px;background:#fafafa;border:1px solid #ececec;border-radius:8px;">
-        <tr><td style="padding:10px 14px;color:#666666;width:40%;">Name</td><td style="padding:10px 14px;">[VORNAME] [NACHNAME]</td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Handy</td><td style="padding:10px 14px;border-top:1px solid #ececec;"><a href="tel:[HANDY]" style="color:#1a1a1a;">[HANDY]</a></td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">E-Mail</td><td style="padding:10px 14px;border-top:1px solid #ececec;"><a href="mailto:[EMAIL]" style="color:#1a1a1a;">[EMAIL]</a></td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Wohnort</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[PLZ] [ORT]</td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Gekommen über</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[KONTAKT] · [KONTAKTART] · [WERBEQUELLE]</td></tr>
-        <tr><td style="padding:10px 14px;color:#666666;border-top:1px solid #ececec;">Angelegt am</td><td style="padding:10px 14px;border-top:1px solid #ececec;">[DATUM]</td></tr>
-      </table>
-    </td></tr>
+<tr><td style="padding:20px 28px 0 28px;">
+<div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Checkliste fürs Telefonat</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;line-height:22px;">
+<tr><td style="padding:4px 0;width:28px;vertical-align:top;color:#e3343f;font-weight:bold;">1</td><td style="padding:4px 0;">Termin bestätigen (Datum, Uhrzeit, Klasse siehe oben)</td></tr>
+<tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">2</td><td style="padding:4px 0;">Bequeme Sportkleidung, Getränk, 10 Minuten früher da sein</td></tr>
+<tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">3</td><td style="padding:4px 0;">Anfahrt und Parken erklären</td></tr>
+<tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">4</td><td style="padding:4px 0;">Fragen, Vorerfahrung, Verletzungen klären</td></tr>
+<tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">5</td><td style="padding:4px 0;">Ergebnis des Anrufs in MATOOL eintragen</td></tr>
+</table>
+</td></tr>
 
-    <!-- Anmerkung -->
-    <tr><td style="padding:20px 28px 0 28px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Anmerkung aus MATOOL</div>
-      <div style="font-size:15px;line-height:22px;background:#fff7e6;border-left:4px solid #f5a623;border-radius:4px;padding:12px 14px;white-space:pre-line;">[ANMERKUNG]</div>
-    </td></tr>
+<tr><td style="padding:24px 28px;">
+<div style="border-top:1px solid #ececec;padding-top:14px;font-size:12px;line-height:18px;color:#999999;">
+Automatische Erinnerung aus MATOOL · Interessenten-ID [Matool Id]<br>
+Enthält personenbezogene Daten – nur intern verwenden, nicht weiterleiten.
+</div>
+</td></tr>
 
-    <!-- Gesprächsleitfaden -->
-    <tr><td style="padding:20px 28px 0 28px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;color:#888888;font-weight:bold;padding-bottom:8px;">Kurz-Checkliste fürs Telefonat</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:15px;line-height:22px;">
-        <tr><td style="padding:4px 0;width:28px;vertical-align:top;color:#e3343f;font-weight:bold;">1</td><td style="padding:4px 0;">Termin bestätigen: [PROBETRAINING_1]</td></tr>
-        <tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">2</td><td style="padding:4px 0;">Bequeme Sportkleidung, Getränk, 10 Minuten früher da sein</td></tr>
-        <tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">3</td><td style="padding:4px 0;">Anfahrt und Parken erklären</td></tr>
-        <tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">4</td><td style="padding:4px 0;">Fragen, Vorerfahrung, Verletzungen klären</td></tr>
-        <tr><td style="padding:4px 0;vertical-align:top;color:#e3343f;font-weight:bold;">5</td><td style="padding:4px 0;">Ergebnis des Anrufs in MATOOL eintragen</td></tr>
-      </table>
-    </td></tr>
-
-    <!-- Fuß -->
-    <tr><td style="padding:24px 28px;">
-      <div style="border-top:1px solid #ececec;padding-top:14px;font-size:12px;line-height:18px;color:#999999;">
-        Automatische Erinnerung aus MATOOL · Interessenten-ID [MATOOL_ID]<br>
-        Enthält personenbezogene Daten – nur intern verwenden, nicht weiterleiten.
-      </div>
-    </td></tr>
-
-  </table>
-
+</table>
 </td></tr>
 </table>
-</body>
-</html>
