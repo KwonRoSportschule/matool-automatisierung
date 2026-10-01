@@ -36,7 +36,7 @@ aktuellen Termin:
 | 11 | **Storage by Zapier** – Get Value | Key: wie Schritt 2 · Successful if no search results are found: **False** (fehlt der Wert, ist etwas faul → anhalten) |
 | 12 | **Filter** | Value aus Schritt 11 · (Text) Exactly matches · gleicher Text wie Value in Schritt 3 (sonst wurde der Termin inzwischen verschoben/gelöscht) |
 | 13 | **Formatter** – Utilities → Lookup Table *(optional, für die variable Adresse)* | Lookup Key: *Probetraining 1 - Klassenname* · Tabelle z. B. `Tiger-Kids` → `kinder@…`, `Erwachsene` → `trainer@…` · Fallback: `info@…` |
-| 14 | **Gmail** – Send Email | To: Ergebnis aus Schritt 13 (oder feste Adresse) · Subject: `Morgen Probetraining: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
+| 14 | **Gmail** – Send Email | To: Ergebnis aus Schritt 13 (oder feste Adresse) · Subject: `Probetraining am ` + *Probetraining 1 - Datum* + `: ` + *Vorname* + ` ` + *Nachname* + ` – bitte anrufen` · Body Type: **HTML** · Body: Inhalt von `probetraining-1-erinnerung.html` |
 
 MATOOL liefert Datum und Uhrzeit deutsch (`25.09.2026`, `17:00 Uhr`), daher
 die Formate `DD.MM.YYYY` in Schritt 5, 7 und 8. Die Mail kommt am Vortag um
