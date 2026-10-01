@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type {
+  Bundle,
   HttpRequestOptionsWithUrl,
   ZObject
 } from "zapier-platform-core";
@@ -10,8 +11,12 @@ import matoolMemberRecord from "../src/triggers/matool-member-record.js";
 import matoolExMemberRecord from "../src/triggers/matool-ex-member-record.js";
 import matoolCheckinRecord from "../src/triggers/matool-checkin-record.js";
 import matoolGraduierungRecord from "../src/triggers/matool-graduierung-record.js";
+import { INTERESSENT_OUTPUT_FIELDS } from "../src/triggers/interessent-output-fields.js";
+import { probetrainingText } from "../src/triggers/probetraining-text.js";
 import { performLegacy } from "../src/triggers/matool-record-legacy.js";
 import {
+  normalizeSnapshotRecords,
+  outputFieldsForArea,
   perform,
   performList,
   performSubscribe,
@@ -165,6 +170,38 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
       "Mitglieder-Details (minimiert)"
     );
     expect(SNAPSHOT_AREA_CHOICES.checkin).toBe("Check-ins");
+  });
+
+  it("beschriftet Probetraining 1 und 2 für Insert Data wie in MATOOL", async () => {
+    const labels = new Map(
+      INTERESSENT_OUTPUT_FIELDS.map((field) => [field.key, field.label])
+    );
+    expect(labels.get("einfuehrung")).toBe("Probetraining 1 - Datum");
+    expect(labels.get("ergebnis_einfuehrung")).toBe(
+      "Probetraining 1 - Ergebnis"
+    );
+    expect(labels.get("probetraining")).toBe("Probetraining 2 - Datum");
+    expect(labels.get("ergebnis_probetraining")).toBe(
+      "Probetraining 2 - Ergebnis"
+    );
+    // Jedes Detailfeld bekommt genau eine Bezeichnung.
+    expect(labels.get("probetraining_1")).toBe("Probetraining 1");
+    expect(labels.get("probetraining_2")).toBe("Probetraining 2");
+    expect([...labels.keys()].sort()).toEqual(
+      [...detailKeys, "is_new", "probetraining_1", "probetraining_2"].sort()
+    );
+    expect(matoolProspectRecord.operation.outputFields).toBe(
+      INTERESSENT_OUTPUT_FIELDS
+    );
+
+    const bundle = (area: string) =>
+      ({ inputData: { area } }) as unknown as Bundle;
+    await expect(
+      outputFieldsForArea(zObject(), bundle("interessenten_details"))
+    ).resolves.toBe(INTERESSENT_OUTPUT_FIELDS);
+    await expect(
+      outputFieldsForArea(zObject(), bundle("schueler_details"))
+    ).resolves.toEqual([]);
   });
 
   it("bietet einen festen, minimierten Mitglieder-Trigger an", () => {
@@ -405,6 +442,70 @@ describe("lesender MATOOL-Webhook-Trigger", () => {
       matool_id: "67890",
       content_hash: "b".repeat(64)
     });
+  });
+
+  it("fasst Probetraining 1 und 2 zu je einem fertigen Text zusammen", () => {
+    // Rohformat aus MATOOL
+    expect(probetrainingText("2026-09-24", "17:00:00", "Tiger-Kids")).toBe(
+      "24.09.2026, 17:00 Uhr, Tiger-Kids"
+    );
+    // Bereits deutsches Format bleibt lesbar
+    expect(probetrainingText("01.10.2026", "17:00", "Tiger-Kids")).toBe(
+      "01.10.2026, 17:00 Uhr, Tiger-Kids"
+    );
+    // Ohne Uhrzeit oder Klasse nur das, was da ist
+    expect(probetrainingText("2026-09-24", "00:00:00", "")).toBe("24.09.2026");
+    expect(probetrainingText("2026-09-24", null, "---")).toBe("24.09.2026");
+    // Ohne Datum gibt es keinen Termin
+    for (const leer of ["", "0000-00-00", "00.00.0000", null, undefined]) {
+      expect(probetrainingText(leer, "17:00:00", "Tiger-Kids")).toBe("");
+    }
+  });
+
+  it("liefert die Probetraining-Texte bei Hook und Zap-Test nur für Interessenten-Details", async () => {
+    const interessent = {
+      ...snapshotRecord("e".repeat(64), "24680"),
+      einfuehrung: "2026-09-24",
+      einfuehrung_zeit: "17:00:00",
+      einfuehrung_klasse_name: "Testklasse A",
+      probetraining: "0000-00-00",
+      probetraining_zeit: "00:00:00",
+      probetraining_klasse_name: ""
+    };
+    const [hookRecord] = await perform(zObject(), {
+      inputData: { area: "interessenten_details" },
+      cleanedRequest: interessent
+    } as unknown as Parameters<typeof perform>[1]);
+    expect(hookRecord).toMatchObject({
+      probetraining_1: "24.09.2026, 17:00 Uhr, Testklasse A",
+      probetraining_2: "",
+      // Einzelfelder bleiben unverändert erhalten
+      einfuehrung: "2026-09-24",
+      einfuehrung_zeit: "17:00:00"
+    });
+
+    const [listRecord] = await performList(
+      zObject({ area: "interessenten_details", records: [interessent] }),
+      {
+        inputData: { area: "interessenten_details" }
+      } as unknown as Parameters<typeof performList>[1]
+    );
+    expect(listRecord).toMatchObject({
+      probetraining_1: "24.09.2026, 17:00 Uhr, Testklasse A",
+      probetraining_2: ""
+    });
+
+    const [mitglied] = normalizeSnapshotRecords(
+      zObject(),
+      {
+        ...snapshotRecord(`schueler_details:24680:${"f".repeat(16)}`),
+        area: "schueler_details",
+        einfuehrung: "2026-09-24"
+      },
+      "schueler_details"
+    );
+    expect(mitglied).not.toHaveProperty("probetraining_1");
+    expect(mitglied).not.toHaveProperty("probetraining_2");
   });
 
   it("akzeptiert eine Hook-Liste und erhält Reihenfolge und IDs", async () => {

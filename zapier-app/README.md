@@ -41,13 +41,19 @@ technische Ereignis-ID sorgt dafür, dass unveränderte Datensätze nicht erneut
 auslösen und echte Änderungen als neuer Vorgang erkannt werden.
 
 `Interessenten-Details` stellt zusätzlich alle 34 lesend erfassten Detailfelder
-für das Zapier-Mapping bereit. Mitglieder-Details werden serverseitig auf eine
-minimierte Auswahl von Kontakt-, Vertrags-, Klassen- und Statusfeldern
-reduziert; Bank-, Konto-, Mandats- und Zahlungsdaten werden nicht an Zapier
-ausgeliefert. Check-ins liefern ausschließlich Mitglieds- und Klassen-ID
-sowie Zeitpunkt. Prüfungen liefern Mitglieds- und Graduierungs-ID, Datum,
-Grad/Sparte, PDF-Hinweis und Storno-Status. Die hinterlegten Beispieldaten
-sind vollständig synthetisch.
+für das Zapier-Mapping bereit. Unter „Insert Data“ tragen sie dieselben
+Bezeichnungen wie in MATOOL, etwa „Probetraining 1 - Datum“ (MATOOL-Schlüssel
+`einfuehrung`) und „Probetraining 2 - Datum“ (`probetraining`). Zusätzlich
+ergänzt die App die fertigen Textfelder „Probetraining 1“ und „Probetraining 2“
+(`probetraining_1`, `probetraining_2`), z. B. „24.09.2026, 17:00 Uhr,
+Tiger-Kids“; ohne Termin bleiben sie leer.
+
+Mitglieder-Details werden serverseitig auf eine minimierte Auswahl von
+Kontakt-, Vertrags-, Klassen- und Statusfeldern reduziert; Bank-, Konto-,
+Mandats- und Zahlungsdaten werden nicht an Zapier ausgeliefert. Check-ins
+liefern ausschließlich Mitglieds- und Klassen-ID sowie Zeitpunkt. Prüfungen
+liefern Mitglieds- und Graduierungs-ID, Datum, Grad/Sparte, PDF-Hinweis und
+Storno-Status. Die hinterlegten Beispieldaten sind vollständig synthetisch.
 
 Für die Trigger kann zusätzlich **Nur neue Datensätze** gewählt werden. Dann
 läuft der Zap ausschließlich beim erstmaligen Erscheinen eines Datensatzes

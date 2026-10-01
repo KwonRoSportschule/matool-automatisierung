@@ -1,4 +1,5 @@
 import { createFixedAreaRecordTrigger } from "./fixed-area-record.js";
+import { INTERESSENT_OUTPUT_FIELDS } from "./interessent-output-fields.js";
 import { sample } from "./matool-record.js";
 
 export default createFixedAreaRecordTrigger({
@@ -11,5 +12,6 @@ export default createFixedAreaRecordTrigger({
   onlyNewLabel: "Nur neue Interessenten",
   onlyNewHelpText:
     "Aktiviert: der Zap startet ausschließlich, wenn ein Interessent erstmals in MATOOL erscheint. Änderungen an bestehenden Interessenten werden nicht gemeldet.",
+  outputFields: INTERESSENT_OUTPUT_FIELDS,
   sample
 });

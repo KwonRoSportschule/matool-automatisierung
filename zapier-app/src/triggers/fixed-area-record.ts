@@ -4,6 +4,7 @@ import {
   type WebhookTriggerPerform,
   type WebhookTriggerPerformList,
   type WebhookTriggerPerformSubscribe,
+  type PlainOutputField,
   type WebhookTriggerPerformUnsubscribe,
   type ZObject
 } from "zapier-platform-core";
@@ -31,6 +32,7 @@ export interface FixedAreaTriggerDefinition {
   noun: string;
   onlyNewHelpText?: string;
   onlyNewLabel?: string;
+  outputFields?: PlainOutputField[];
   sample: ZapierRecord;
 }
 
@@ -191,6 +193,9 @@ export function createFixedAreaRecordTrigger(
       performList,
       performSubscribe,
       performUnsubscribe,
+      ...(definition.outputFields
+        ? { outputFields: definition.outputFields }
+        : {}),
       sample: definition.sample
     }
   });

@@ -1,6 +1,8 @@
 import {
   defineInputFields,
   defineTrigger,
+  type Bundle,
+  type PlainOutputField,
   type WebhookTriggerPerform,
   type WebhookTriggerPerformList,
   type WebhookTriggerPerformSubscribe,
@@ -9,6 +11,8 @@ import {
 } from "zapier-platform-core";
 
 import { API_PATHS, middlewareApiUrl } from "../constants.js";
+import { INTERESSENT_OUTPUT_FIELDS } from "./interessent-output-fields.js";
+import { probetrainingTexte } from "./probetraining-text.js";
 
 export const SNAPSHOT_AREA_CHOICES = {
   interessenten: "Interessenten",
@@ -179,6 +183,7 @@ export function normalizeSnapshotRecords(
 
     records.push({
       ...record,
+      ...(area === "interessenten_details" ? probetrainingTexte(record) : {}),
       // Die technische ID kommt aus der Middleware und bleibt unverändert.
       id: backendId,
       area,
@@ -264,6 +269,18 @@ export const performList = (async (z, bundle) => {
   return normalizeSnapshotRecords(z, response.data.records, area);
 }) satisfies WebhookTriggerPerformList<typeof inputFields, ZapierRecord>;
 
+/**
+ * Lesbare Feldnamen gibt es vorerst nur für Interessenten-Details; andere
+ * Bereiche zeigen weiter die automatisch erkannten Schlüssel.
+ */
+export async function outputFieldsForArea(
+  _z: ZObject,
+  bundle: Bundle
+): Promise<PlainOutputField[]> {
+  const area = String(bundle.inputData.area ?? "interessenten_details");
+  return area === "interessenten_details" ? INTERESSENT_OUTPUT_FIELDS : [];
+}
+
 export const sample = {
   id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   area: "interessenten_details",
@@ -289,14 +306,16 @@ export const sample = {
   kontaktart: "E-Mail",
   schule: "Beispielschule",
   leistung: "Beispielleistung",
-  einfuehrung: "",
-  einfuehrung_zeit: "",
-  einfuehrung_klasse: "",
-  einfuehrung_klasse_name: "",
+  probetraining_1: "12.08.2026, 15:00 Uhr, Beispielklasse",
+  einfuehrung: "12.08.2026",
+  einfuehrung_zeit: "15:00",
+  einfuehrung_klasse: "synthetic-class-id",
+  einfuehrung_klasse_name: "Beispielklasse",
   einfuehrung_benutzer: "",
-  einfuehrung_anwesend: "",
-  ergebnis_einfuehrung: "",
-  probetraining: "12.08.2026",
+  einfuehrung_anwesend: "1",
+  ergebnis_einfuehrung: "Möchte ein weiteres Probetraining",
+  probetraining_2: "19.08.2026, 15:00 Uhr, Beispielklasse",
+  probetraining: "19.08.2026",
   probetraining_zeit: "15:00",
   probetraining_klasse: "synthetic-class-id",
   probetraining_klasse_name: "Beispielklasse",
@@ -324,6 +343,7 @@ export default defineTrigger({
     performList,
     performSubscribe,
     performUnsubscribe,
+    outputFields: [outputFieldsForArea],
     sample
   }
 });
