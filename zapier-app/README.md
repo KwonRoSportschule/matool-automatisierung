@@ -50,10 +50,10 @@ Tiger-Kids“; ohne Termin bleiben sie leer.
 
 Mitglieder-Details werden serverseitig auf eine minimierte Auswahl von
 Kontakt-, Vertrags-, Klassen- und Statusfeldern reduziert; Bank-, Konto-,
-Mandats- und Zahlungsdaten werden nicht an Zapier ausgeliefert. Check-ins liefern ausschließlich Mitglieds- und Klassen-ID
-sowie Zeitpunkt. Prüfungen liefern Mitglieds- und Graduierungs-ID, Datum,
-Grad/Sparte, PDF-Hinweis und Storno-Status. Die hinterlegten Beispieldaten
-sind vollständig synthetisch.
+Mandats- und Zahlungsdaten werden nicht an Zapier ausgeliefert. Check-ins
+liefern ausschließlich Mitglieds- und Klassen-ID sowie Zeitpunkt. Prüfungen
+liefern Mitglieds- und Graduierungs-ID, Datum, Grad/Sparte, PDF-Hinweis und
+Storno-Status. Die hinterlegten Beispieldaten sind vollständig synthetisch.
 
 Für die Trigger kann zusätzlich **Nur neue Datensätze** gewählt werden. Dann
 läuft der Zap ausschließlich beim erstmaligen Erscheinen eines Datensatzes
