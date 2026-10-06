@@ -124,6 +124,47 @@ export async function runDiscovery(area: string): Promise<DiscoveryResponse> {
   });
 }
 
+export async function downloadExamLists(program: string): Promise<{
+  blob: Blob;
+  filename: string;
+}> {
+  const csrf = await requestJson<{ token: string }>("/api/admin/v1/csrf");
+  const response = await fetch("/api/admin/v1/exam-lists/download", {
+    body: JSON.stringify({ program }),
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/zip, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrf.token
+    },
+    method: "POST"
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: unknown = null;
+    try {
+      payload = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      throw new ApiError(
+        `Der Hub antwortet momentan nicht korrekt (${response.status}).`,
+        response.status
+      );
+    }
+    const error = readError(payload);
+    throw new ApiError(
+      error.message ?? `Die Prüfungslisten konnten nicht erstellt werden (${response.status}).`,
+      response.status,
+      error.code
+    );
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/u.exec(disposition);
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? "Kinder_Pruefungslisten.zip"
+  };
+}
+
 export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }

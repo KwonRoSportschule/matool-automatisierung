@@ -1,6 +1,7 @@
 import { ActivityView } from "./activity";
 import { buildInfoText } from "./build-info";
 import {
+  downloadExamLists,
   getOverview,
   isAbortError,
   runDiscovery,
@@ -73,6 +74,9 @@ const elements = {
   scheduleAreas: byId("schedule-areas"),
   functionCount: byId("function-count"),
   functionsList: byId("functions-list"),
+  examListProgram: byId<HTMLSelectElement>("exam-list-program"),
+  examListDownload: byId<HTMLButtonElement>("exam-list-download"),
+  examListMessage: byId("exam-list-message"),
   adminSync: byId<HTMLButtonElement>("admin-sync"),
   adminSyncMessage: byId("admin-sync-message"),
   discoveryArea: byId<HTMLSelectElement>("discovery-area"),
@@ -99,6 +103,10 @@ elements.overviewRange.addEventListener("change", () => {
 
 elements.adminSync.addEventListener("click", () => {
   void runManualSync();
+});
+
+elements.examListDownload.addEventListener("click", () => {
+  void runExamListDownload();
 });
 
 elements.discoveryRun.addEventListener("click", () => {
@@ -585,6 +593,7 @@ function configureAdminTools(overview: DashboardOverview): void {
   const matoolAvailable = matool?.configured === true;
   adminAvailable = hasEmployeeAccess && matoolAvailable;
   elements.adminSync.disabled = !adminAvailable;
+  elements.examListDownload.disabled = !adminAvailable;
   elements.discoveryRun.disabled = !adminAvailable;
   elements.adminSync.textContent = hasEmployeeAccess
     ? adminAvailable
@@ -596,10 +605,16 @@ function configureAdminTools(overview: DashboardOverview): void {
       ? "Struktur erkennen"
       : "Strukturprüfung nicht verfügbar"
     : "Cloudflare-Access-Anmeldung erforderlich";
+  elements.examListDownload.textContent = hasEmployeeAccess
+    ? adminAvailable
+      ? "Prüfungslisten jetzt erstellen"
+      : "MATOOL-Verbindung nicht verfügbar"
+    : "Cloudflare-Access-Anmeldung erforderlich";
 
   if (!hasEmployeeAccess) {
     elements.adminSyncMessage.textContent = overview.access.notice;
     elements.discoveryMessage.textContent = overview.access.notice;
+    elements.examListMessage.textContent = overview.access.notice;
   } else if (matool?.state === "critical") {
     elements.adminSyncMessage.textContent =
       "MATOOL meldet aktuell einen Fehler; ein manueller Abruf kann trotzdem gestartet werden.";
@@ -613,6 +628,37 @@ function configureAdminTools(overview: DashboardOverview): void {
   elements.discoveryArea.disabled = !adminAvailable || overview.areas.length === 0;
   elements.discoveryRun.disabled =
     !adminAvailable || overview.areas.length === 0;
+}
+
+async function runExamListDownload(): Promise<void> {
+  if (!adminAvailable) {
+    return;
+  }
+  elements.examListDownload.disabled = true;
+  elements.examListDownload.setAttribute("aria-busy", "true");
+  elements.examListMessage.textContent =
+    "Der aktuelle Mitgliederbestand wird bei MATOOL geprüft und die Excel-Datei wird erstellt …";
+  try {
+    const download = await downloadExamLists(elements.examListProgram.value);
+    const url = URL.createObjectURL(download.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = download.filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    elements.examListMessage.textContent =
+      "Die Prüfungsliste wurde erstellt und heruntergeladen.";
+  } catch (error) {
+    elements.examListMessage.textContent = errorMessage(
+      error,
+      "Die Prüfungslisten konnten nicht erstellt werden."
+    );
+  } finally {
+    elements.examListDownload.removeAttribute("aria-busy");
+    elements.examListDownload.disabled = !adminAvailable;
+  }
 }
 
 async function runManualSync(): Promise<void> {

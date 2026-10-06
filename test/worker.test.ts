@@ -89,6 +89,19 @@ describe("Worker-Grenzen", () => {
     await expect(sync.json()).resolves.toMatchObject({
       error: { code: "access_denied" }
     });
+
+    const examLists = await dispatch(
+      new Request(`${origin}/api/admin/v1/exam-lists/download`, {
+        body: JSON.stringify({ program: "all" }),
+        headers: { "Content-Type": "application/json", Origin: origin },
+        method: "POST"
+      }),
+      publicEnv
+    );
+    expect(examLists.status).toBe(403);
+    await expect(examLists.json()).resolves.toMatchObject({
+      error: { code: "access_denied" }
+    });
   });
 
   it("schützt Webseite und Admin-API mit dem Dashboard-Passwort", async () => {

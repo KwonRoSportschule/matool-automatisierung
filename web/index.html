@@ -30,6 +30,7 @@
           <a href="#data-areas">Daten</a>
           <a href="#activity">Verlauf</a>
           <a href="#database">Datenbank</a>
+          <a href="#exam-lists">Prüfungslisten</a>
         </nav>
 
         <div class="topbar-actions">
@@ -326,6 +327,37 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <section class="panel section exam-list-panel" id="exam-lists" aria-labelledby="exam-lists-title">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Manuelle Excel-Ausgabe</div>
+            <h2 id="exam-lists-title">Prüfungslisten für Kinderprogramme</h2>
+            <p>
+              Prüft den aktuellen Mitgliederbestand nur lesend bei MATOOL und erstellt
+              neue, nicht vorausgefüllte Listen. Der stündliche Abruf wird dadurch nicht verändert.
+            </p>
+          </div>
+        </div>
+        <div class="exam-list-controls">
+          <label class="control-field" for="exam-list-program">Datei auswählen
+            <select id="exam-list-program">
+              <option value="all" selected>Alle drei Programme als ZIP</option>
+              <option value="panda-kids">Panda-Kids</option>
+              <option value="tiger-kids">Tiger-Kids</option>
+              <option value="warrior-tigers">Warrior-Tigers</option>
+            </select>
+          </label>
+          <button class="button button-primary" id="exam-list-download" type="button" disabled>
+            Prüfungslisten jetzt erstellen
+          </button>
+        </div>
+        <p class="result-message" id="exam-list-message" aria-live="polite"></p>
+        <p class="exam-list-note">
+          Fehlende Check-ins werden erst berechnet, wenn die vollständige Check-in-Historie
+          und die Anforderungen pro Graduierung verbindlich hinterlegt sind.
+        </p>
       </section>
 
       <details class="panel admin-panel" id="admin-tools">

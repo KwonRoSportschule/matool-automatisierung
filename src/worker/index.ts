@@ -1,4 +1,5 @@
 import { AppError } from "../core/app-error";
+import { createExamListDownload } from "../exam-lists/service";
 import {
   apiErrorResponse,
   hardenAssetResponse,
@@ -225,6 +226,14 @@ async function handleApiRequest(
       schemaVersion: 1,
       ...(await issueCsrfToken(identity, env))
     });
+  }
+
+  if (url.pathname === "/api/admin/v1/exam-lists/download") {
+    if (request.method !== "POST") {
+      methodNotAllowed(["POST"]);
+    }
+    await requireValidCsrfRequest(request, identity, env);
+    return createExamListDownload(request, env);
   }
 
   if (url.pathname === "/api/admin/v1/matool/interessenten/sync") {
