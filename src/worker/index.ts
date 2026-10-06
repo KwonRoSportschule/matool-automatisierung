@@ -1,4 +1,5 @@
 import { AppError } from "../core/app-error";
+import { createExamListDownload } from "../exam-lists/service";
 import {
   apiErrorResponse,
   hardenAssetResponse,
@@ -11,7 +12,6 @@ import {
   dashboardLoginErrorResponse,
   requireAccessIdentity
 } from "./access";
-import { handleCheckinApiRequest } from "./checkin-api";
 import { issueCsrfToken, requireValidCsrfRequest } from "./csrf";
 import { requireDashboardPublicId } from "./dashboard-privacy";
 import {
@@ -21,15 +21,11 @@ import {
   parseDashboardRecordQuery
 } from "./dashboard-query";
 import {
-  dashboardPrivacyNotice,
   getDashboardOverview,
   getDashboardRecord,
-  isDashboardPlaintext,
   listDashboardActivities,
   listDashboardRecords
 } from "./dashboard-repository";
-import { latestManualSyncJob } from "./direct-sync-store";
-import { requestManualSync } from "./direct-sync-workflow";
 import type { Env } from "./env";
 import {
   getInteressentenSyncPublicStatus,
@@ -45,11 +41,9 @@ import {
   collectMatoolSnapshots,
   handleScheduledInvocation
 } from "./schedule";
-import { getSyncProgress } from "./sync-progress";
 import { handleZapierApiRequest } from "./zapier-api";
 
 export { InteressentenSyncWorkflow } from "./interessenten-sync-workflow";
-export { DirectSyncWorkflow } from "./direct-sync-workflow";
 
 const worker = {
   async fetch(
@@ -86,13 +80,6 @@ const worker = {
       // policy below.
       if (url.pathname.startsWith("/api/zapier/v1/")) {
         return await handleZapierApiRequest(request, url, env);
-      }
-
-      // Die Klassenauswertung (Check-in-/Telemetrieseite) liest die
-      // Beitragsuebersicht mit ihrem eigenen Bearer-Token; die Mitarbeiter-
-      // Anmeldung des Dashboards gilt dort nicht.
-      if (url.pathname.startsWith("/api/checkin/v1/")) {
-        return await handleCheckinApiRequest(request, url, env);
       }
 
       const identity = await requireAccessIdentity(request, env, "employee");
@@ -241,6 +228,14 @@ async function handleApiRequest(
     });
   }
 
+  if (url.pathname === "/api/admin/v1/exam-lists/download") {
+    if (request.method !== "POST") {
+      methodNotAllowed(["POST"]);
+    }
+    await requireValidCsrfRequest(request, identity, env);
+    return createExamListDownload(request, env);
+  }
+
   if (url.pathname === "/api/admin/v1/matool/interessenten/sync") {
     if (request.method === "GET") {
       return jsonResponse({
@@ -382,18 +377,6 @@ async function handleApiRequest(
   }
 
   if (url.pathname === "/api/admin/v1/matool/sync") {
-    // Stand fuer Fortschrittskarte und Knopf: laufender Abruf (Stundenlauf
-    // oder manuell) und der letzte manuelle Auftrag.
-    if (request.method === "GET") {
-      const [manual, progress] = await Promise.all([
-        latestManualSyncJob(env.DB),
-        getSyncProgress(env.DB)
-      ]);
-      return jsonResponse({ schemaVersion: 1, manual, progress });
-    }
-    if (request.method !== "POST") {
-      methodNotAllowed(["GET", "POST"]);
-    }
     await requireValidCsrfRequest(request, identity, env);
 
     if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
@@ -409,16 +392,6 @@ async function handleApiRequest(
         "matool_runs_not_confirmed",
         409,
         "Read-only-Echtdatenläufe sind noch nicht freigegeben."
-      );
-    }
-
-    // Als Workflow: antwortet sofort, wartet auf einen laufenden Abruf und
-    // laeuft unabhaengig vom Browser.
-    if (env.DIRECT_SYNC_WORKFLOW) {
-      const { job } = await requestManualSync(env);
-      return jsonResponse(
-        { schemaVersion: 1, manual: job, progress: await getSyncProgress(env.DB) },
-        { status: 202 }
       );
     }
 

@@ -5,8 +5,7 @@ import type {
   DashboardRecordsResponse,
   DiscoveryResponse,
   PrivacySummary,
-  SyncResponse,
-  SyncStatusResponse
+  SyncResponse
 } from "./types";
 
 export class ApiError extends Error {
@@ -101,21 +100,9 @@ export function getRecordDetail(
   );
 }
 
-/** Laufender Abruf und letzter manueller Auftrag. */
-export function getSyncStatus(signal?: AbortSignal): Promise<SyncStatusResponse> {
-  return requestJson<SyncStatusResponse>(
-    "/api/admin/v1/matool/sync",
-    signal ? { signal } : undefined
-  );
-}
-
-/**
- * Startet den manuellen Abruf. Der Hub antwortet sofort mit dem Auftrag
- * (Workflow); eine aeltere Fassung antwortet erst mit dem fertigen Ergebnis.
- */
-export async function runMatoolSync(): Promise<SyncResponse | SyncStatusResponse> {
+export async function runMatoolSync(): Promise<SyncResponse> {
   const csrf = await requestJson<{ token: string }>("/api/admin/v1/csrf");
-  return requestJson<SyncResponse | SyncStatusResponse>("/api/admin/v1/matool/sync", {
+  return requestJson<SyncResponse>("/api/admin/v1/matool/sync", {
     body: "{}",
     headers: {
       "Content-Type": "application/json",
@@ -135,6 +122,47 @@ export async function runDiscovery(area: string): Promise<DiscoveryResponse> {
     },
     method: "POST"
   });
+}
+
+export async function downloadExamLists(program: string): Promise<{
+  blob: Blob;
+  filename: string;
+}> {
+  const csrf = await requestJson<{ token: string }>("/api/admin/v1/csrf");
+  const response = await fetch("/api/admin/v1/exam-lists/download", {
+    body: JSON.stringify({ program }),
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/zip, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrf.token
+    },
+    method: "POST"
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let payload: unknown = null;
+    try {
+      payload = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      throw new ApiError(
+        `Der Hub antwortet momentan nicht korrekt (${response.status}).`,
+        response.status
+      );
+    }
+    const error = readError(payload);
+    throw new ApiError(
+      error.message ?? `Die Prüfungslisten konnten nicht erstellt werden (${response.status}).`,
+      response.status,
+      error.code
+    );
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/u.exec(disposition);
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? "Kinder_Pruefungslisten.zip"
+  };
 }
 
 export function isAbortError(error: unknown): boolean {

@@ -1,7 +1,7 @@
-import { errorLabel } from "./error-labels";
 import { ActivityView } from "./activity";
 import { buildInfoText } from "./build-info";
 import {
+  downloadExamLists,
   getOverview,
   isAbortError,
   runDiscovery,
@@ -29,7 +29,6 @@ import {
   stateLabel
 } from "./format";
 import { RecordDetailDialog } from "./record-detail";
-import { isManualSyncOpen, SyncProgressPoller } from "./sync-progress";
 import type {
   AreaSummary,
   ConnectionSummary,
@@ -37,9 +36,6 @@ import type {
   DashboardState,
   DiscoveryResponse,
   FunctionSummary,
-  ManualSyncJob,
-  SyncResponse,
-  SyncStatusResponse,
   WarningSummary
 } from "./types";
 
@@ -48,8 +44,6 @@ const elements = {
   buildInfo: byId("build-info"),
   refresh: byId<HTMLButtonElement>("refresh"),
   privacyShort: byId("privacy-short"),
-  databasePrivacyChip: byId("database-privacy-chip"),
-  databasePrivacyText: byId("database-privacy-text"),
   privacyNotice: byId("privacy-notice"),
   overallPanel: byId("overall-panel"),
   overallSymbol: byId("overall-symbol"),
@@ -80,6 +74,9 @@ const elements = {
   scheduleAreas: byId("schedule-areas"),
   functionCount: byId("function-count"),
   functionsList: byId("functions-list"),
+  examListProgram: byId<HTMLSelectElement>("exam-list-program"),
+  examListDownload: byId<HTMLButtonElement>("exam-list-download"),
+  examListMessage: byId("exam-list-message"),
   adminSync: byId<HTMLButtonElement>("admin-sync"),
   adminSyncMessage: byId("admin-sync-message"),
   discoveryArea: byId<HTMLSelectElement>("discovery-area"),
@@ -108,17 +105,15 @@ elements.adminSync.addEventListener("click", () => {
   void runManualSync();
 });
 
+elements.examListDownload.addEventListener("click", () => {
+  void runExamListDownload();
+});
+
 elements.discoveryRun.addEventListener("click", () => {
   void runStructureDiscovery();
 });
 
-const syncPoller = new SyncProgressPoller(
-  (status) => renderManualSyncStatus(status),
-  () => void refreshAll()
-);
-
 void refreshAll();
-syncPoller.now();
 
 async function refreshAll(): Promise<void> {
   setRefreshBusy(true);
@@ -175,13 +170,6 @@ function renderOverview(overview: DashboardOverview): void {
     ? "Serverseitig maskiert"
     : "Klartext · Testphase";
   elements.privacyNotice.textContent = overview.privacy.notice;
-  // Hinweis an der Datenbankansicht passend zum tatsaechlichen Modus.
-  elements.databasePrivacyChip.textContent = overview.privacy.masked
-    ? "● Personenwerte geschützt"
-    : "● Klartext hinter Passwortschutz";
-  elements.databasePrivacyText.textContent = overview.privacy.masked
-    ? "Alle Ergebnisse werden serverseitig gesucht, sortiert und maskiert."
-    : "Alle Ergebnisse werden serverseitig gesucht und sortiert. Kontonummern zeigen nur die letzten vier Stellen.";
 
   renderOverall(overview);
   renderWarnings(overview.warnings);
@@ -275,13 +263,7 @@ function warningCard(warning: WarningSummary): HTMLElement {
     copy.append(recurrence);
   }
 
-  if (warning.lastSuccessAt) {
-    const stand = document.createElement("p");
-    stand.textContent = `Letzter erfolgreicher Abruf: ${formatDateTime(warning.lastSuccessAt)}.`;
-    copy.append(stand);
-  }
-
-  const details = [warning.action, errorLabel(warning.technicalCode)]
+  const details = [warning.action, warning.technicalCode]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
   if (details) {
@@ -365,7 +347,7 @@ function connectionCard(connection: ConnectionSummary): HTMLElement {
   }
   if (connection.lastError) {
     notes.push(
-      `Letzter Fehler: ${errorLabel(connection.lastError.code) || "ohne technischen Code"} · ${formatDateTime(connection.lastError.at)}`
+      `Letzter Fehler: ${connection.lastError.code ?? "ohne technischen Code"} · ${formatDateTime(connection.lastError.at)}`
     );
   }
   if (connection.activeSubscriptions !== undefined) {
@@ -497,7 +479,7 @@ function areaCard(area: AreaSummary): HTMLElement {
   header.append(title, createStatusBadge(area.state, stateLabel(area.state)));
   const list = document.createElement("dl");
   appendDefinition(list, "Gespeichert", formatNumber(area.storedCount));
-  appendDefinition(list, "Im letzten Abruf", formatNumber(area.currentCount));
+  appendDefinition(list, "Aktuell", formatNumber(area.currentCount));
   appendDefinition(list, "Neu", formatNumber(area.newCount));
   appendDefinition(list, "Geändert", formatNumber(area.changedCount));
   appendDefinition(list, "Letzte Änderung", formatDateTime(area.lastChangedAt));
@@ -610,8 +592,8 @@ function configureAdminTools(overview: DashboardOverview): void {
   const hasEmployeeAccess = overview.access.canManage;
   const matoolAvailable = matool?.configured === true;
   adminAvailable = hasEmployeeAccess && matoolAvailable;
-  elements.adminSync.disabled =
-    !adminAvailable || isManualSyncOpen(syncPoller.last?.manual ?? null);
+  elements.adminSync.disabled = !adminAvailable;
+  elements.examListDownload.disabled = !adminAvailable;
   elements.discoveryRun.disabled = !adminAvailable;
   elements.adminSync.textContent = hasEmployeeAccess
     ? adminAvailable
@@ -623,10 +605,16 @@ function configureAdminTools(overview: DashboardOverview): void {
       ? "Struktur erkennen"
       : "Strukturprüfung nicht verfügbar"
     : "Cloudflare-Access-Anmeldung erforderlich";
+  elements.examListDownload.textContent = hasEmployeeAccess
+    ? adminAvailable
+      ? "Prüfungslisten jetzt erstellen"
+      : "MATOOL-Verbindung nicht verfügbar"
+    : "Cloudflare-Access-Anmeldung erforderlich";
 
   if (!hasEmployeeAccess) {
     elements.adminSyncMessage.textContent = overview.access.notice;
     elements.discoveryMessage.textContent = overview.access.notice;
+    elements.examListMessage.textContent = overview.access.notice;
   } else if (matool?.state === "critical") {
     elements.adminSyncMessage.textContent =
       "MATOOL meldet aktuell einen Fehler; ein manueller Abruf kann trotzdem gestartet werden.";
@@ -642,22 +630,47 @@ function configureAdminTools(overview: DashboardOverview): void {
     !adminAvailable || overview.areas.length === 0;
 }
 
+async function runExamListDownload(): Promise<void> {
+  if (!adminAvailable) {
+    return;
+  }
+  elements.examListDownload.disabled = true;
+  elements.examListDownload.setAttribute("aria-busy", "true");
+  elements.examListMessage.textContent =
+    "Der aktuelle Mitgliederbestand wird bei MATOOL geprüft und die Excel-Datei wird erstellt …";
+  try {
+    const download = await downloadExamLists(elements.examListProgram.value);
+    const url = URL.createObjectURL(download.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = download.filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    elements.examListMessage.textContent =
+      "Die Prüfungsliste wurde erstellt und heruntergeladen.";
+  } catch (error) {
+    elements.examListMessage.textContent = errorMessage(
+      error,
+      "Die Prüfungslisten konnten nicht erstellt werden."
+    );
+  } finally {
+    elements.examListDownload.removeAttribute("aria-busy");
+    elements.examListDownload.disabled = !adminAvailable;
+  }
+}
+
 async function runManualSync(): Promise<void> {
   if (!adminAvailable) {
     return;
   }
   elements.adminSync.disabled = true;
   elements.adminSync.setAttribute("aria-busy", "true");
-  elements.adminSyncMessage.textContent = "Manueller Abruf wird angefordert …";
+  elements.adminSyncMessage.textContent =
+    "Alle freigegebenen MATOOL-Bereiche werden gelesen und in D1 gespeichert …";
   try {
-    const answer = await runMatoolSync();
-    if (!("sync" in answer)) {
-      // Workflow: Der Hub hat den Auftrag angenommen; Stand und Ergebnis
-      // liefert die Fortschrittsabfrage.
-      syncPoller.accept(answer);
-      return;
-    }
-    const response: SyncResponse = answer;
+    const response = await runMatoolSync();
     const failed = response.sync.areas
       .filter((area) => area.status === "failed")
       .map((area) => areaLabel(area.area));
@@ -675,41 +688,8 @@ async function runManualSync(): Promise<void> {
     );
   } finally {
     elements.adminSync.removeAttribute("aria-busy");
-    elements.adminSync.disabled =
-      !adminAvailable || isManualSyncOpen(syncPoller.last?.manual ?? null);
+    elements.adminSync.disabled = !adminAvailable;
   }
-}
-
-const MANUAL_STATUS_TEXT: Readonly<Record<ManualSyncJob["status"], string>> = {
-  requested: "Angefordert – der Abruf startet gleich.",
-  waiting: "Wartet auf das Ende des laufenden Stundenlaufs, startet dann automatisch.",
-  running: "Läuft – unabhängig vom Browser; die Seite darf geschlossen werden.",
-  succeeded: "Erfolgreich abgeschlossen",
-  partial_failed: "Teilweise fehlgeschlagen",
-  failed: "Fehlgeschlagen"
-};
-
-/** Knopf und Meldung zum manuellen Abruf aus dem abgefragten Stand. */
-function renderManualSyncStatus(status: SyncStatusResponse): void {
-  const manual = status.manual;
-  const offen = isManualSyncOpen(manual);
-  elements.adminSync.disabled = !adminAvailable || offen;
-  if (!manual) {
-    return;
-  }
-  if (offen) {
-    elements.adminSyncMessage.textContent = MANUAL_STATUS_TEXT[manual.status];
-    return;
-  }
-  const wann = manual.finishedAt ? ` (${formatDateTime(manual.finishedAt)})` : "";
-  const failed = manual.failedAreas.map((area) => areaLabel(area));
-  elements.adminSyncMessage.textContent =
-    `Letzter manueller Abruf: ${MANUAL_STATUS_TEXT[manual.status]}${wann}` +
-    (manual.errorCode
-      ? ` · ${errorLabel(manual.errorCode)}`
-      : ` · ${formatNumber(manual.storedTotal)} Datensätze gespeichert · ` +
-        `${formatNumber(manual.succeeded)} Bereiche erfolgreich` +
-        (failed.length > 0 ? ` · Fehlgeschlagen: ${failed.join(", ")}` : ""));
 }
 
 async function runStructureDiscovery(): Promise<void> {
@@ -903,8 +883,7 @@ function appendAreaCountCell(
   const total = document.createElement("strong");
   total.textContent = formatNumber(stored);
   const currentValue = document.createElement("small");
-  // Rotierende Bereiche lesen je Lauf nur ein Paket; "aktuell" war missverstaendlich.
-  currentValue.textContent = `${formatNumber(current)} im letzten Abruf gelesen`;
+  currentValue.textContent = `${formatNumber(current)} aktuell`;
   currentValue.style.display = "block";
   cell.append(total, currentValue);
   row.append(cell);
