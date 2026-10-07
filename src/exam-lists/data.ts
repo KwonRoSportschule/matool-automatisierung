@@ -1,4 +1,5 @@
 import { AppError } from "../core/app-error";
+import { DEFAULT_SCHULEN } from "../core/beitraege";
 import type { MatoolSafeAreaRecord } from "../matool/client";
 import type { Env } from "../worker/env";
 import { storedPayloadCipher } from "../worker/payload-encryption";
@@ -107,7 +108,7 @@ export async function loadExamListDataset(
         location,
         // There is no approved per-program/per-rank threshold in the Hub.
         missingCheckins: remainingCheckins,
-        nextExam: nextExam(latest?.graduation)
+        nextExam: nextExam(program, latest?.graduation)
       });
     }
   }
@@ -278,20 +279,46 @@ function memberLocation(detail: Record<string, unknown>): ExamLocation | null {
     ...collectText(detail.klassenliste),
     ...collectText(detail.spartenliste)
   ];
-  const matches = EXAM_LOCATIONS.filter((location) => {
+  const namedMatches = EXAM_LOCATIONS.filter((location) => {
     const key = normalize(location);
     return values.some((value) => normalize(value).includes(key));
   });
+  const codedMatches = Object.entries(DEFAULT_SCHULEN)
+    .filter(([code]) => values.some((value) => normalize(value) === normalize(code)))
+    .map(([, location]) => location)
+    .filter((location): location is ExamLocation =>
+      (EXAM_LOCATIONS as readonly string[]).includes(location)
+    );
+  const matches = [...new Set([...namedMatches, ...codedMatches])];
   return matches.length === 1 ? matches[0] ?? null : null;
 }
 
 function matchesProgram(value: string, program: ExamProgram): boolean {
-  return normalize(value).includes(PROGRAM_KEYS[program]);
+  const normalized = normalize(value);
+  if (normalized.includes(PROGRAM_KEYS[program])) return true;
+  const aliases: Record<ExamProgram, string> = {
+    "panda-kids": "pk",
+    "tiger-kids": "tk",
+    "warrior-tigers": "wt"
+  };
+  return normalized.startsWith(aliases[program]);
 }
 
-function nextExam(graduation: string | undefined): string {
+function nextExam(program: ExamProgram, graduation: string | undefined): string {
   if (!graduation) {
     return "Nächste Prüfung noch zu klären";
+  }
+  if (program === "panda-kids") {
+    return nextColourExam(graduation, [
+      "PK Weißgurt", "PK Gelbgurt", "PK Orangegurt", "PK Grüngurt",
+      "PK Blaugurt", "PK Rotgurt", "PK Violettgurt", "PK Schwarzgurt"
+    ]);
+  }
+  if (program === "tiger-kids") {
+    return nextColourExam(graduation, [
+      "TK Weißgurt", "TK Weiß-Gelbgurt", "TK Gelbgurt", "TK Gelb-Orangegurt",
+      "TK Orangegurt", "TK Orange-Grüngurt", "TK Grüngurt"
+    ]);
   }
   const match = /(?:^|\D)(\d{1,2})\.?\s*kup(?:\D|$)/iu.exec(graduation);
   if (!match?.[1]) {
@@ -301,6 +328,14 @@ function nextExam(graduation: string | undefined): string {
   return current > 1
     ? `Prüfung zum ${current - 1}. Kup`
     : "Nächste Prüfung nach 1. Kup noch zu klären";
+}
+
+function nextColourExam(graduation: string, sequence: readonly string[]): string {
+  const index = sequence.findIndex((entry) => normalize(entry) === normalize(graduation));
+  if (index < 0) return "Nächste Prüfung noch zu klären";
+  return index < sequence.length - 1
+    ? `Prüfung zum ${sequence[index + 1]}`
+    : "Nächste Prüfung nach letzter Graduierung noch zu klären";
 }
 
 function collectText(value: unknown, depth = 0): string[] {

@@ -94,8 +94,8 @@ describe("Prüfungslisten", () => {
     const env = environment([
       snapshot("schueler", "710001", { name: "Member", vorname: "Synthetic" }),
       snapshot("schueler_details", "710001", {
-        klassenliste: JSON.stringify([{ name: "Rosenheim Kinder" }]),
-        spartenliste: JSON.stringify([{ name: "Warrior-Tigers" }])
+        schule: "273",
+        spartenliste: JSON.stringify([{ name: "WT 10. Kup" }])
       }),
       snapshot("graduierungen", "g_710001_1", {
         graduierung: "WT 10 Kup",
