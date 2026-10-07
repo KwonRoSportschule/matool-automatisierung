@@ -2,6 +2,7 @@ import { errorLabel } from "./error-labels";
 import { ActivityView } from "./activity";
 import { buildInfoText } from "./build-info";
 import {
+  downloadExamLists,
   getOverview,
   isAbortError,
   runDiscovery,
@@ -80,6 +81,9 @@ const elements = {
   scheduleAreas: byId("schedule-areas"),
   functionCount: byId("function-count"),
   functionsList: byId("functions-list"),
+  examListProgram: byId<HTMLSelectElement>("exam-list-program"),
+  examListDownload: byId<HTMLButtonElement>("exam-list-download"),
+  examListMessage: byId("exam-list-message"),
   adminSync: byId<HTMLButtonElement>("admin-sync"),
   adminSyncMessage: byId("admin-sync-message"),
   discoveryArea: byId<HTMLSelectElement>("discovery-area"),
@@ -106,6 +110,10 @@ elements.overviewRange.addEventListener("change", () => {
 
 elements.adminSync.addEventListener("click", () => {
   void runManualSync();
+});
+
+elements.examListDownload.addEventListener("click", () => {
+  void runExamListDownload();
 });
 
 elements.discoveryRun.addEventListener("click", () => {
@@ -612,6 +620,7 @@ function configureAdminTools(overview: DashboardOverview): void {
   adminAvailable = hasEmployeeAccess && matoolAvailable;
   elements.adminSync.disabled =
     !adminAvailable || isManualSyncOpen(syncPoller.last?.manual ?? null);
+  elements.examListDownload.disabled = !adminAvailable;
   elements.discoveryRun.disabled = !adminAvailable;
   elements.adminSync.textContent = hasEmployeeAccess
     ? adminAvailable
@@ -640,6 +649,28 @@ function configureAdminTools(overview: DashboardOverview): void {
   elements.discoveryArea.disabled = !adminAvailable || overview.areas.length === 0;
   elements.discoveryRun.disabled =
     !adminAvailable || overview.areas.length === 0;
+}
+
+async function runExamListDownload(): Promise<void> {
+  if (!adminAvailable) return;
+  elements.examListDownload.disabled = true;
+  elements.examListMessage.textContent = "Die Prüfungsliste wird erstellt …";
+  try {
+    const download = await downloadExamLists(elements.examListProgram.value);
+    const url = URL.createObjectURL(download.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = download.filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    elements.examListMessage.textContent = "Die Prüfungsliste wurde erstellt und heruntergeladen.";
+  } catch (error) {
+    elements.examListMessage.textContent = errorMessage(error, "Die Prüfungslisten konnten nicht erstellt werden.");
+  } finally {
+    elements.examListDownload.disabled = !adminAvailable;
+  }
 }
 
 async function runManualSync(): Promise<void> {

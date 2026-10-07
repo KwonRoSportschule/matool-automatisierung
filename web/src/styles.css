@@ -355,6 +355,8 @@ tbody tr:hover { background: #fafcf9; }
 .database-card dd { overflow: hidden; margin: 0; font-size: .78rem; overflow-wrap: anywhere; white-space: pre-line; }
 
 .admin-panel { margin-top: .35rem; color: white; background: linear-gradient(125deg, #20342a, #2e483b); }
+.exam-list-panel { border-left: 4px solid var(--brand); }
+.exam-list-controls { display: grid; max-width: 760px; grid-template-columns: minmax(260px, 1fr) auto; align-items: end; gap: .8rem; }
 .admin-panel > summary { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 1rem; list-style: none; }
 .admin-panel > summary::-webkit-details-marker { display: none; }
 .admin-panel summary strong, .admin-panel summary .eyebrow { display: block; }

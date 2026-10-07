@@ -46,6 +46,7 @@ describe("Cloudflare-Access-Konfiguration", () => {
   it.each([
     ["GET", "/"],
     ["GET", "/api/admin/v1/csrf"],
+    ["POST", "/api/admin/v1/exam-lists/download"],
     ["POST", "/api/admin/v1/matool/sync"]
   ])("ignoriert den entfernten Vollzugriffsschalter fuer %s %s", async (method, path) => {
     // Eine im Cloudflare-Dashboard verbliebene Variable (deploy:staging
@@ -100,6 +101,7 @@ describe("Cloudflare-Access-Konfiguration", () => {
 
   it.each([
     "/api/admin/v1/csrf",
+    "/api/admin/v1/exam-lists/download",
     "/api/admin/v1/matool/sync",
     "/api/admin/v1/dashboard/records/not-a-public-id?area=klassen",
     "/api/zapier/v1/account"
