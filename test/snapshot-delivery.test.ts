@@ -489,9 +489,11 @@ describe("Zapier-Snapshot-Hook-Zustellung", () => {
 
     const account = await dispatch(serviceRequest("/api/zapier/v1/account"));
     await expect(account.json()).resolves.toMatchObject({
-      // Stilllegungen dienen nur der Beitragsrechnung und fehlen bewusst.
+      // Stilllegungen (Beitragsrechnung) und Check-in-Verlauf
+      // (Pruefungslisten) fehlen bewusst.
       snapshot_areas: MATOOL_SNAPSHOT_AREAS.filter(
-        (area) => area !== "schueler_stilllegungen"
+        (area) =>
+          area !== "schueler_stilllegungen" && area !== "checkin_historie"
       )
     });
   });

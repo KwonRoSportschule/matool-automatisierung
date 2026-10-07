@@ -7,6 +7,7 @@ import {
   type MatoolSafeAreaRecord,
   type MatoolStopSignal
 } from "../matool/client";
+import { MATOOL_CHECKIN_HISTORIE_PAYLOAD_FIELDS } from "../matool/checkin-historie";
 import { MATOOL_GRADUIERUNG_PAYLOAD_FIELDS } from "../matool/graduierung";
 import { sichereBeitragsStichtagSafely } from "./beitrags-archiv";
 import { runDataProtectionMaintenanceSafely } from "./data-protection";
@@ -51,7 +52,8 @@ import { processSnapshotZapierDeliveries } from "./snapshot-delivery";
 // Erst alle Listen (sie muessen vollstaendig sein), danach die Abrufe je
 // Mitglied. Diese rotieren und duerfen deshalb an einem Zeitbudget enden:
 // zuerst Stilllegungen und Stammdaten (beide fuer die Beitragsuebersicht),
-// zuletzt die Graduierungen. Die Stilllegungen stehen vor den Stammdaten:
+// danach die Graduierungen, zuletzt der Check-in-Verlauf (beide fuer die
+// Pruefungslisten). Die Stilllegungen stehen vor den Stammdaten:
 // Die Stammdaten sind laengst vollstaendig und werden nur aufgefrischt
 // (neue Mitglieder kommen dort ohnehin zuerst dran).
 export const MATOOL_SNAPSHOT_AREAS = [
@@ -62,7 +64,8 @@ export const MATOOL_SNAPSHOT_AREAS = [
   "checkin",
   "schueler_stilllegungen",
   "schueler_details",
-  "graduierungen"
+  "graduierungen",
+  "checkin_historie"
 ] as const;
 
 export const MATOOL_DIRECT_SNAPSHOT_AREAS = MATOOL_SNAPSHOT_AREAS.filter(
@@ -153,6 +156,15 @@ export const MATOOL_GRADUIERUNGEN_PER_RUN = 150;
 export const MATOOL_GRADUIERUNGEN_PER_MANUAL_RUN = 25;
 
 /**
+ * Check-in-Verlauf je Lauf: ein Abruf je Mitglied, ein Datensatz je
+ * Mitglied (auch ohne Check-in). Rotiert wie die Stammdaten ueber
+ * last_seen_at; bei rund 560 Mitgliedern ist jedes etwa alle vier
+ * Stundenlaeufe frisch.
+ */
+export const MATOOL_CHECKIN_HISTORIE_PER_RUN = 150;
+export const MATOOL_CHECKIN_HISTORIE_PER_MANUAL_RUN = 25;
+
+/**
  * Zeitbudget des Stundenlaufs. Cloudflare beendet einen Cron-Aufruf nach
  * 15 Minuten Wandzeit ohne Vorwarnung -- mitten in einem Bereich, ohne
  * Abschluss des Laufs und ohne die Bereiche danach. Die Abrufe zu MATOOL
@@ -168,7 +180,8 @@ export const MATOOL_SCHEDULED_RUN_BUDGET_MS = 12 * 60_000;
 export const MATOOL_DETAIL_AREA_BUDGET_MS: Readonly<Record<string, number>> = {
   schueler_stilllegungen: 4 * 60_000,
   schueler_details: 3 * 60_000,
-  graduierungen: 3 * 60_000
+  graduierungen: 3 * 60_000,
+  checkin_historie: 3 * 60_000
 };
 
 /** Mindestzeit, die jedem spaeteren Bereich je Mitglied bleibt. */
@@ -305,7 +318,10 @@ export async function selectInteressentenDetailSourceIds(
 export async function selectSchuelerDetailSourceIds(
   db: D1Database,
   limit: number = MATOOL_SCHUELER_DETAILS_PER_RUN,
-  detailArea: "schueler_details" | "schueler_stilllegungen" = "schueler_details"
+  detailArea:
+    | "checkin_historie"
+    | "schueler_details"
+    | "schueler_stilllegungen" = "schueler_details"
 ): Promise<string[]> {
   const candidates = await db
     .prepare(
@@ -342,6 +358,11 @@ function detailLimitFor(area: string, trigger: MatoolSyncTrigger): number {
     return trigger === "scheduled"
       ? MATOOL_GRADUIERUNGEN_PER_RUN
       : MATOOL_GRADUIERUNGEN_PER_MANUAL_RUN;
+  }
+  if (area === "checkin_historie") {
+    return trigger === "scheduled"
+      ? MATOOL_CHECKIN_HISTORIE_PER_RUN
+      : MATOOL_CHECKIN_HISTORIE_PER_MANUAL_RUN;
   }
   return trigger === "scheduled"
     ? MATOOL_SCHUELER_DETAILS_PER_RUN
@@ -1065,7 +1086,9 @@ export async function syncDirectArea(
               ? MATOOL_CHECKIN_PAYLOAD_FIELDS
               : area === "graduierungen"
                 ? MATOOL_GRADUIERUNG_PAYLOAD_FIELDS
-                : snapshotPayloadFields(records),
+                : area === "checkin_historie"
+                  ? MATOOL_CHECKIN_HISTORIE_PAYLOAD_FIELDS
+                  : snapshotPayloadFields(records),
         area,
         finishedAt,
         observedAt: finishedAt,
@@ -1226,6 +1249,18 @@ async function readDirectArea(
     );
     onProcessed?.(result.processedSourceIds ?? []);
     return result.records;
+  }
+  // Je Mitglied ein Datensatz mit allen Check-in-Daten; rotiert wie die
+  // Stammdaten ueber den eigenen Bestand.
+  if (area === "checkin_historie") {
+    return (
+      await client.extractCheckinHistorie(
+        credentials,
+        await selectSchuelerDetailSourceIds(db, detailLimit, "checkin_historie"),
+        onProgress,
+        shouldStop
+      )
+    ).records;
   }
   // Je Mitglied ein Datensatz mit allen Stilllegungszeitraeumen; rotiert
   // ueber den eigenen Bestand, damit jedes Mitglied regelmaessig frisch ist.

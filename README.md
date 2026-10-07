@@ -21,7 +21,7 @@ Cron (werktags stündlich)
        2. übernimmt die Abrufsperre für den ganzen Lauf
        3. je fälligem Bereich ein eigener Schritt:
           Mitglieder · Ex-Mitglieder (1× täglich) · Check-ins ·
-          Stilllegungen · Stammdaten · Graduierungen
+          Stilllegungen · Stammdaten · Graduierungen · Check-in-Verlauf
           → vorübergehender Fehler: nur dieser Bereich, Pause 30 s / 2 min
        4. Abschluss, Zapier-Zustellung, Beitragsstichtag (1./15.)
        5. danach Interessenten-Workflow (nie parallel zum Mitgliederabruf):
@@ -29,6 +29,9 @@ Cron (werktags stündlich)
           je Stunde ein Elftel des Bestands (jeder Interessent 1× täglich)
 ```
 
+- Prüfungslisten (Dashboard ganz unten) entstehen nur aus diesen gespeicherten
+  Daten: Sparte per MATOOL-ID, höchste Graduierung je Sparte, vollständiger
+  Check-in-Verlauf (je Mitglied etwa alle vier Stundenläufe aufgefrischt).
 - Der Knopf „Manuellen Abruf starten“ nutzt denselben Workflow (liest alle
   Bereiche und holt fehlende Stilllegungen nach).
 - Ein Deploy oder Neustart mitten im Lauf setzt beim nächsten Bereich fort.

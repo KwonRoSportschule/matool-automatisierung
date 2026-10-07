@@ -73,14 +73,16 @@ const AREA_RETRY_PAUSES = ["30 seconds", "2 minutes"] as const;
 export const WORKFLOW_DETAIL_AREA_BUDGET_MS: Readonly<Record<string, number>> = {
   schueler_stilllegungen: 6 * 60_000,
   schueler_details: 6 * 60_000,
-  graduierungen: 5 * 60_000
+  graduierungen: 5 * 60_000,
+  checkin_historie: 4 * 60_000
 };
 
 /** Paketgroessen im Workflow; das Zeitbudget kann frueher enden. */
 const WORKFLOW_DETAIL_LIMITS: Readonly<Record<string, number>> = {
   schueler_stilllegungen: 120,
   schueler_details: 150,
-  graduierungen: 200
+  graduierungen: 200,
+  checkin_historie: 150
 };
 
 /**

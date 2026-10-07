@@ -17,6 +17,7 @@ const AREA_LABELS: Readonly<Record<string, string>> = {
   artikel: "Artikel",
   berichte: "Berichte",
   checkin: "Check-ins",
+  checkin_historie: "Check-in-Verlauf",
   graduierungen: "Prüfungen / Graduierungen",
   interessenten: "Interessenten",
   interessenten_details: "Interessenten-Details",

@@ -191,7 +191,8 @@ describe("Fortschritt des laufenden Abrufs", () => {
         "checkin",
         "schueler_stilllegungen",
         "schueler_details",
-        "graduierungen"
+        "graduierungen",
+        "checkin_historie"
       ]);
     } finally {
       await releaseExactSyncLease(env.DB, lease);
