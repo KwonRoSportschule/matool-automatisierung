@@ -6,7 +6,6 @@ import {
   buildExamWorkbook,
   type ExamListRow
 } from "../src/exam-lists/xlsx";
-import type { MatoolSafeAreaRecord } from "../src/matool/client";
 import type { Env } from "../src/worker/env";
 
 describe("Prüfungslisten", () => {
@@ -14,6 +13,7 @@ describe("Prüfungslisten", () => {
     const row: ExamListRow = {
       checkinsSinceLastExam: 4,
       currentGraduation: "WT 10 Kup",
+      examOrder: 1,
       firstName: "Synthetic",
       lastCheckinDate: "2026-09-01",
       lastExamDate: "2026-03-01",
@@ -25,7 +25,7 @@ describe("Prüfungslisten", () => {
     };
     const bytes = buildExamWorkbook({
       generatedAt: new Date("2026-10-06T08:00:00.000Z"),
-      incompleteCheckinHistory: true,
+      pendingMembers: 0,
       program: "warrior-tigers",
       rows: [row]
     });
@@ -62,7 +62,7 @@ describe("Prüfungslisten", () => {
     const workbook = (program: "panda-kids" | "tiger-kids" | "warrior-tigers") =>
       buildExamWorkbook({
         generatedAt,
-        incompleteCheckinHistory: true,
+        pendingMembers: 0,
         program,
         rows: []
       });
@@ -81,65 +81,180 @@ describe("Prüfungslisten", () => {
     ]);
   });
 
-  it("wendet die WT-Check-in-Regel an und ermittelt den letzten Check-in", async () => {
-    const live: MatoolSafeAreaRecord[] = [
-      {
-        payload: {
-          name: "Member",
-          vorname: "Synthetic"
-        },
-        sourceId: "710001"
-      }
-    ];
+  it("ordnet Kinder über die MATOOL-Sparten-ID zu, auch in mehrere Listen", async () => {
     const env = environment([
-      snapshot("schueler", "710001", { name: "Member", vorname: "Synthetic" }),
-      snapshot("schueler_details", "710001", {
-        schule: "273",
-        spartenliste: JSON.stringify([{ name: "WT 10. Kup" }])
-      }),
-      snapshot("graduierungen", "g_710001_1", {
-        graduierung: "WT 10 Kup",
-        mitglied_id: "710001",
-        pruefungsdatum: "2026-03-01",
-        sparte: "Warrior-Tigers",
-        storniert: false
-      }),
-      snapshot("checkin", "c_710001_1", {
-        checkin_datum: "2026-09-01",
-        mitglied_id: "710001"
-      })
+      ...member("710001", { schule: "273", spartenliste: ["4825", "193"] }),
+      ...member("710002", { schule: "273", spartenliste: ["193"] }),
+      ...member("710003", { schule: "1474", spartenliste: ["1017", "194"] }),
+      // Name enthält "TK", ist aber TKD Jugend-Erwachsene -- früher landete
+      // so jemand in der Tiger-Kids-Liste.
+      graduation("710002", "1", "586", "9. Kup", "2026-01-10"),
+      history("710001", []),
+      history("710002", []),
+      history("710003", [])
     ]);
 
-    const dataset = await loadExamListDataset(env, live);
+    const dataset = await loadExamListDataset(env);
+    expect(names(dataset, "warrior-tigers")).toEqual(["710001"]);
+    expect(names(dataset, "tiger-kids")).toEqual(["710003"]);
+    expect(names(dataset, "panda-kids")).toEqual(["710003"]);
+    expect(dataset.rows.get("tiger-kids")?.[0]?.location).toBe("Stephanskirchen");
+  });
+
+  it("nimmt die höchste Graduierung der Sparte und zählt Check-ins danach", async () => {
+    const env = environment([
+      ...member("710001", { schule: "273", spartenliste: ["4825"] }),
+      // Zwei Prüfungen am selben Tag, eine stornierte höhere und eine aus
+      // einer anderen Sparte: maßgeblich ist der WT 6. Kup.
+      graduation("710001", "1", "12079", "WT 7. Kup", "2026-03-01"),
+      graduation("710001", "2", "12080", "WT 6. Kup", "2026-03-01"),
+      graduation("710001", "3", "12081", "WT 5. Kup", "2026-04-01", true),
+      graduation("710001", "4", "601", "TK Weißgurt", "2026-06-01"),
+      history("710001", ["2026-02-28", "2026-03-01", "2026-03-02", "2026-09-30"])
+    ]);
+
+    const dataset = await loadExamListDataset(env);
     expect(dataset.rows.get("warrior-tigers")).toEqual([
       expect.objectContaining({
-        checkinsSinceLastExam: 1,
         checkinsRequired: 12,
-        currentGraduation: "WT 10 Kup",
-        lastCheckinDate: "2026-09-01",
-        location: "Rosenheim",
-        missingCheckins: 11,
-        nextExam: "Prüfung zum 9. Kup"
+        checkinsSinceLastExam: 2,
+        currentGraduation: "WT 6. Kup",
+        lastCheckinDate: "2026-09-30",
+        lastExamDate: "2026-03-01",
+        missingCheckins: 10,
+        nextExam: "Prüfung zum 5. Kup"
       })
     ]);
   });
 
-  it("meldet einen unklaren Standort, statt ihn falsch zuzuordnen", async () => {
-    const live: MatoolSafeAreaRecord[] = [
-      { payload: { name: "Member", vorname: "Synthetic" }, sourceId: "710001" }
-    ];
+  it("wendet die Vorgaben je Programm an und zählt ohne Prüfung ab Vertragsbeginn", async () => {
     const env = environment([
-      snapshot("schueler", "710001", { name: "Member", vorname: "Synthetic" }),
-      snapshot("schueler_details", "710001", {
-        spartenliste: JSON.stringify([{ name: "Warrior-Tigers" }])
-      })
+      ...member("710001", {
+        schule: "1734",
+        spartenliste: ["1017"],
+        vertragsbeginn: "01.09.2026"
+      }),
+      ...member("710002", { schule: "1734", spartenliste: ["194"] }),
+      ...member("710003", { schule: "1734", spartenliste: ["4825"] }),
+      history("710001", ["2026-08-31", "2026-09-01", "2026-09-08"]),
+      graduation("710002", "1", "15639", "TK Grüngurt", "2026-05-01"),
+      history("710002", ["2026-06-01"]),
+      graduation("710003", "1", "12081", "WT 5. Kup", "2026-05-01"),
+      history("710003", [])
     ]);
 
-    const dataset = await loadExamListDataset(env, live);
+    const dataset = await loadExamListDataset(env);
+    expect(dataset.rows.get("panda-kids")).toEqual([
+      expect.objectContaining({
+        checkinsRequired: 18,
+        checkinsSinceLastExam: 2,
+        currentGraduation: "Nicht vorhanden",
+        lastExamDate: null,
+        missingCheckins: 16,
+        nextExam: "Prüfung zum PK Weißgurt"
+      })
+    ]);
+    expect(dataset.rows.get("tiger-kids")).toEqual([
+      expect.objectContaining({
+        checkinsRequired: 12,
+        missingCheckins: 11,
+        nextExam: "Wechsel zu Warrior-Tigers"
+      })
+    ]);
+    expect(dataset.rows.get("warrior-tigers")).toEqual([
+      expect.objectContaining({ checkinsRequired: 32, nextExam: "Prüfung zum 4. Kup" })
+    ]);
+  });
+
+  it("kennzeichnet einen noch nicht gelesenen Check-in-Verlauf und neue Mitglieder", async () => {
+    const env = environment([
+      ...member("710001", { schule: "273", spartenliste: ["4825"] }),
+      snapshot("schueler", "710002", { name: "Member", vorname: "Pending" })
+    ]);
+
+    const dataset = await loadExamListDataset(env);
+    expect(dataset.pendingMembers).toBe(1);
+    expect(dataset.rows.get("warrior-tigers")).toEqual([
+      expect.objectContaining({
+        checkinsSinceLastExam: null,
+        lastCheckinDate: null,
+        missingCheckins: null
+      })
+    ]);
+    const sheet = text(
+      storedZipEntries(
+        buildExamWorkbook({
+          generatedAt: new Date("2026-10-07T08:00:00.000Z"),
+          pendingMembers: dataset.pendingMembers,
+          program: "warrior-tigers",
+          rows: dataset.rows.get("warrior-tigers") ?? []
+        })
+      ).get("xl/worksheets/sheet1.xml")
+    );
+    expect(sheet).toContain("Historie wird noch geladen");
+    expect(sheet).toContain("1 Mitglieder sind noch nicht eingelesen");
+  });
+
+  it("meldet einen unklaren Standort, statt ihn falsch zuzuordnen", async () => {
+    const env = environment([...member("710001", { spartenliste: ["4825"] })]);
+
+    const dataset = await loadExamListDataset(env);
     expect(dataset.unresolvedLocations.get("warrior-tigers")).toBe(1);
     expect(dataset.rows.get("warrior-tigers")).toEqual([]);
   });
 });
+
+function member(
+  sourceId: string,
+  detail: Record<string, unknown>
+): { area: string; payload_json: string; source_id: string }[] {
+  return [
+    snapshot("schueler", sourceId, { name: `Member${sourceId}`, vorname: "Synthetic" }),
+    snapshot("schueler_details", sourceId, {
+      ...detail,
+      spartenliste: JSON.stringify(detail.spartenliste ?? [])
+    })
+  ];
+}
+
+function graduation(
+  memberId: string,
+  recordId: string,
+  graduationId: string,
+  label: string,
+  date: string,
+  cancelled = false
+): { area: string; payload_json: string; source_id: string } {
+  return snapshot("graduierungen", `g_${memberId}_${recordId}`, {
+    graduierung: label,
+    graduierung_id: graduationId,
+    mitglied_id: memberId,
+    pruefungsdatum: date,
+    sparte: "(Synthetic)",
+    storniert: cancelled
+  });
+}
+
+function history(
+  memberId: string,
+  dates: readonly string[]
+): { area: string; payload_json: string; source_id: string } {
+  return snapshot("checkin_historie", memberId, {
+    anzahl: dates.length,
+    checkin_daten: JSON.stringify(dates),
+    letzter_checkin: dates[0] ?? null,
+    mitglied_id: memberId
+  });
+}
+
+function names(
+  dataset: Awaited<ReturnType<typeof loadExamListDataset>>,
+  program: "panda-kids" | "tiger-kids" | "warrior-tigers"
+): string[] {
+  return (dataset.rows.get(program) ?? []).map((row) =>
+    row.lastName.replace("Member", "")
+  );
+}
 
 function snapshot(
   area: string,

@@ -26,7 +26,8 @@ describe("Snapshot-Feldallowlist", () => {
       "checkin",
       "schueler_stilllegungen",
       "schueler_details",
-      "graduierungen"
+      "graduierungen",
+      "checkin_historie"
     ]);
     expect(MATOOL_INTERESSENTEN_DETAILS_PER_RUN).toBe(500);
     expect(MATOOL_MAX_REQUESTS_PER_RUN).toBe(2_500);

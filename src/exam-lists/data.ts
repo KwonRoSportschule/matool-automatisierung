@@ -1,6 +1,5 @@
 import { AppError } from "../core/app-error";
 import { DEFAULT_SCHULEN } from "../core/beitraege";
-import type { MatoolSafeAreaRecord } from "../matool/client";
 import type { Env } from "../worker/env";
 import { storedPayloadCipher } from "../worker/payload-encryption";
 import {
@@ -26,36 +25,132 @@ interface StoredPayload {
 interface GraduationRecord {
   date: string;
   graduation: string;
-  program: string;
+  graduationId: string;
+}
+
+interface CheckinHistory {
+  dates: readonly string[];
+  last: string | null;
+}
+
+interface ProgramBelt {
+  /** MATOOL-Kennung der Graduierung (graduierungen_schule, HAR 07.10.2026). */
+  id: string;
+  /** Wortlaut in MATOOL. */
+  label: string;
+  /** Text der Gruppe "Prüfung zum …" in der Liste. */
+  examLabel: string;
+}
+
+interface ProgramRules {
+  belts: readonly ProgramBelt[];
+  /** Check-ins, die ab der aktuellen Graduierung bis zur nächsten nötig sind. */
+  requiredCheckins: (currentBeltIndex: number | null) => number;
+  /** MATOOL-Kennung der Sparte in schueler_daten.php → spartenliste. */
+  spartenId: string;
+  /** Gruppe nach der höchsten Graduierung der Sparte. */
+  transition: string;
 }
 
 export interface ExamListDataset {
+  /** Mitglieder der Liste, deren Stammdaten noch nie gelesen wurden. */
+  pendingMembers: number;
   rows: ReadonlyMap<ExamProgram, readonly ExamListRow[]>;
   unresolvedLocations: ReadonlyMap<ExamProgram, number>;
 }
 
-const PROGRAM_KEYS: Readonly<Record<ExamProgram, string>> = {
-  "panda-kids": "pandakids",
-  "tiger-kids": "tigerkids",
-  "warrior-tigers": "warriortigers"
+function belts(
+  entries: readonly (readonly [id: string, label: string])[],
+  examLabel: (label: string) => string = (label) => label
+): ProgramBelt[] {
+  return entries.map(([id, label]) => ({ examLabel: examLabel(label), id, label }));
+}
+
+/**
+ * Sparten, Gurtfolgen und Check-in-Vorgaben der Kinderprogramme. Kennungen
+ * aus der MATOOL-Mitgliederansicht (HAR vom 07.10.2026); Vorgaben laut
+ * Schulleitung: Panda-Kids 18 und Tiger-Kids 12 Check-ins je Gurt,
+ * Warrior-Tigers ab 10.–6. Kup 12, ab 5. Kup 32, ab 4.–1. Kup 36.
+ */
+export const EXAM_PROGRAM_RULES: Readonly<Record<ExamProgram, ProgramRules>> = {
+  "panda-kids": {
+    belts: belts([
+      ["590", "PK Weißgurt"],
+      ["589", "PK Gelbgurt"],
+      ["758", "PK Orangegurt"],
+      ["759", "PK Grüngurt"],
+      ["760", "PK Blaugurt"],
+      ["761", "PK Rotgurt"],
+      ["762", "PK Violettgurt"],
+      ["763", "PK Schwarzgurt"]
+    ]),
+    requiredCheckins: () => 18,
+    spartenId: "1017",
+    transition: "Wechsel zu Tiger-Kids"
+  },
+  "tiger-kids": {
+    belts: belts([
+      ["601", "TK Weißgurt"],
+      ["600", "TK Weiß-Gelbgurt"],
+      ["597", "TK Gelbgurt"],
+      ["596", "TK Gelb-Orangegurt"],
+      ["764", "TK Orangegurt"],
+      ["765", "TK Orange-Grüngurt"],
+      ["15639", "TK Grüngurt"]
+    ]),
+    requiredCheckins: () => 12,
+    spartenId: "194",
+    transition: "Wechsel zu Warrior-Tigers"
+  },
+  "warrior-tigers": {
+    belts: belts(
+      [
+        ["12076", "WT 10. Kup"],
+        ["12077", "WT 9. Kup"],
+        ["12078", "WT 8. Kup"],
+        ["12079", "WT 7. Kup"],
+        ["12080", "WT 6. Kup"],
+        ["12081", "WT 5. Kup"],
+        ["12082", "WT 4. Kup"],
+        ["12083", "WT 3. Kup"],
+        ["12084", "WT 2. Kup"],
+        ["12085", "WT 1. Kup"]
+      ],
+      (label) => label.replace(/^WT\s+/u, "")
+    ),
+    requiredCheckins: (index) => {
+      // Index 0 = 10. Kup; ohne Prüfung gilt die Vorgabe für den 10. Kup.
+      const kup = 10 - (index ?? 0);
+      if (kup >= 6) return 12;
+      if (kup === 5) return 32;
+      return 36;
+    },
+    spartenId: "4825",
+    transition: "Wechsel zu TKD Jugend-Erwachsene"
+  }
 };
 
 /**
- * Joins the freshly read MATOOL member list with the already protected Hub
- * snapshots. Nothing is written to D1 or MATOOL. Ambiguous locations fail
- * closed so no child silently lands in the wrong site worksheet.
+ * Baut die Zeilen aller Prüfungslisten ausschließlich aus den geschützten
+ * Hub-Daten des stündlichen Abrufs (Mitgliederliste, Stammdaten,
+ * Graduierungen, Check-in-Verlauf). MATOOL wird dabei nicht abgefragt, D1
+ * nicht beschrieben. Ein unklarer Standort bricht weiterhin ab, damit kein
+ * Kind still im falschen Standortblatt landet.
  */
-export async function loadExamListDataset(
-  env: Env,
-  liveMembers: readonly MatoolSafeAreaRecord[]
-): Promise<ExamListDataset> {
-  const liveById = uniqueLiveMembers(liveMembers);
+export async function loadExamListDataset(env: Env): Promise<ExamListDataset> {
   const stored = await readStoredPayloads(env);
-  assertRosterParity(liveById, stored);
+  const roster = payloadMap(stored, "schueler");
+  if (roster.size === 0) {
+    throw new AppError(
+      "exam_list_roster_empty",
+      409,
+      "Der Hub hat noch keinen Mitgliederbestand gespeichert. Bitte zuerst einen MATOOL-Abruf abschließen."
+    );
+  }
 
   const details = payloadMap(stored, "schueler_details");
   const graduations = graduationMap(stored);
-  const checkins = checkinMap(stored);
+  const histories = checkinHistoryMap(stored);
   const rows = new Map<ExamProgram, ExamListRow[]>(
     EXAM_PROGRAMS.map((program) => [program, []])
   );
@@ -64,56 +159,51 @@ export async function loadExamListDataset(
     "tiger-kids": 0,
     "warrior-tigers": 0
   };
+  let pendingMembers = 0;
 
-  for (const [sourceId, member] of liveById) {
-    const detail = details.get(sourceId) ?? {};
-    const memberGraduations = graduations.get(sourceId) ?? [];
-    const programs = activePrograms(detail, memberGraduations);
+  for (const [sourceId, member] of roster) {
+    const detail = details.get(sourceId);
+    if (!detail) {
+      pendingMembers += 1;
+      continue;
+    }
+    const sparten = new Set(collectText(detail.spartenliste));
+    const programs = EXAM_PROGRAMS.filter((program) =>
+      sparten.has(EXAM_PROGRAM_RULES[program].spartenId)
+    );
+    if (programs.length === 0) {
+      continue;
+    }
+    const location = memberLocation(detail);
+    const firstName = text(member.vorname) ?? text(detail.vname);
+    const lastName = text(member.name) ?? text(detail.name);
+    const history = histories.get(sourceId) ?? null;
+    const contractStart = isoFromGerman(detail.vertragsbeginn);
+
     for (const program of programs) {
-      const location = memberLocation(detail);
       if (!location) {
         missingLocations[program] += 1;
         continue;
       }
-      const history = memberGraduations
-        .filter((entry) => matchesProgram(entry.program, program))
-        .sort((left, right) => right.date.localeCompare(left.date));
-      const latest = history[0];
-      const lastExamDate = latest?.date ?? null;
-      const memberCheckins = checkins.get(sourceId) ?? [];
-      const lastCheckinDate = memberCheckins.length > 0
-        ? [...memberCheckins].sort((left, right) => right.localeCompare(left))[0] ?? null
-        : null;
-      const checkinsSinceLastExam = lastExamDate
-        ? memberCheckins.filter((date) => date > lastExamDate).length
-        : null;
-      const missingCheckins = requiredCheckins(program, latest?.graduation);
-      const remainingCheckins =
-        missingCheckins !== null && checkinsSinceLastExam !== null
-          ? Math.max(missingCheckins - checkinsSinceLastExam, 0)
-          : null;
-      const firstName = text(member.vorname) ?? text(detail.vname);
-      const lastName = text(member.name) ?? text(detail.name);
       if (!firstName || !lastName) {
         throw incompleteMemberData();
       }
-      rows.get(program)?.push({
-        checkinsSinceLastExam,
-        checkinsRequired: missingCheckins,
-        currentGraduation: latest?.graduation ?? "Nicht vorhanden",
-        firstName,
-        lastExamDate,
-        lastCheckinDate,
-        lastName,
-        location,
-        // There is no approved per-program/per-rank threshold in the Hub.
-        missingCheckins: remainingCheckins,
-        nextExam: nextExam(program, latest?.graduation)
-      });
+      rows.get(program)?.push(
+        buildRow({
+          contractStart,
+          firstName,
+          graduations: graduations.get(sourceId) ?? [],
+          history,
+          lastName,
+          location,
+          program
+        })
+      );
     }
   }
 
   return {
+    pendingMembers,
     rows,
     unresolvedLocations: new Map(
       EXAM_PROGRAMS.map((program) => [program, missingLocations[program]])
@@ -121,53 +211,87 @@ export async function loadExamListDataset(
   };
 }
 
-function requiredCheckins(
-  program: ExamProgram,
-  graduation: string | undefined
-): number | null {
-  if (program !== "warrior-tigers" || !graduation) {
-    return null;
-  }
-  const match = /(?:^|\D)(\d{1,2})\.?\s*kup(?:\D|$)/iu.exec(graduation);
-  if (!match?.[1]) {
-    return null;
-  }
-  const kup = Number.parseInt(match[1], 10);
-  if (kup >= 6 && kup <= 10) return 12;
-  if (kup === 5) return 32;
-  if (kup >= 1 && kup <= 4) return 36;
-  return null;
+function buildRow(input: {
+  contractStart: string | null;
+  firstName: string;
+  graduations: readonly GraduationRecord[];
+  history: CheckinHistory | null;
+  lastName: string;
+  location: ExamLocation;
+  program: ExamProgram;
+}): ExamListRow {
+  const rules = EXAM_PROGRAM_RULES[input.program];
+  const current = currentBelt(rules, input.graduations);
+  const nextIndex = current ? current.index + 1 : 0;
+  const nextBelt = rules.belts[nextIndex];
+  const required = rules.requiredCheckins(current?.index ?? null);
+
+  // Seit der letzten Prüfung dieser Sparte; ohne Prüfung seit Vertragsbeginn.
+  // Ein Check-in am Prüfungstag selbst zählt nicht mehr.
+  const since = current?.date ?? null;
+  const counted = input.history
+    ? input.history.dates.filter((date) =>
+        since
+          ? date > since
+          : input.contractStart === null || date >= input.contractStart
+      ).length
+    : null;
+
+  return {
+    checkinsRequired: required,
+    checkinsSinceLastExam: counted,
+    currentGraduation: current?.label ?? "Nicht vorhanden",
+    examOrder: nextIndex,
+    firstName: input.firstName,
+    lastCheckinDate: input.history?.last ?? null,
+    lastExamDate: since,
+    lastName: input.lastName,
+    location: input.location,
+    missingCheckins: counted === null ? null : Math.max(required - counted, 0),
+    nextExam: nextBelt ? `Prüfung zum ${nextBelt.examLabel}` : rules.transition
+  };
 }
 
-function uniqueLiveMembers(
-  records: readonly MatoolSafeAreaRecord[]
-): Map<string, Record<string, unknown>> {
-  const result = new Map<string, Record<string, unknown>>();
-  for (const record of records) {
-    if (!/^\d{1,32}$/u.test(record.sourceId) || result.has(record.sourceId)) {
-      throw new AppError(
-        "exam_list_live_roster_invalid",
-        502,
-        "Der aktuelle MATOOL-Mitgliederbestand enthält keine eindeutigen Kennungen."
-      );
+/**
+ * Höchste nicht stornierte Graduierung der Sparte -- nach Rang, nicht nach
+ * Datum: MATOOL kennt mehrere Prüfungen am selben Tag.
+ */
+function currentBelt(
+  rules: ProgramRules,
+  graduations: readonly GraduationRecord[]
+): { date: string; index: number; label: string } | null {
+  let best: { date: string; index: number; label: string } | null = null;
+  for (const graduation of graduations) {
+    const index = beltIndex(rules, graduation);
+    if (index < 0) {
+      continue;
     }
-    result.set(record.sourceId, { ...record.payload });
+    if (
+      !best ||
+      index > best.index ||
+      (index === best.index && graduation.date > best.date)
+    ) {
+      best = { date: graduation.date, index, label: graduation.graduation };
+    }
   }
-  if (result.size === 0) {
-    throw new AppError(
-      "exam_list_live_roster_empty",
-      502,
-      "MATOOL hat keinen verwendbaren Mitgliederbestand geliefert."
-    );
+  return best;
+}
+
+function beltIndex(rules: ProgramRules, graduation: GraduationRecord): number {
+  const byId = rules.belts.findIndex((belt) => belt.id === graduation.graduationId);
+  if (byId >= 0) {
+    return byId;
   }
-  return result;
+  // Rückfall für eine neu angelegte Kennung mit unverändertem Wortlaut.
+  const name = normalize(graduation.graduation);
+  return rules.belts.findIndex((belt) => normalize(belt.label) === name);
 }
 
 async function readStoredPayloads(env: Env): Promise<StoredPayload[]> {
   const rows = await env.DB.prepare(
     `SELECT area, source_id, payload_json
      FROM matool_snapshots
-     WHERE area IN ('schueler', 'schueler_details', 'graduierungen', 'checkin')`
+     WHERE area IN ('schueler', 'schueler_details', 'graduierungen', 'checkin_historie')`
   ).all<StoredSnapshotRow>();
   const cipher = await storedPayloadCipher(env);
   return Promise.all(
@@ -182,26 +306,6 @@ async function readStoredPayloads(env: Env): Promise<StoredPayload[]> {
       sourceId: row.source_id
     }))
   );
-}
-
-function assertRosterParity(
-  live: ReadonlyMap<string, unknown>,
-  stored: readonly StoredPayload[]
-): void {
-  const storedIds = new Set(
-    stored
-      .filter((entry) => entry.area === "schueler")
-      .map((entry) => entry.sourceId)
-  );
-  const missing = [...live.keys()].filter((sourceId) => !storedIds.has(sourceId));
-  const stale = [...storedIds].filter((sourceId) => !live.has(sourceId));
-  if (missing.length > 0 || stale.length > 0) {
-    throw new AppError(
-      "exam_list_roster_outdated",
-      409,
-      `Der aktuelle MATOOL-Bestand und der gespeicherte Hub-Bestand unterscheiden sich (${missing.length} fehlen, ${stale.length} veraltet). Bitte zuerst den vollständigen Mitgliederabgleich abschließen.`
-    );
-  }
 }
 
 function payloadMap(
@@ -228,49 +332,34 @@ function graduationMap(
     const memberId = text(entry.payload.mitglied_id);
     const date = text(entry.payload.pruefungsdatum);
     const graduation = text(entry.payload.graduierung);
-    const program = text(entry.payload.sparte);
-    if (!memberId || !date || !graduation || !program) {
+    if (!memberId || !date || !graduation) {
       continue;
     }
     const member = result.get(memberId) ?? [];
-    member.push({ date, graduation, program });
+    member.push({
+      date,
+      graduation,
+      graduationId: text(entry.payload.graduierung_id) ?? ""
+    });
     result.set(memberId, member);
   }
   return result;
 }
 
-function checkinMap(stored: readonly StoredPayload[]): Map<string, string[]> {
-  const result = new Map<string, string[]>();
-  for (const entry of stored.filter((candidate) => candidate.area === "checkin")) {
-    const memberId = text(entry.payload.mitglied_id);
-    const date = text(entry.payload.checkin_datum);
-    if (!memberId || !date) {
-      continue;
-    }
-    const member = result.get(memberId) ?? [];
-    member.push(date);
-    result.set(memberId, member);
+function checkinHistoryMap(
+  stored: readonly StoredPayload[]
+): Map<string, CheckinHistory> {
+  const result = new Map<string, CheckinHistory>();
+  for (const entry of stored.filter(
+    (candidate) => candidate.area === "checkin_historie"
+  )) {
+    const dates = collectText(entry.payload.checkin_daten).filter((value) =>
+      /^\d{4}-\d{2}-\d{2}$/u.test(value)
+    );
+    dates.sort((left, right) => right.localeCompare(left));
+    result.set(entry.sourceId, { dates, last: dates[0] ?? null });
   }
   return result;
-}
-
-function activePrograms(
-  detail: Record<string, unknown>,
-  graduations: readonly GraduationRecord[]
-): ExamProgram[] {
-  const activeText = collectText(detail.spartenliste).join(" ");
-  const explicit = EXAM_PROGRAMS.filter((program) =>
-    matchesProgram(activeText, program)
-  );
-  if (explicit.length > 0) {
-    return explicit;
-  }
-  const latest = [...graduations].sort((left, right) =>
-    right.date.localeCompare(left.date)
-  )[0];
-  return latest
-    ? EXAM_PROGRAMS.filter((program) => matchesProgram(latest.program, program))
-    : [];
 }
 
 function memberLocation(detail: Record<string, unknown>): ExamLocation | null {
@@ -293,49 +382,13 @@ function memberLocation(detail: Record<string, unknown>): ExamLocation | null {
   return matches.length === 1 ? matches[0] ?? null : null;
 }
 
-function matchesProgram(value: string, program: ExamProgram): boolean {
-  const normalized = normalize(value);
-  if (normalized.includes(PROGRAM_KEYS[program])) return true;
-  const aliases: Record<ExamProgram, string> = {
-    "panda-kids": "pk",
-    "tiger-kids": "tk",
-    "warrior-tigers": "wt"
-  };
-  return normalized.startsWith(aliases[program]);
-}
-
-function nextExam(program: ExamProgram, graduation: string | undefined): string {
-  if (!graduation) {
-    return "Nächste Prüfung noch zu klären";
-  }
-  if (program === "panda-kids") {
-    return nextColourExam(graduation, [
-      "PK Weißgurt", "PK Gelbgurt", "PK Orangegurt", "PK Grüngurt",
-      "PK Blaugurt", "PK Rotgurt", "PK Violettgurt", "PK Schwarzgurt"
-    ]);
-  }
-  if (program === "tiger-kids") {
-    return nextColourExam(graduation, [
-      "TK Weißgurt", "TK Weiß-Gelbgurt", "TK Gelbgurt", "TK Gelb-Orangegurt",
-      "TK Orangegurt", "TK Orange-Grüngurt", "TK Grüngurt"
-    ]);
-  }
-  const match = /(?:^|\D)(\d{1,2})\.?\s*kup(?:\D|$)/iu.exec(graduation);
-  if (!match?.[1]) {
-    return "Nächste Prüfung noch zu klären";
-  }
-  const current = Number.parseInt(match[1], 10);
-  return current > 1
-    ? `Prüfung zum ${current - 1}. Kup`
-    : "Nächste Prüfung nach 1. Kup noch zu klären";
-}
-
-function nextColourExam(graduation: string, sequence: readonly string[]): string {
-  const index = sequence.findIndex((entry) => normalize(entry) === normalize(graduation));
-  if (index < 0) return "Nächste Prüfung noch zu klären";
-  return index < sequence.length - 1
-    ? `Prüfung zum ${sequence[index + 1]}`
-    : "Nächste Prüfung nach letzter Graduierung noch zu klären";
+/** "01.11.2017" -> "2017-11-01" */
+function isoFromGerman(value: unknown): string | null {
+  const match =
+    typeof value === "string"
+      ? /^(\d{2})\.(\d{2})\.(\d{4})$/u.exec(value.trim())
+      : null;
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : null;
 }
 
 function collectText(value: unknown, depth = 0): string[] {
@@ -393,7 +446,7 @@ function text(value: unknown): string | null {
 function normalize(value: string): string {
   return value
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/gu, "")
+    .replace(/[̀-ͯ]/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "");
 }

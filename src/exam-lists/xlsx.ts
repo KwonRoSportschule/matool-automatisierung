@@ -17,8 +17,10 @@ export type ExamLocation = (typeof EXAM_LOCATIONS)[number];
 
 export interface ExamListRow {
   checkinsSinceLastExam: number | null;
-  checkinsRequired: number | null;
+  checkinsRequired: number;
   currentGraduation: string;
+  /** Reihenfolge der Gruppe "Prüfung zum …" innerhalb der Gurtfolge. */
+  examOrder: number;
   firstName: string;
   lastCheckinDate: string | null;
   lastExamDate: string | null;
@@ -30,7 +32,8 @@ export interface ExamListRow {
 
 export interface ExamWorkbookInput {
   generatedAt: Date;
-  incompleteCheckinHistory: boolean;
+  /** Mitglieder, deren Stammdaten der Hub noch nicht gelesen hat. */
+  pendingMembers: number;
   program: ExamProgram;
   rows: readonly ExamListRow[];
 }
@@ -126,9 +129,11 @@ function worksheetXml(
   const merges: string[] = [];
   xmlRows.push(rowXml(1, [textCell("A1", `${examProgramLabel(input.program)} Prüfungsliste – ${location}`, 1)]));
   merges.push("A1:P1");
-  const note = input.incompleteCheckinHistory
-    ? "Check-in-Angaben sind unvollständig, bis historische Check-ins und verbindliche Prüfungsanforderungen freigegeben sind."
-    : `Erstellt am ${formatGermanDateTime(input.generatedAt)}`;
+  const pending =
+    input.pendingMembers > 0
+      ? ` · ${input.pendingMembers} Mitglieder sind noch nicht eingelesen und fehlen eventuell.`
+      : "";
+  const note = `Erstellt am ${formatGermanDateTime(input.generatedAt)} aus dem stündlichen MATOOL-Abruf (je Kind höchstens wenige Stunden alt)${pending}`;
   xmlRows.push(rowXml(2, [textCell("A2", note, 2)]));
   merges.push("A2:P2");
   xmlRows.push(rowXml(4, HEADERS.map((header, index) => textCell(cellRef(index + 1, 4), header, 3))));
@@ -151,7 +156,7 @@ function worksheetXml(
         textCell(`D${rowNumber}`, row.lastName, 0),
         textCell(`E${rowNumber}`, row.currentGraduation, 0),
         row.missingCheckins === null
-          ? textCell(`F${rowNumber}`, row.checkinsRequired === null ? "Nicht erforderlich" : "Noch nicht berechenbar", 6)
+          ? textCell(`F${rowNumber}`, "Historie wird noch geladen", 6)
           : numberCell(`F${rowNumber}`, row.missingCheckins, 0),
         row.lastExamDate
           ? dateCell(`G${rowNumber}`, row.lastExamDate)
@@ -161,7 +166,7 @@ function worksheetXml(
           : textCell(`H${rowNumber}`, "Nicht vorhanden", 6),
         blankCell(`I${rowNumber}`),
         row.checkinsSinceLastExam === null
-          ? textCell(`J${rowNumber}`, "Unvollständige Historie", 6)
+          ? textCell(`J${rowNumber}`, "Historie wird noch geladen", 6)
           : numberCell(`J${rowNumber}`, row.checkinsSinceLastExam, 0),
         blankCell(`K${rowNumber}`),
         blankCell(`L${rowNumber}`),
@@ -202,23 +207,13 @@ function worksheetXml(
 }
 
 function compareExamRows(left: ExamListRow, right: ExamListRow): number {
-  const leftKup = kupNumber(left.nextExam);
-  const rightKup = kupNumber(right.nextExam);
-  if (leftKup !== null && rightKup !== null && leftKup !== rightKup) {
-    return rightKup - leftKup;
-  }
-  if (left.nextExam !== right.nextExam) {
-    return left.nextExam.localeCompare(right.nextExam, "de");
+  if (left.examOrder !== right.examOrder) {
+    return left.examOrder - right.examOrder;
   }
   return `${left.lastName}\u0000${left.firstName}`.localeCompare(
     `${right.lastName}\u0000${right.firstName}`,
     "de"
   );
-}
-
-function kupNumber(value: string): number | null {
-  const match = /(\d{1,2})\.?\s*kup/iu.exec(value);
-  return match?.[1] ? Number.parseInt(match[1], 10) : null;
 }
 
 function rowXml(index: number, cells: readonly string[]): string {

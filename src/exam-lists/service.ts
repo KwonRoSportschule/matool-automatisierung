@@ -1,5 +1,4 @@
 import { AppError } from "../core/app-error";
-import { MatoolClient } from "../matool/client";
 import type { Env } from "../worker/env";
 import { loadExamListDataset } from "./data";
 import {
@@ -17,61 +16,39 @@ export async function createExamListDownload(
   env: Env
 ): Promise<Response> {
   const selection = await parseSelection(request);
-  if (!env.MATOOL_EMAIL || !env.MATOOL_PASSWORD) {
-    throw new AppError(
-      "matool_not_configured",
-      409,
-      "Die MATOOL-Verbindung ist noch nicht eingerichtet."
-    );
-  }
-  if (env.MATOOL_REAL_RUNS_ENABLED !== "confirmed-read-only") {
-    throw new AppError(
-      "matool_runs_not_confirmed",
-      409,
-      "Read-only-Echtdatenläufe sind noch nicht freigegeben."
-    );
-  }
-
+  // Nur gespeicherte Hub-Daten: MATOOL verlangt 0,7 s zwischen zwei
+  // Anfragen, ein Live-Abruf aller Kinder dauerte Minuten.
   const generatedAt = new Date();
-  const client = new MatoolClient(env.MATOOL_BASE_URL);
-  try {
-    const liveRoster = await client.extractSafeArea(
-      { email: env.MATOOL_EMAIL, password: env.MATOOL_PASSWORD },
-      "schueler"
-    );
-    const dataset = await loadExamListDataset(env, liveRoster.records);
-    assertLocationsResolved(dataset.unresolvedLocations, selection);
-    if (selection === "all") {
-      const workbooks = new Map(
-        EXAM_PROGRAMS.map((program) => [
+  const dataset = await loadExamListDataset(env);
+  assertLocationsResolved(dataset.unresolvedLocations, selection);
+  if (selection === "all") {
+    const workbooks = new Map(
+      EXAM_PROGRAMS.map((program) => [
+        program,
+        buildExamWorkbook({
+          generatedAt,
+          pendingMembers: dataset.pendingMembers,
           program,
-          buildExamWorkbook({
-            generatedAt,
-            incompleteCheckinHistory: true,
-            program,
-            rows: dataset.rows.get(program) ?? []
-          })
-        ])
-      );
-      return downloadResponse(
-        buildAllExamWorkbooksZip(workbooks, generatedAt),
-        "Kinder_Pruefungslisten.zip",
-        "application/zip"
-      );
-    }
-    return downloadResponse(
-      buildExamWorkbook({
-        generatedAt,
-        incompleteCheckinHistory: true,
-        program: selection,
-        rows: dataset.rows.get(selection) ?? []
-      }),
-      examWorkbookFilename(selection),
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          rows: dataset.rows.get(program) ?? []
+        })
+      ])
     );
-  } finally {
-    client.clearSession();
+    return downloadResponse(
+      buildAllExamWorkbooksZip(workbooks, generatedAt),
+      "Kinder_Pruefungslisten.zip",
+      "application/zip"
+    );
   }
+  return downloadResponse(
+    buildExamWorkbook({
+      generatedAt,
+      pendingMembers: dataset.pendingMembers,
+      program: selection,
+      rows: dataset.rows.get(selection) ?? []
+    }),
+    examWorkbookFilename(selection),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
 }
 
 function assertLocationsResolved(

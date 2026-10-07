@@ -198,15 +198,15 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
       expect.objectContaining({
         key: "area_schueler_ex", occurrenceCount: 0,
         firstOccurredAt: null, lastOccurredAt: null,
-        occurredAt: "2026-09-22T10:00:07.000Z"
+        occurredAt: "2026-09-22T10:00:08.000Z"
       })
     ]));
     // Die uebrigen alten Bereiche sind nur veraltet (ohne eigenen Fehler):
-    // eine Sammelkarte statt sieben gleichlautender Einzelkarten.
+    // eine Sammelkarte statt acht gleichlautender Einzelkarten.
     expect(overview.warnings).toEqual(expect.arrayContaining([
       expect.objectContaining({
         key: "areas_stale",
-        title: "7 Datenbereiche nicht mehr aktuell"
+        title: "8 Datenbereiche nicht mehr aktuell"
       })
     ]));
     expect(overview).toMatchObject({ overall: { reasonCount: 3 } });
@@ -215,7 +215,7 @@ describe("Dashboard-Warnungen nach belegter Ursache", () => {
 
   it("behaelt fehlende Laufbestaetigungen als unknown und erfindet keine Fehlergruppe", async () => {
     expect(await getDashboardOverview(runtime, 1, now)).toMatchObject({
-      overall: { state: "unknown", reasonCount: 10 }, warnings: []
+      overall: { state: "unknown", reasonCount: 11 }, warnings: []
     });
   });
 

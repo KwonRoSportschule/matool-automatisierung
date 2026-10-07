@@ -7,6 +7,7 @@ import {
 import { canonicalJson, sha256Hex } from "../core/crypto";
 import { parseArtikelDetailResponse } from "./artikel-detail";
 import { parseCheckinPage } from "./checkin";
+import { parseCheckinHistorieResponse } from "./checkin-historie";
 import { RunCookieJar } from "./cookie-jar";
 import { parseGraduierungResponse } from "./graduierung";
 import {
@@ -164,6 +165,7 @@ export interface MatoolSafeAreaResult {
     | MatoolSafeArea
     | "interessenten_details"
     | MatoolExactDetailArea
+    | "checkin_historie"
     | "graduierungen"
     | "schueler_stilllegungen";
   bodyBytes: number;
@@ -541,6 +543,60 @@ export class MatoolClient {
       area: "graduierungen",
       bodyBytes,
       processedSourceIds,
+      records,
+      rowCount: records.length
+    };
+  }
+
+  /**
+   * Liest den vollstaendigen Check-in-Verlauf je Mitglied
+   * (`checkin_daten.php`). Wie bei den Graduierungen ein reiner Leseabruf mit
+   * der Mitgliedskennung, ohne geoeffneten Datensatz.
+   */
+  async extractCheckinHistorie(
+    credentials: MatoolCredentials,
+    sourceIds: readonly string[],
+    onProgress?: () => Promise<void>,
+    shouldStop?: MatoolStopSignal
+  ): Promise<MatoolSafeAreaResult> {
+    requireCredentials(credentials);
+    const selectedIds = selectExactDetailIds(sourceIds, "schueler");
+    await this.login(credentials);
+
+    const records: MatoolSafeAreaRecord[] = [];
+    let bodyBytes = 0;
+    for (const [index, sourceId] of selectedIds.entries()) {
+      if (index > 0 && shouldStop?.()) {
+        break;
+      }
+      if (index > 0 && index % EXACT_DETAIL_PROGRESS_STEP === 0) {
+        await onProgress?.();
+      }
+      const response = await this.requestReadOnlyWithStatusRetry(
+        "/json/checkin_daten.php",
+        {
+          body: new URLSearchParams({ schueler_nr: sourceId }),
+          headers: {
+            Accept: "application/json, text/javascript, */*; q=0.01",
+            "Content-Type":
+              "application/x-www-form-urlencoded; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          method: "POST"
+        }
+      );
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw checkinHistorieFetchError();
+      }
+      const body = await readBoundedBody(response);
+      bodyBytes += body.byteLength;
+      records.push(parseCheckinHistorieResponse(body, sourceId));
+    }
+    return {
+      area: "checkin_historie",
+      bodyBytes,
+      processedSourceIds: records.map((record) => record.sourceId),
       records,
       rowCount: records.length
     };
@@ -1997,6 +2053,14 @@ function stilllegungFetchError(): AppError {
     "matool_stilllegung_fetch_failed",
     502,
     "Die MATOOL-Stilllegungsdaten konnten nicht gelesen werden."
+  );
+}
+
+function checkinHistorieFetchError(): AppError {
+  return new AppError(
+    "matool_checkin_historie_fetch_failed",
+    502,
+    "Der MATOOL-Check-in-Verlauf konnte nicht gelesen werden."
   );
 }
 
