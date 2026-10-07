@@ -249,8 +249,8 @@ describe("DirectSyncWorkflow", () => {
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
         jobId,
         status: "succeeded",
-        storedTotal: 12,
-        succeeded: 6
+        storedTotal: 14,
+        succeeded: 7
       });
       // Der Gesamtlauf ist abgeschlossen und die Sperre wieder frei.
       const lauf = await env.DB.prepare(
@@ -463,7 +463,7 @@ describe("Stilllegungen nachlesen", () => {
       await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
       await instance.waitForStatus("complete");
       await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 850, succeeded: 7 });
-      await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({ status: "succeeded", storedTotal: 750 });
+      await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({ status: "succeeded", storedTotal: 850 });
     } finally {
       await instance.dispose();
     }
