@@ -181,7 +181,8 @@ export const MATOOL_DETAIL_AREA_BUDGET_MS: Readonly<Record<string, number>> = {
   schueler_stilllegungen: 4 * 60_000,
   schueler_details: 3 * 60_000,
   graduierungen: 3 * 60_000,
-  checkin_historie: 3 * 60_000
+  // Der Cron-Weg ist nur Rueckfall; im Workflow gelten eigene Budgets.
+  checkin_historie: 90_000
 };
 
 /** Mindestzeit, die jedem spaeteren Bereich je Mitglied bleibt. */

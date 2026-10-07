@@ -245,7 +245,7 @@ describe("DirectSyncWorkflow", () => {
       await releaseExactSyncLease(env.DB, lease);
 
       await instance.waitForStatus("complete");
-      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 12, succeeded: 6 });
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 14, succeeded: 7 });
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
         jobId,
         status: "succeeded",
@@ -292,7 +292,7 @@ describe("DirectSyncWorkflow", () => {
       });
       await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
       await instance.waitForStatus("complete");
-      await expect(instance.getOutput()).resolves.toEqual({ failed: 1, storedTotal: 9, succeeded: 5 });
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 1, storedTotal: 10, succeeded: 6 });
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
         status: "partial_failed",
         failedAreas: ["graduierungen"]
@@ -462,7 +462,7 @@ describe("Stilllegungen nachlesen", () => {
       });
       await workflow.create({ id: jobId, params: { jobId, requestedAt: new Date().toISOString() } });
       await instance.waitForStatus("complete");
-      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 750, succeeded: 6 });
+      await expect(instance.getOutput()).resolves.toEqual({ failed: 0, storedTotal: 850, succeeded: 7 });
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({ status: "succeeded", storedTotal: 750 });
     } finally {
       await instance.dispose();
@@ -488,7 +488,7 @@ describe("Stilllegungen nachlesen", () => {
       await instance.waitForStatus("complete");
       await expect(latestManualSyncJob(env.DB)).resolves.toMatchObject({
         status: "partial_failed",
-        storedTotal: 600,
+        storedTotal: 700,
         failedAreas: ["schueler_stilllegungen"]
       });
     } finally {
