@@ -256,7 +256,7 @@ describe("DirectSyncWorkflow", () => {
       const lauf = await env.DB.prepare(
         "SELECT status, succeeded_area_count FROM matool_sync_runs ORDER BY started_at DESC LIMIT 1"
       ).first<{ status: string; succeeded_area_count: number }>();
-      expect(lauf).toMatchObject({ status: "succeeded", succeeded_area_count: 6 });
+      expect(lauf).toMatchObject({ status: "succeeded", succeeded_area_count: 7 });
       await expect(isDirectSyncLeaseHeld(env.DB)).resolves.toBe(false);
     } finally {
       await instance.dispose();
