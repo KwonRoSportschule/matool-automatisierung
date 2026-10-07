@@ -44,6 +44,42 @@
     </header>
 
     <main id="main" class="app-shell">
+      <section class="panel sync-progress" id="sync-progress" aria-live="polite" hidden>
+        <div class="sync-progress-head">
+          <div>
+            <div class="eyebrow" id="sync-progress-eyebrow">Abruf läuft</div>
+            <h2 id="sync-progress-title">MATOOL wird gelesen</h2>
+          </div>
+          <span class="sync-progress-percent" id="sync-progress-percent">0 %</span>
+        </div>
+        <div class="sync-progress-bar" role="progressbar" aria-labelledby="sync-progress-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="sync-progress-bar">
+          <span id="sync-progress-fill"></span>
+        </div>
+        <p class="sync-progress-meta" id="sync-progress-meta"></p>
+        <ol class="sync-progress-areas" id="sync-progress-areas"></ol>
+      </section>
+
+      <section class="panel section exam-list-panel" id="exam-lists" aria-labelledby="exam-lists-title">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Manuelle Excel-Ausgabe</div>
+            <h2 id="exam-lists-title">Prüfungslisten für Kinderprogramme</h2>
+            <p>Erstellt Prüfungslisten für Panda-Kids, Tiger-Kids und Warrior-Tigers. Der stündliche Abruf wird dadurch nicht verändert.</p>
+          </div>
+        </div>
+        <div class="exam-list-controls">
+          <label class="control-field" for="exam-list-program">Datei auswählen
+            <select id="exam-list-program">
+              <option value="all" selected>Alle drei Programme als ZIP</option>
+              <option value="panda-kids">Panda-Kids</option>
+              <option value="tiger-kids">Tiger-Kids</option>
+              <option value="warrior-tigers">Warrior-Tigers</option>
+            </select>
+          </label>
+          <button class="button button-primary" id="exam-list-download" type="button" disabled>Prüfungslisten jetzt erstellen</button>
+        </div>
+        <p class="result-message" id="exam-list-message" aria-live="polite"></p>
+      </section>
       <section class="hero" id="overview" aria-labelledby="page-title">
         <div class="hero-copy">
           <div class="eyebrow">Internes Kontrollzentrum</div>
@@ -281,9 +317,9 @@
           <div>
             <div class="eyebrow">Cloudflare D1 · Nur-Lese-Modus</div>
             <h2 id="database-title">Vollständige gespeicherte Datenbank</h2>
-            <p>Alle Ergebnisse werden serverseitig gesucht, sortiert und maskiert.</p>
+            <p id="database-privacy-text">Alle Ergebnisse werden serverseitig gesucht, sortiert und maskiert.</p>
           </div>
-          <span class="privacy-chip">● Personenwerte geschützt</span>
+          <span class="privacy-chip" id="database-privacy-chip">● Personenwerte geschützt</span>
         </div>
         <form class="filter-grid database-filters" id="database-filters">
           <label class="control-field search-field">Suche
@@ -327,37 +363,6 @@
             </div>
           </div>
         </div>
-      </section>
-
-      <section class="panel section exam-list-panel" id="exam-lists" aria-labelledby="exam-lists-title">
-        <div class="section-heading">
-          <div>
-            <div class="eyebrow">Manuelle Excel-Ausgabe</div>
-            <h2 id="exam-lists-title">Prüfungslisten für Kinderprogramme</h2>
-            <p>
-              Prüft den aktuellen Mitgliederbestand nur lesend bei MATOOL und erstellt
-              neue, nicht vorausgefüllte Listen. Der stündliche Abruf wird dadurch nicht verändert.
-            </p>
-          </div>
-        </div>
-        <div class="exam-list-controls">
-          <label class="control-field" for="exam-list-program">Datei auswählen
-            <select id="exam-list-program">
-              <option value="all" selected>Alle drei Programme als ZIP</option>
-              <option value="panda-kids">Panda-Kids</option>
-              <option value="tiger-kids">Tiger-Kids</option>
-              <option value="warrior-tigers">Warrior-Tigers</option>
-            </select>
-          </label>
-          <button class="button button-primary" id="exam-list-download" type="button" disabled>
-            Prüfungslisten jetzt erstellen
-          </button>
-        </div>
-        <p class="result-message" id="exam-list-message" aria-live="polite"></p>
-        <p class="exam-list-note">
-          Fehlende Check-ins werden erst berechnet, wenn die vollständige Check-in-Historie
-          und die Anforderungen pro Graduierung verbindlich hinterlegt sind.
-        </p>
       </section>
 
       <details class="panel admin-panel" id="admin-tools">
