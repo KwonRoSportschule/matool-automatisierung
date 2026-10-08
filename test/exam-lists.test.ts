@@ -116,12 +116,12 @@ describe("Prüfungslisten", () => {
     const dataset = await loadExamListDataset(env);
     expect(dataset.rows.get("warrior-tigers")).toEqual([
       expect.objectContaining({
-        checkinsRequired: 12,
+        checkinsRequired: 32,
         checkinsSinceLastExam: 2,
         currentGraduation: "WT 6. Kup",
         lastCheckinDate: "2026-09-30",
         lastExamDate: "2026-03-01",
-        missingCheckins: 10,
+        missingCheckins: 30,
         nextExam: "Prüfung zum 5. Kup"
       })
     ]);
