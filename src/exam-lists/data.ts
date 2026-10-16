@@ -70,8 +70,9 @@ function belts(
  * Sparten, Gurtfolgen und Check-in-Vorgaben der Kinderprogramme. Kennungen
  * aus der MATOOL-Mitgliederansicht (HAR vom 07.10.2026); Vorgaben laut
  * Schulleitung: Panda-Kids 18 und Tiger-Kids 12 Check-ins je Gurt,
- * Warrior-Tigers ab 10.–7. Kup 12, ab 6. und 5. Kup 32, ab 4.–1. Kup 36
- * (Prüfung zum 5. Kup seit 08.10.2026 mit 32 statt 12).
+ * Warrior-Tigers ab 10.–7. Kup 12, ab 6. Kup 32, ab 5.–1. Kup 36
+ * (Prüfung zum 5. Kup seit 08.10.2026 mit 32 statt 12, Prüfung zum
+ * 4. Kup seit 16.10.2026 mit 36 statt 32).
  */
 export const EXAM_PROGRAM_RULES: Readonly<Record<ExamProgram, ProgramRules>> = {
   "panda-kids": {
@@ -123,7 +124,7 @@ export const EXAM_PROGRAM_RULES: Readonly<Record<ExamProgram, ProgramRules>> = {
       // Index 0 = 10. Kup; ohne Prüfung gilt die Vorgabe für den 10. Kup.
       const kup = 10 - (index ?? 0);
       if (kup >= 7) return 12;
-      if (kup >= 5) return 32;
+      if (kup === 6) return 32;
       return 36;
     },
     spartenId: "4825",
