@@ -162,7 +162,7 @@ describe("Prüfungslisten", () => {
       })
     ]);
     expect(dataset.rows.get("warrior-tigers")).toEqual([
-      expect.objectContaining({ checkinsRequired: 32, nextExam: "Prüfung zum 4. Kup" })
+      expect.objectContaining({ checkinsRequired: 36, nextExam: "Prüfung zum 4. Kup" })
     ]);
   });
 

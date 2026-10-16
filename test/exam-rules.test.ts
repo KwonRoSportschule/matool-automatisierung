@@ -26,7 +26,7 @@ describe("Check-in-Vorgaben der Prüfungslisten", () => {
       "7. Kup": 12,
       "6. Kup": 12,
       "5. Kup": 32,
-      "4. Kup": 32,
+      "4. Kup": 36,
       "3. Kup": 36,
       "2. Kup": 36,
       "1. Kup": 36,
